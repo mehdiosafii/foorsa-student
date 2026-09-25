@@ -29,6 +29,9 @@ dev_dependencies:
   flutter_native_splash: ^2.4.4
 
 flutter:
+  config:
+    # Existing native plugins use CocoaPods; flutter_native_splash 2.4.4 has an invalid SwiftPM target.
+    enable-swift-package-manager: false
   uses-material-design: true
   assets:
     - assets/icons/

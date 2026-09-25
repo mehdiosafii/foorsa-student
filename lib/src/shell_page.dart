@@ -480,6 +480,7 @@ class _ShellPageState extends State<ShellPage> {
       SystemNavigator.pop();
       return;
     }
+    if (!mounted) return;
     _lastBackPress = now;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       const SnackBar(
@@ -727,9 +728,9 @@ class _OfflineView extends StatelessWidget {
           Container(
             padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.07),
+              color: Colors.white.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white.withOpacity(0.14)),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -738,9 +739,9 @@ class _OfflineView extends StatelessWidget {
                   width: 64,
                   height: 64,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.10),
+                    color: Colors.white.withValues(alpha: 0.10),
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.18)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
                   ),
                   child: const Icon(Icons.wifi_off_rounded,
                       color: Colors.white, size: 30),
