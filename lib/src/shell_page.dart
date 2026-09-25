@@ -24,6 +24,7 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:url_launcher/url_launcher.dart' as launcher;
 
 import 'config.dart';
+import 'pdf_validation.dart';
 import 'flicker_spinner.dart';
 
 class ShellPage extends StatefulWidget {
@@ -329,7 +330,7 @@ class _ShellPageState extends State<ShellPage> {
         }
         if (needDownload) {
           final response = await client.getUrl(uri).then((r) => r.close());
-          if (response.statusCode >= 400) {
+          if (response.statusCode < 200 || response.statusCode >= 300) {
             throw HttpException('HTTP ${response.statusCode}');
           }
           await response.pipe(file.openWrite());
@@ -338,10 +339,15 @@ class _ShellPageState extends State<ShellPage> {
         client.close();
       }
 
+      final kind = mime.toLowerCase().trim();
+      final isPdf = kind == 'application/pdf' || name.toLowerCase().endsWith('.pdf');
+      if (isPdf && !await hasPdfHeader(file)) {
+        await file.delete();
+        throw const FormatException('Downloaded document is not a PDF');
+      }
       dismissSpinner();
       if (!mounted) return;
-      final kind = mime.toLowerCase().trim();
-      if (kind == 'application/pdf' || name.toLowerCase().endsWith('.pdf')) {
+      if (isPdf) {
         await Navigator.of(context).push(MaterialPageRoute<void>(
             builder: (_) => _PdfPreviewPage(path: file.path, title: name)));
       } else if (kind.startsWith('image/')) {

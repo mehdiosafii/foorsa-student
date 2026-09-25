@@ -2,7 +2,7 @@ name: foorsa_student
 description: "Foorsa Student portal."
 publish_to: "none"
 
-version: 1.2.15+24
+version: 1.2.15+25
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -17,7 +17,7 @@ dependencies:
   url_launcher: ^6.3.1
   path_provider: ^2.1.5
   open_filex: ^4.7.0
-  flutter_pdfview: 1.3.2
+  flutter_pdfview: 1.3.3
   image_picker: ^1.1.2
   file_picker: ^8.1.2
 

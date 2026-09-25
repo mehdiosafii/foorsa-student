@@ -29,3 +29,10 @@ Before each release, smoke-test launch and portal sign-in on iOS, then verify ca
 - Signed iOS archive and App Store export: succeeded.
 - iPhone 18 Pro simulator on iOS 27: app remains running and displays the Foorsa Student portal sign-in page.
 - Authenticated student flows and physical-device camera capture still require a student test account/device.
+
+## PDF crash regression (build 25)
+
+Build 24's PDF viewer (flutter_pdfview 1.3.2) crashes on current iOS when creating the native view: `NSInternalInconsistencyException: View was already initialized`. Reproduced on iOS 27 with a valid one-page PDF through `_PdfPreviewPage`. Version 1.3.3 removes the duplicate native view initialization.
+
+Build 25 pins that patch and rejects empty/non-PDF downloads before opening PDFKit. The header check is deliberately not a full structural validator; native error callbacks still handle malformed PDF structure. Unit tests cover PDF headers, an HTML login response, and empty downloads. Authenticated document testing on the tester's phone remains necessary.
+- After the patch, the same PDF renders and remains open in the iOS 27 simulator; no duplicate-initialization exception occurs.
