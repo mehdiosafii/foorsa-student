@@ -40,3 +40,7 @@ Build 25 pins that patch and rejects empty/non-PDF downloads before opening PDFK
 ## Adaptive launcher icon (build 26)
 
 Removed the baked-in circular ring from the launcher artwork. Added iOS dark and tinted appearances, Android adaptive foreground and monochrome layers, and a night-mode adaptive background. Default iOS artwork is opaque; dark artwork retains transparency for the system background. Asset generation instructions are in `assets/icons/README.md`.
+
+## White icon background (build 27)
+
+Default and dark iOS icons now use identical opaque white-background artwork. The tinted source also has a white base, though system tint settings can recolor it. Android day/night backgrounds are both white and the optional monochrome layer is removed. Generated iOS background pixels were checked as opaque white for all three appearances.
