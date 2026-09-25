@@ -36,3 +36,7 @@ Build 24's PDF viewer (flutter_pdfview 1.3.2) crashes on current iOS when creati
 
 Build 25 pins that patch and rejects empty/non-PDF downloads before opening PDFKit. The header check is deliberately not a full structural validator; native error callbacks still handle malformed PDF structure. Unit tests cover PDF headers, an HTML login response, and empty downloads. Authenticated document testing on the tester's phone remains necessary.
 - After the patch, the same PDF renders and remains open in the iOS 27 simulator; no duplicate-initialization exception occurs.
+
+## Adaptive launcher icon (build 26)
+
+Removed the baked-in circular ring from the launcher artwork. Added iOS dark and tinted appearances, Android adaptive foreground and monochrome layers, and a night-mode adaptive background. Default iOS artwork is opaque; dark artwork retains transparency for the system background. Asset generation instructions are in `assets/icons/README.md`.

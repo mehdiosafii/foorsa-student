@@ -2,7 +2,7 @@ name: foorsa_student
 description: "Foorsa Student portal."
 publish_to: "none"
 
-version: 1.2.15+25
+version: 1.2.15+26
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -43,6 +43,11 @@ flutter_launcher_icons:
   image_path: "assets/icons/app_icon.png"
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/icons/app_icon_foreground.png"
+  adaptive_icon_monochrome: "assets/icons/app_icon_foreground.png"
+  image_path_ios_dark_transparent: "assets/icons/app_icon_foreground.png"
+  image_path_ios_tinted_grayscale: "assets/icons/app_icon_foreground.png"
+  desaturate_tinted_to_grayscale_ios: true
+  background_color_ios: "#FFFFFF"
   remove_alpha_ios: true
 
 flutter_native_splash:
