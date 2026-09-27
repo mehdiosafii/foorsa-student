@@ -8,6 +8,8 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
+import 'dart:math';
 import 'dart:convert';
 import 'dart:io';
 
@@ -24,6 +26,7 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:url_launcher/url_launcher.dart' as launcher;
 
 import 'config.dart';
+import 'calendar_reminders.dart';
 import 'pdf_validation.dart';
 import 'flicker_spinner.dart';
 import 'embedded_navigation.dart';
@@ -37,6 +40,9 @@ class ShellPage extends StatefulWidget {
 
 
 class _ShellPageState extends State<ShellPage> {
+  late final _calendar = CalendarReminders(onOpen: () { _controller?.loadUrl(urlRequest: URLRequest(url: WebUri('${AppConfig.baseUrl}/calendar'))); });
+  final _calendarNonce = base64Url.encode(List<int>.generate(32, (_) => Random.secure().nextInt(256)));
+
   InAppWebViewController? _controller;
   PackageInfo? _packageInfo;
   bool _firstLoadDone = false;
@@ -451,6 +457,12 @@ class _ShellPageState extends State<ShellPage> {
     if (args.isNotEmpty && args[0] is Map) {
       action = ((args[0] as Map)['action'] ?? '').toString();
     }
+    if (action.startsWith('calendar')) {
+      final request = Map<String, dynamic>.from(args.first as Map);
+      final url = await _controller?.getUrl();
+      if (url?.scheme != 'https' || url?.host != 'student.foorsa.ma' || request['nonce'] != _calendarNonce) return {'error': 'Not allowed'};
+      try { return await _calendar.call(request); } catch (_) { return {'error': 'Could not schedule reminders. Please try again.'}; }
+    }
     switch (action) {
       case 'getPushToken':
         return {'token': null}; // student app ships without push (yet)
@@ -519,6 +531,11 @@ class _ShellPageState extends State<ShellPage> {
                   ? const SizedBox.expand()
                   : InAppWebView(
                 initialUrlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)),
+                initialUserScripts: UnmodifiableListView([UserScript(
+                  source: 'if(location.origin === "https://student.foorsa.ma") window.foorsaCalendarNonce = "$_calendarNonce";',
+                  injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+                  forMainFrameOnly: true,
+                )]),
                 initialSettings: InAppWebViewSettings(
                   allowFileAccess: true,
                   javaScriptEnabled: true,
