@@ -44,3 +44,7 @@ Removed the baked-in circular ring from the launcher artwork. Added iOS dark and
 ## White icon background (build 27)
 
 Default and dark iOS icons now use identical opaque white-background artwork. The tinted source also has a white base, though system tint settings can recolor it. Android day/night backgrounds are both white and the optional monochrome layer is removed. Generated iOS background pixels were checked as opaque white for all three appearances.
+
+## Smaller iPhone artwork (build 28)
+
+The iOS mark is reduced to 90% of its previous scale and centered on the same white canvas. Default, dark and tinted appearances use this padded source; Android artwork and the in-app logo remain unchanged. Regenerate the source with `scripts/generate-ios-icon.sh`.
