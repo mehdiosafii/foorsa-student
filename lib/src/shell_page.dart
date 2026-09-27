@@ -26,6 +26,7 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 import 'config.dart';
 import 'pdf_validation.dart';
 import 'flicker_spinner.dart';
+import 'embedded_navigation.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -666,6 +667,10 @@ class _ShellPageState extends State<ShellPage> {
                 shouldOverrideUrlLoading: (controller, action) async {
                   final uri = action.request.url;
                   if (uri == null) return NavigationActionPolicy.ALLOW;
+                  if (isEmbeddedWebNavigation(uri,
+                      isForMainFrame: action.isForMainFrame)) {
+                    return NavigationActionPolicy.ALLOW;
+                  }
                   if (_isInternal(uri)) return NavigationActionPolicy.ALLOW;
                   await _openExternally(uri);
                   return NavigationActionPolicy.CANCEL;

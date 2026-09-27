@@ -48,3 +48,7 @@ Default and dark iOS icons now use identical opaque white-background artwork. Th
 ## Smaller iPhone artwork (build 28)
 
 The iOS mark is reduced to 90% of its previous scale and centered on the same white canvas. Default, dark and tinted appearances use this padded source; Android artwork and the in-app logo remain unchanged. Regenerate the source with `scripts/generate-ios-icon.sh`.
+
+## Embedded cooking videos (1.2.16, build 29)
+
+Allow HTTP(S) iframe navigation in the WebView instead of opening embedded YouTube players externally on iOS. Main-frame links and custom schemes retain the existing external-link policy. Portrait and both landscape orientations remain enabled, while the portal resizes the same video iframe on rotation. Regression tests cover embedded players, top-level/unknown frames and non-web schemes.

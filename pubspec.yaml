@@ -2,7 +2,7 @@ name: foorsa_student
 description: "Foorsa Student portal."
 publish_to: "none"
 
-version: 1.2.15+28
+version: 1.2.16+29
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
