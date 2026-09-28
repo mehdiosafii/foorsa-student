@@ -1,6 +1,5 @@
 package ma.foorsa.student
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioAttributes
 import android.os.Build
@@ -8,39 +7,27 @@ import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.provider.Settings
 import androidx.annotation.RequiresApi
-import android.os.VibrationEffect.Composition.PRIMITIVE_CLICK as CLICK
-import android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK as LOW_TICK
-import android.os.VibrationEffect.Composition.PRIMITIVE_QUICK_RISE as QUICK_RISE
-import android.os.VibrationEffect.Composition.PRIMITIVE_THUD as THUD
-import android.os.VibrationEffect.Composition.PRIMITIVE_TICK as TICK
 
 /**
- * The admission reveal's sense of touch (admissionFeedback.ts in the portal).
- * Each name is a texture, played with the best the phone's actuator offers:
- * haptic primitives (API 30+), the system's tuned click effects (API 29),
- * an amplitude waveform (API 26), a plain pulse before that.
+ * The admission reveal's sense of touch (admissionFeedback.ts in the portal),
+ * made to be felt: a heartbeat while the letter waits, the seal cracking, the
+ * flaps landing, a grain that grows as the letter is pulled, and a
+ * celebration whose taps fall on the music's first notes.
+ *
+ * Each texture is an amplitude waveform. Phones without amplitude control get
+ * its on/off rhythm instead, the same pulses the web uses for navigator.vibrate.
+ * It plays as media vibration, the category for haptics that accompany sound
+ * and animation: the system's touch-feedback switch, which silences keyboard
+ * ticks, does not silence it, while the master vibration switch still does.
  *
  * [play] answers false only when there is nothing to play with, so the Dart
- * side can fall back to HapticFeedback. A phone whose owner has turned touch
- * feedback off stays still and answers true: that choice is theirs.
+ * side can fall back to HapticFeedback.
  */
 class ShellHaptics(private val context: Context) {
 
-    private class Step(val primitive: Int, val scale: Float, val delayMs: Int = 0)
-
-    /**
-     * [compositions] are tried in order until the actuator supports every
-     * primitive in one; THUD and LOW_TICK need API 31 and a capable motor.
-     * [timings]/[amplitudes] (0–255) are the waveform for older phones.
-     */
-    private class Texture(
-        val compositions: List<List<Step>>,
-        val predefined: Int,
-        val timings: LongArray,
-        val amplitudes: IntArray,
-    )
+    /** [timings] start with a 0 ms wait; [amplitudes] (0–255) pair with them. */
+    private class Texture(val timings: LongArray, val amplitudes: IntArray, val pulses: LongArray)
 
     private val vibrator: Vibrator? by lazy {
         try {
@@ -56,25 +43,22 @@ class ShellHaptics(private val context: Context) {
         }
     }
 
-    fun play(touch: String): Boolean {
-        val texture = TEXTURES[touch] ?: return false
+    /** [level] (0–1) is how far the letter has come; only the grain reads it. */
+    fun play(touch: String, level: Double = 1.0): Boolean {
+        val texture = textureFor(touch, level) ?: return false
         val vibrator = vibrator ?: return false
         return try {
             if (!vibrator.hasVibrator()) return false
-            if (touchFeedbackOff()) return true
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-                    val steps = texture.compositions.firstOrNull { supported(vibrator, it) }
-                    vibrate(vibrator, steps?.let(::compose) ?: VibrationEffect.createPredefined(texture.predefined))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val effect = if (vibrator.hasAmplitudeControl()) {
+                    VibrationEffect.createWaveform(texture.timings, texture.amplitudes, -1)
+                } else {
+                    VibrationEffect.createWaveform(texture.pulses, -1)
                 }
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
-                    vibrate(vibrator, VibrationEffect.createPredefined(texture.predefined))
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ->
-                    vibrate(vibrator, waveform(vibrator, texture))
-                else -> {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(texture.timings, -1)
-                }
+                vibrate(vibrator, effect)
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(texture.pulses, -1)
             }
             true
         } catch (_: Throwable) {
@@ -82,106 +66,60 @@ class ShellHaptics(private val context: Context) {
         }
     }
 
-    private fun touchFeedbackOff(): Boolean = try {
-        Settings.System.getInt(context.contentResolver, Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) == 0
-    } catch (_: Throwable) {
-        false
-    }
-
-    @RequiresApi(Build.VERSION_CODES.R)
-    @SuppressLint("InlinedApi")
-    private fun supported(vibrator: Vibrator, steps: List<Step>): Boolean {
-        val ids = steps.map { it.primitive }.distinct()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && ids.any { it == THUD || it == LOW_TICK }) return false
-        return vibrator.areAllPrimitivesSupported(*ids.toIntArray())
-    }
-
-    @RequiresApi(Build.VERSION_CODES.R)
-    private fun compose(steps: List<Step>): VibrationEffect {
-        val composition = VibrationEffect.startComposition()
-        for (step in steps) composition.addPrimitive(step.primitive, step.scale, step.delayMs)
-        return composition.compose()
-    }
-
-    @RequiresApi(Build.VERSION_CODES.O)
-    private fun waveform(vibrator: Vibrator, texture: Texture): VibrationEffect =
-        if (vibrator.hasAmplitudeControl()) {
-            VibrationEffect.createWaveform(texture.timings, texture.amplitudes, -1)
-        } else {
-            VibrationEffect.createWaveform(texture.timings, -1)
-        }
-
-    /** Played as touch feedback, so the system's touch intensity applies. */
     @RequiresApi(Build.VERSION_CODES.O)
     private fun vibrate(vibrator: Vibrator, effect: VibrationEffect) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            vibrator.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH))
+            vibrator.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_MEDIA))
         } else {
             @Suppress("DEPRECATION")
             vibrator.vibrate(
                 effect,
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build(),
             )
         }
     }
 
-    private companion object {
-        // The ids are compile-time constants, each played only behind the
-        // SDK check that introduced it. Each timing list starts with a 0 ms
-        // wait; amplitudes pair with it.
-        @SuppressLint("InlinedApi")
-        val TEXTURES: Map<String, Texture> = mapOf(
+    companion object {
+        /** The textures the reveal names; admissionFeedback.ts keeps the same list. */
+        val TOUCHES = setOf("heartbeat", "press", "crack", "detent", "unfold", "land", "grain", "release", "arrive", "select")
+
+        private val TEXTURES: Map<String, Texture> = mapOf(
+            // Lub-dub: a strong beat, then a softer one.
+            "heartbeat" to Texture(longArrayOf(0, 55, 120, 38), intArrayOf(0, 235, 0, 150), longArrayOf(0, 55, 120, 38)),
             // A fingertip settling on the wax.
-            "press" to Texture(
-                listOf(listOf(Step(LOW_TICK, 0.6f)), listOf(Step(TICK, 0.5f))),
-                VibrationEffect.EFFECT_TICK,
-                longArrayOf(0, 10), intArrayOf(0, 90),
-            ),
-            // The seal snaps: two fractures 26 ms apart, then the wax lets go.
-            "crack" to Texture(
-                listOf(
-                    listOf(Step(CLICK, 1f), Step(TICK, 0.7f, 14), Step(LOW_TICK, 0.45f, 18)),
-                    listOf(Step(CLICK, 1f), Step(TICK, 0.7f, 14)),
-                ),
-                VibrationEffect.EFFECT_HEAVY_CLICK,
-                longArrayOf(0, 14, 12, 10), intArrayOf(0, 255, 0, 140),
-            ),
+            "press" to Texture(longArrayOf(0, 24), intArrayOf(0, 150), longArrayOf(0, 26)),
+            // The seal snaps: a hard fracture, a second, and the wax letting go.
+            "crack" to Texture(longArrayOf(0, 28, 22, 18, 40, 60), intArrayOf(0, 255, 0, 190, 0, 70), longArrayOf(0, 70, 45, 34)),
             // A flap standing upright under the finger: a notch.
-            "detent" to Texture(
-                listOf(listOf(Step(TICK, 0.5f))),
-                VibrationEffect.EFFECT_TICK,
-                longArrayOf(0, 6), intArrayOf(0, 110),
+            "detent" to Texture(longArrayOf(0, 18), intArrayOf(0, 170), longArrayOf(0, 24)),
+            // The flaps swinging open: a swell that settles.
+            "unfold" to Texture(
+                longArrayOf(0, 60, 60, 60, 60, 60, 60, 70),
+                intArrayOf(0, 40, 75, 110, 140, 115, 80, 40),
+                longArrayOf(0, 18, 30, 22, 30, 28, 30, 36),
             ),
             // A flap coming to rest on the table.
-            "land" to Texture(
-                listOf(listOf(Step(THUD, 0.55f)), listOf(Step(CLICK, 0.45f))),
-                VibrationEffect.EFFECT_CLICK,
-                longArrayOf(0, 14), intArrayOf(0, 170),
-            ),
-            // Paper against the pocket, many times a second: barely there.
-            "grain" to Texture(
-                listOf(listOf(Step(LOW_TICK, 0.28f)), listOf(Step(TICK, 0.18f))),
-                VibrationEffect.EFFECT_TICK,
-                longArrayOf(0, 4), intArrayOf(0, 60),
-            ),
+            "land" to Texture(longArrayOf(0, 40), intArrayOf(0, 220), longArrayOf(0, 46)),
             // The letter rising out of the pocket and slipping free.
-            "release" to Texture(
-                listOf(
-                    listOf(Step(QUICK_RISE, 0.45f), Step(TICK, 0.8f)),
-                    listOf(Step(TICK, 0.4f), Step(CLICK, 0.6f, 24)),
-                ),
-                VibrationEffect.EFFECT_CLICK,
-                longArrayOf(0, 8, 24, 14), intArrayOf(0, 90, 0, 150),
-            ),
-            // In the student's hands: two taps with the chime's two bells.
+            "release" to Texture(longArrayOf(0, 30, 30, 30, 30, 50), intArrayOf(0, 70, 120, 170, 220, 255), longArrayOf(0, 28, 36, 58)),
+            // In the student's hands: the downbeat, then the melody's first three notes.
             "arrive" to Texture(
-                listOf(listOf(Step(CLICK, 0.6f), Step(CLICK, 1f, 118))),
-                VibrationEffect.EFFECT_DOUBLE_CLICK,
-                longArrayOf(0, 16, 114, 28), intArrayOf(0, 140, 0, 230),
+                longArrayOf(0, 90, 535, 30, 282, 30, 283, 50),
+                intArrayOf(0, 255, 0, 160, 0, 185, 0, 235),
+                longArrayOf(0, 90, 535, 30, 282, 30, 283, 50),
             ),
+            "select" to Texture(longArrayOf(0, 22), intArrayOf(0, 180), longArrayOf(0, 26)),
         )
+
+        /** Paper against the pocket grows longer and stronger as the letter comes out. */
+        private fun textureFor(touch: String, level: Double): Texture? {
+            if (touch != "grain") return TEXTURES[touch]
+            val l = level.coerceIn(0.0, 1.0)
+            val ms = (12 + 16 * l).toLong()
+            return Texture(longArrayOf(0, ms), intArrayOf(0, (80 + 150 * l).toInt()), longArrayOf(0, (16 + 18 * l).toLong()))
+        }
     }
 }

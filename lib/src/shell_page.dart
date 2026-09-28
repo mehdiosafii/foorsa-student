@@ -595,9 +595,18 @@ class _ShellPageState extends State<ShellPage> {
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellHaptic',
                     callback: (args) {
-                      unawaited(_haptics.play(args.isEmpty ? null : args.first));
+                      unawaited(_haptics.play(
+                        args.isEmpty ? null : args.first,
+                        args.length > 1 ? args[1] : null,
+                      ));
                       return null;
                     },
+                  );
+                  // Tells the portal this build plays haptic textures by
+                  // name; older builds answer null and get ticks in rhythm.
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellCapabilities',
+                    callback: (args) => ShellHaptics.capabilities,
                   );
                   // In-app preview of an authenticated backend file:
                   // (url, filename, mime) -> PDF viewer / image viewer /

@@ -62,7 +62,12 @@ class MainActivity : FlutterActivity() {
                     result.notImplemented()
                     return@setMethodCallHandler
                 }
-                result.success(haptics.play(call.arguments as? String ?: ""))
+                // { touch, level } from current Dart; a bare name from older builds.
+                val args = call.arguments
+                val map = args as? Map<*, *>
+                val touch = map?.get("touch") as? String ?: args as? String ?: ""
+                val level = (map?.get("level") as? Number)?.toDouble() ?: 1.0
+                result.success(haptics.play(touch, level))
             }
     }
 

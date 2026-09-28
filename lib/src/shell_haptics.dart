@@ -1,15 +1,18 @@
 /// The portal's sense of touch, played natively.
 ///
 /// The web sends `FoorsaShellHaptic` with a texture name from the admission
-/// reveal (`admissionFeedback.ts` in the portal): the seal pressed and
-/// cracking, a flap standing up and landing, paper grain, the letter slipping
-/// free and arriving. On Android each name becomes a crafted vibration
-/// (`ShellHaptics.kt`: haptic primitives, the system's tuned effects, or an
-/// amplitude waveform, whichever the phone supports). On iOS it becomes a
-/// short sequence of Taptic impacts.
+/// reveal (`admissionFeedback.ts` in the portal) and, for the grain, how far
+/// the letter has been pulled: a heartbeat while it waits, the seal pressed
+/// and cracking, the flaps unfolding and landing, paper grain, the letter
+/// slipping free and arriving. On Android each name becomes a strong
+/// amplitude waveform (`ShellHaptics.kt`) played as media vibration, so the
+/// touch-feedback switch that silences keyboard ticks cannot silence it. On
+/// iOS it becomes a short sequence of Taptic impacts.
 ///
-/// Anything else — the portal's ordinary buttons send a number — keeps the
-/// light tick it has always had.
+/// The web learns that this build plays textures from
+/// `FoorsaShellCapabilities`; builds without it get their one light tick in
+/// the pattern's rhythm instead. Anything else — the portal's ordinary buttons
+/// send a number — keeps the light tick it has always had.
 library;
 
 import 'dart:async';
@@ -26,12 +29,19 @@ class ShellHaptics {
   final bool _android;
   bool _nativeMissing = false;
 
+  /// What `FoorsaShellCapabilities` answers.
+  static const Map<String, Object> capabilities = <String, Object>{
+    'hapticTextures': 2,
+  };
+
   /// The textures the reveal knows. Kept in step with `Touch` in
   /// admissionFeedback.ts; a name missing here plays as an ordinary tap.
   static const Set<String> textures = <String>{
+    'heartbeat',
     'press',
     'crack',
     'detent',
+    'unfold',
     'land',
     'grain',
     'release',
@@ -42,45 +52,69 @@ class ShellHaptics {
   static String touchFrom(Object? arg) =>
       arg is String && textures.contains(arg) ? arg : 'select';
 
+  /// How far along the pull is, 0–1; anything unreadable counts as full.
+  static double levelFrom(Object? arg) =>
+      arg is num ? arg.toDouble().clamp(0.0, 1.0) : 1.0;
+
   /// Plays one touch. Never throws: feedback must not break the page.
-  Future<void> play(Object? arg) async {
+  Future<void> play(Object? arg, [Object? levelArg]) async {
     final touch = touchFrom(arg);
     if (touch == 'select') {
       await _impact(HapticFeedback.lightImpact);
       return;
     }
+    final level = levelFrom(levelArg);
     if (_android && !_nativeMissing) {
       try {
-        if (await _channel.invokeMethod<bool>('play', touch) == true) return;
+        final played = await _channel.invokeMethod<bool>('play', {
+          'touch': touch,
+          'level': level,
+        });
+        if (played == true) return;
       } on MissingPluginException {
         _nativeMissing = true;
       } catch (_) {
         // Fall through to the system impacts.
       }
     }
-    await _impacts(touch);
+    await _impacts(touch, level);
   }
 
   /// Taptic sequences for iOS, and Android's fallback. The gaps follow the
-  /// sound: the seal's two fractures, the chime's two bells.
-  Future<void> _impacts(String touch) async {
+  /// music: the seal's two fractures, and the arrival's downbeat and the
+  /// melody's first three notes (0, 625, 937 and 1250 ms).
+  Future<void> _impacts(String touch, double level) async {
     switch (touch) {
+      case 'heartbeat':
+        await _impact(HapticFeedback.heavyImpact);
+        await _after(175, HapticFeedback.mediumImpact);
       case 'press':
         await _impact(HapticFeedback.lightImpact);
       case 'crack':
         await _impact(HapticFeedback.heavyImpact);
         await _after(26, HapticFeedback.lightImpact);
       case 'detent':
-      case 'grain':
         await _impact(HapticFeedback.selectionClick);
+      case 'unfold':
+        await _impact(HapticFeedback.lightImpact);
+        await _after(90, HapticFeedback.lightImpact);
+        await _after(90, HapticFeedback.mediumImpact);
       case 'land':
         await _impact(HapticFeedback.mediumImpact);
+      case 'grain':
+        await _impact(
+          level < 0.5
+              ? HapticFeedback.selectionClick
+              : HapticFeedback.lightImpact,
+        );
       case 'release':
         await _impact(HapticFeedback.lightImpact);
-        await _after(60, HapticFeedback.selectionClick);
+        await _after(60, HapticFeedback.mediumImpact);
       case 'arrive':
-        await _impact(HapticFeedback.mediumImpact);
-        await _after(130, HapticFeedback.heavyImpact);
+        await _impact(HapticFeedback.heavyImpact);
+        await _after(625, HapticFeedback.lightImpact);
+        await _after(312, HapticFeedback.lightImpact);
+        await _after(313, HapticFeedback.mediumImpact);
     }
   }
 
