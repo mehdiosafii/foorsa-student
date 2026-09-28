@@ -53,6 +53,17 @@ class MainActivity : FlutterActivity() {
                     result.error("save_failed", e.message, null)
                 }
             }
+        // The admission reveal's textures, by name (shell_haptics.dart).
+        // Answers false when the phone cannot play one, so Dart falls back.
+        val haptics = ShellHaptics(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/haptics")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "play") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                result.success(haptics.play(call.arguments as? String ?: ""))
+            }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -8,6 +8,9 @@
     <!-- Legacy devices only: MediaStore needs no permission on API 29+ -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                      android:maxSdkVersion="28"/>
+    <!-- Install-time, no prompt: the admission reveal's haptic textures
+         (ShellHaptics.kt). Touch feedback settings still apply. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
 
     <application
         android:label="Foorsa Student"
