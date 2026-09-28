@@ -30,6 +30,7 @@ import 'calendar_reminders.dart';
 import 'pdf_validation.dart';
 import 'flicker_spinner.dart';
 import 'embedded_navigation.dart';
+import 'shell_haptics.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -180,6 +181,8 @@ class _ShellPageState extends State<ShellPage> {
 
   // ── Native download (FoorsaShellDownloadFile) ────────────────────────────
   static const MethodChannel _downloadsChannel = MethodChannel('foorsa/downloads');
+
+  final ShellHaptics _haptics = ShellHaptics();
 
   Future<Map<String, dynamic>> _downloadForWeb(
       String url, String filename, String mime) async {
@@ -586,14 +589,24 @@ class _ShellPageState extends State<ShellPage> {
                       return null;
                     },
                   );
-                  // Tactile tick for portal button presses —
-                  // navigator.vibrate is unreliable inside the WebView.
+                  // Touch feedback — navigator.vibrate is unreliable inside
+                  // the WebView. Buttons send a number and get a light tick;
+                  // the admission reveal names a texture (shell_haptics.dart).
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellHaptic',
                     callback: (args) {
-                      HapticFeedback.lightImpact();
+                      unawaited(_haptics.play(
+                        args.isEmpty ? null : args.first,
+                        args.length > 1 ? args[1] : null,
+                      ));
                       return null;
                     },
+                  );
+                  // Tells the portal this build plays haptic textures by
+                  // name; older builds answer null and get ticks in rhythm.
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellCapabilities',
+                    callback: (args) => ShellHaptics.capabilities,
                   );
                   // In-app preview of an authenticated backend file:
                   // (url, filename, mime) -> PDF viewer / image viewer /
