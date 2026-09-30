@@ -8,6 +8,8 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
+import 'dart:math';
 import 'dart:convert';
 import 'dart:io';
 
@@ -24,7 +26,11 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:url_launcher/url_launcher.dart' as launcher;
 
 import 'config.dart';
+import 'calendar_reminders.dart';
+import 'pdf_validation.dart';
 import 'flicker_spinner.dart';
+import 'embedded_navigation.dart';
+import 'shell_haptics.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -35,6 +41,9 @@ class ShellPage extends StatefulWidget {
 
 
 class _ShellPageState extends State<ShellPage> {
+  late final _calendar = CalendarReminders(onOpen: () { _controller?.loadUrl(urlRequest: URLRequest(url: WebUri('${AppConfig.baseUrl}/calendar'))); });
+  final _calendarNonce = base64Url.encode(List<int>.generate(32, (_) => Random.secure().nextInt(256)));
+
   InAppWebViewController? _controller;
   PackageInfo? _packageInfo;
   bool _firstLoadDone = false;
@@ -47,6 +56,13 @@ class _ShellPageState extends State<ShellPage> {
   bool _errorThisLoad = false;
   /// While offline: quiet retry loop behind the branded overlay.
   Timer? _retryTimer;
+  /// The last page that loaded cleanly. A retry, or a WebView rebuilt after
+  /// its renderer died, returns the student there instead of to Home.
+  WebUri? _lastGoodUrl;
+  /// A new key rebuilds the WebView from scratch; Android needs that once its
+  /// render process is gone, because the old view can never draw again.
+  Key _webViewKey = UniqueKey();
+  bool _retryInFlight = false;
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
 
@@ -90,8 +106,12 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _retry() {
+    // One attempt at a time: on a slow network a 6 s tick would otherwise
+    // cancel the load still on its way and start another, for ever.
+    if (_retryInFlight) return;
+    _retryInFlight = true;
     _controller?.loadUrl(
-        urlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)));
+        urlRequest: URLRequest(url: _lastGoodUrl ?? WebUri(AppConfig.baseUrl)));
   }
 
   void _exitOffline() {
@@ -172,6 +192,8 @@ class _ShellPageState extends State<ShellPage> {
 
   // ── Native download (FoorsaShellDownloadFile) ────────────────────────────
   static const MethodChannel _downloadsChannel = MethodChannel('foorsa/downloads');
+
+  final ShellHaptics _haptics = ShellHaptics();
 
   Future<Map<String, dynamic>> _downloadForWeb(
       String url, String filename, String mime) async {
@@ -329,7 +351,7 @@ class _ShellPageState extends State<ShellPage> {
         }
         if (needDownload) {
           final response = await client.getUrl(uri).then((r) => r.close());
-          if (response.statusCode >= 400) {
+          if (response.statusCode < 200 || response.statusCode >= 300) {
             throw HttpException('HTTP ${response.statusCode}');
           }
           await response.pipe(file.openWrite());
@@ -338,10 +360,15 @@ class _ShellPageState extends State<ShellPage> {
         client.close();
       }
 
+      final kind = mime.toLowerCase().trim();
+      final isPdf = kind == 'application/pdf' || name.toLowerCase().endsWith('.pdf');
+      if (isPdf && !await hasPdfHeader(file)) {
+        await file.delete();
+        throw const FormatException('Downloaded document is not a PDF');
+      }
       dismissSpinner();
       if (!mounted) return;
-      final kind = mime.toLowerCase().trim();
-      if (kind == 'application/pdf' || name.toLowerCase().endsWith('.pdf')) {
+      if (isPdf) {
         await Navigator.of(context).push(MaterialPageRoute<void>(
             builder: (_) => _PdfPreviewPage(path: file.path, title: name)));
       } else if (kind.startsWith('image/')) {
@@ -444,6 +471,12 @@ class _ShellPageState extends State<ShellPage> {
     if (args.isNotEmpty && args[0] is Map) {
       action = ((args[0] as Map)['action'] ?? '').toString();
     }
+    if (action.startsWith('calendar')) {
+      final request = Map<String, dynamic>.from(args.first as Map);
+      final url = await _controller?.getUrl();
+      if (url?.scheme != 'https' || url?.host != 'student.foorsa.ma' || request['nonce'] != _calendarNonce) return {'error': 'Not allowed'};
+      try { return await _calendar.call(request); } catch (_) { return {'error': 'Could not schedule reminders. Please try again.'}; }
+    }
     switch (action) {
       case 'getPushToken':
         return {'token': null}; // student app ships without push (yet)
@@ -480,6 +513,7 @@ class _ShellPageState extends State<ShellPage> {
       SystemNavigator.pop();
       return;
     }
+    if (!mounted) return;
     _lastBackPress = now;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       const SnackBar(
@@ -510,7 +544,13 @@ class _ShellPageState extends State<ShellPage> {
               child: !_bootWebView
                   ? const SizedBox.expand()
                   : InAppWebView(
-                initialUrlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)),
+                key: _webViewKey,
+                initialUrlRequest: URLRequest(url: _lastGoodUrl ?? WebUri(AppConfig.baseUrl)),
+                initialUserScripts: UnmodifiableListView([UserScript(
+                  source: 'if(location.origin === "https://student.foorsa.ma") window.foorsaCalendarNonce = "$_calendarNonce";',
+                  injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+                  forMainFrameOnly: true,
+                )]),
                 initialSettings: InAppWebViewSettings(
                   allowFileAccess: true,
                   javaScriptEnabled: true,
@@ -561,14 +601,24 @@ class _ShellPageState extends State<ShellPage> {
                       return null;
                     },
                   );
-                  // Tactile tick for portal button presses —
-                  // navigator.vibrate is unreliable inside the WebView.
+                  // Touch feedback — navigator.vibrate is unreliable inside
+                  // the WebView. Buttons send a number and get a light tick;
+                  // the admission reveal names a texture (shell_haptics.dart).
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellHaptic',
                     callback: (args) {
-                      HapticFeedback.lightImpact();
+                      unawaited(_haptics.play(
+                        args.isEmpty ? null : args.first,
+                        args.length > 1 ? args[1] : null,
+                      ));
                       return null;
                     },
+                  );
+                  // Tells the portal this build plays haptic textures by
+                  // name; older builds answer null and get ticks in rhythm.
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellCapabilities',
+                    callback: (args) => ShellHaptics.capabilities,
                   );
                   // In-app preview of an authenticated backend file:
                   // (url, filename, mime) -> PDF viewer / image viewer /
@@ -633,11 +683,34 @@ class _ShellPageState extends State<ShellPage> {
                   _errorThisLoad = false;
                 },
                 onLoadStop: (controller, url) async {
+                  _retryInFlight = false;
                   if (!_firstLoadDone) setState(() => _firstLoadDone = true);
-                  if (!_errorThisLoad) _exitOffline();
+                  if (!_errorThisLoad) {
+                    if (url != null && _isInternal(url)) _lastGoodUrl = url;
+                    _exitOffline();
+                  }
+                },
+                // iOS: the system reclaimed the page's process (memory
+                // pressure, a long time in the background). The view stays
+                // blank until something reloads it.
+                onWebContentProcessDidTerminate: (controller) {
+                  controller.reload();
+                },
+                // Android: the renderer crashed or was killed. The view can
+                // never draw again, so build a new one where the student was.
+                onRenderProcessGone: (controller, detail) {
+                  if (!mounted) return;
+                  setState(() {
+                    _controller = null;
+                    _webViewKey = UniqueKey();
+                  });
                 },
                 onReceivedError: (controller, request, error) {
+                  // A load the WebView cancelled itself (a new navigation
+                  // started, a download took over) is not being offline.
+                  if (error.type == WebResourceErrorType.CANCELLED) return;
                   if (request.isForMainFrame ?? true) {
+                    _retryInFlight = false;
                     _errorThisLoad = true;
                     _enterOffline();
                   }
@@ -659,6 +732,10 @@ class _ShellPageState extends State<ShellPage> {
                 shouldOverrideUrlLoading: (controller, action) async {
                   final uri = action.request.url;
                   if (uri == null) return NavigationActionPolicy.ALLOW;
+                  if (isEmbeddedWebNavigation(uri,
+                      isForMainFrame: action.isForMainFrame)) {
+                    return NavigationActionPolicy.ALLOW;
+                  }
                   if (_isInternal(uri)) return NavigationActionPolicy.ALLOW;
                   await _openExternally(uri);
                   return NavigationActionPolicy.CANCEL;
@@ -727,9 +804,9 @@ class _OfflineView extends StatelessWidget {
           Container(
             padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.07),
+              color: Colors.white.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white.withOpacity(0.14)),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -738,9 +815,9 @@ class _OfflineView extends StatelessWidget {
                   width: 64,
                   height: 64,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.10),
+                    color: Colors.white.withValues(alpha: 0.10),
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.18)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
                   ),
                   child: const Icon(Icons.wifi_off_rounded,
                       color: Colors.white, size: 30),
