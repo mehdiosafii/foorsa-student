@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>apple-design · showcase</title>
+
+<!-- Validates the real token file works via a relative import. -->
+<link rel="stylesheet" href="../assets/tokens.css" />
+
+<!-- SVG refraction filter for the hero Liquid Glass (Chromium enhances; others get clean glass). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="liquid-refraction" x="-20%" y="-20%" width="140%" height="140%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="4" result="noise"/>
+    <feGaussianBlur in="noise" stdDeviation="2" result="soft"/>
+    <feDisplacementMap in="SourceGraphic" in2="soft" scale="16" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
+
+<style>
+  /* ---- page-local material + component styles (reference tokens only) ---- */
+  body { min-height: 100vh; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 var(--space-6) var(--space-12); }
+
+  /* animated ambient background so glass has something colorful to refract */
+  .aurora { position: fixed; inset: -20%; z-index: -1; filter: blur(40px);
+    background:
+      radial-gradient(40% 40% at 20% 25%, var(--purple), transparent 70%),
+      radial-gradient(45% 45% at 80% 20%, var(--blue), transparent 70%),
+      radial-gradient(50% 50% at 65% 80%, var(--pink), transparent 70%),
+      radial-gradient(40% 40% at 15% 85%, var(--teal), transparent 70%);
+    opacity: 0.55; animation: drift 24s ease-in-out infinite alternate; }
+  @keyframes drift { to { transform: translate3d(4%, -3%, 0) scale(1.1); } }
+
+  .glass {
+    background: var(--material-regular-tint);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+            backdrop-filter: blur(20px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.55),
+      inset 0 0 0 0.5px rgba(255,255,255,0.18),
+      0 0 0 0.5px rgba(0,0,0,0.06),
+      var(--shadow-glass);
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .glass {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), inset 0 0 0 0.5px rgba(255,255,255,0.06),
+      0 0 0 0.5px rgba(0,0,0,0.4), var(--shadow-glass); } }
+  [data-theme="dark"] .glass { box-shadow: inset 0 1px 0 rgba(255,255,255,0.12),
+    inset 0 0 0 0.5px rgba(255,255,255,0.06), 0 0 0 0.5px rgba(0,0,0,0.4), var(--shadow-glass); }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass { background: color-mix(in srgb, var(--bg) 88%, transparent); } }
+  @media (prefers-reduced-transparency: reduce) {
+    .glass { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; } }
+
+  /* nav */
+  .nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center;
+    justify-content: space-between; padding: var(--space-4) var(--space-6);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg); margin-bottom: var(--space-8);
+    transition: padding var(--duration-base) var(--ease-out); }
+  .nav.condensed { padding-block: var(--space-3); }
+  .nav-title { font-weight: var(--weight-bold); letter-spacing: var(--tracking-snug);
+    font-size: var(--text-title-2); transition: font-size var(--duration-base) var(--ease-out); }
+  .nav.condensed .nav-title { font-size: var(--text-headline); }
+
+  /* typography demo */
+  .hero { padding: var(--space-10) 0 var(--space-8); }
+  .hero h1 { margin: 0; font-size: clamp(2.25rem, 6vw + 1rem, 4.25rem);
+    font-weight: var(--weight-bold); letter-spacing: var(--tracking-tight);
+    line-height: var(--leading-tight); font-optical-sizing: auto; text-wrap: balance; }
+  .hero p { margin: var(--space-5) 0 0; font-size: var(--text-title-3);
+    color: var(--label-secondary); letter-spacing: var(--tracking-snug);
+    line-height: var(--leading-snug); max-width: 34ch; }
+
+  section { margin-top: var(--space-9); }
+  .eyebrow { font-size: var(--text-footnote); font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-wide); text-transform: uppercase;
+    color: var(--label-tertiary); margin: 0 0 var(--space-4); }
+
+  /* buttons */
+  .row { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+  .btn { font: inherit; font-weight: var(--weight-semibold); border: none; cursor: pointer;
+    padding: var(--space-4) var(--space-6); border-radius: var(--radius-capsule);
+    color: var(--label);
+    transition: transform var(--duration-instant) var(--ease-out), filter var(--duration-instant) var(--ease-out); }
+  .btn:active { transform: scale(0.97); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-filled { background: var(--accent); color: #fff; }
+  .btn-filled:active { filter: brightness(0.92); }
+  .btn-tinted { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+
+  /* segmented control */
+  .segmented { display: inline-flex; gap: 2px; padding: 2px; background: var(--fill-3);
+    border-radius: var(--radius-md); position: relative; }
+  .segmented button { position: relative; z-index: 1; border: none; background: none; cursor: pointer;
+    font: inherit; font-weight: var(--weight-medium); padding: 6px 18px; border-radius: calc(var(--radius-md) - 2px);
+    color: var(--label-secondary); transition: color var(--duration-base) var(--ease-out); }
+  .segmented button[aria-selected="true"] { color: var(--label); }
+  .segmented .indicator { position: absolute; z-index: 0; top: 2px; bottom: 2px;
+    background: var(--bg-tertiary); border-radius: calc(var(--radius-md) - 2px); box-shadow: var(--shadow-1); }
+
+  /* cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-5); }
+  .card { padding: var(--space-6); border-radius: var(--radius-xl); }
+  .card h3 { margin: 0 0 var(--space-2); font-size: var(--text-headline); font-weight: var(--weight-semibold); }
+  .card p { margin: 0; color: var(--label-secondary); font-size: var(--text-subhead); line-height: var(--leading-normal); }
+
+  /* bottom sheet */
+  .scrim { position: fixed; inset: 0; z-index: 199; background: rgba(0,0,0,0.4); opacity: 0; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 200; max-height: 80vh;
+    border-radius: var(--radius-2xl) var(--radius-2xl) 0 0; padding: 0 var(--space-6) var(--space-10);
+    transform: translateY(100%); touch-action: none; will-change: transform; }
+  .grabber { width: 36px; height: 5px; border-radius: 999px; background: var(--label-tertiary);
+    margin: var(--space-3) auto var(--space-5); }
+  .sheet h2 { margin: 0 0 var(--space-3); letter-spacing: var(--tracking-snug); }
+  .sheet p { color: var(--label-secondary); line-height: var(--leading-relaxed); }
+
+  .toggle { font: inherit; border: none; background: var(--fill-3); color: var(--label);
+    padding: 6px 14px; border-radius: var(--radius-capsule); cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="aurora"></div>
+
+<div class="wrap">
+  <header class="nav glass" id="nav">
+    <span class="nav-title">apple-design</span>
+    <button class="toggle" id="theme">◐ Theme</button>
+  </header>
+
+  <div class="hero">
+    <h1>Interfaces that feel like Apple made them.</h1>
+    <p>Fluid physics, Liquid Glass, and optical type — rendered on the web.</p>
+  </div>
+
+  <section>
+    <p class="eyebrow">Press physics</p>
+    <div class="row">
+      <button class="btn btn-filled">Continue</button>
+      <button class="btn btn-tinted">Learn more</button>
+      <button class="btn glass">Glass</button>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Segmented control · spring indicator</p>
+    <div class="segmented" id="seg">
+      <span class="indicator" id="seg-ind"></span>
+      <button aria-selected="true">Day</button>
+      <button aria-selected="false">Week</button>
+      <button aria-selected="false">Month</button>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Liquid Glass materials</p>
+    <div class="cards">
+      <div class="card glass"><h3>Specular edge</h3><p>Lit top rim, hairline border, and soft depth — not just blur.</p></div>
+      <div class="card glass" style="backdrop-filter:blur(16px) saturate(180%) url(#liquid-refraction); -webkit-backdrop-filter:blur(16px) saturate(180%);"><h3>Refraction</h3><p>The background lenses at the edges (Chromium). Others fall back cleanly.</p></div>
+      <div class="card glass"><h3>Vibrancy</h3><p>Text uses opacity-encoded label tokens, legible over any backdrop.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Gesture physics</p>
+    <div class="row">
+      <button class="btn btn-filled" id="open-sheet">Show bottom sheet</button>
+    </div>
+    <p style="color:var(--label-tertiary); font-size:var(--text-footnote); margin-top:var(--space-4)">
+      Drag it down to dismiss — a fast flick throws it, a slow tug rubber-bands and springs back.
+    </p>
+  </section>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="sheet glass" id="sheet" role="dialog" aria-modal="true" aria-label="Details">
+  <div class="grabber"></div>
+  <h2>Fluid, interruptible, physical.</h2>
+  <p>This sheet tracks your finger 1:1, resists past its top edge with rubber-banding,
+     and on release projects momentum to decide whether to dismiss — then settles with a
+     spring seeded by your exact release velocity. Grab it mid-animation and it obeys.</p>
+</aside>
+
+<script>
+/* ---- tiny interruptible spring (rAF) — no dependencies -------------------- */
+function spring(from, to, velocity, opts, onUpdate, onDone) {
+  const stiffness = opts.stiffness ?? 190, damping = opts.damping ?? 26, mass = opts.mass ?? 1;
+  let x = from, v = velocity, last = performance.now(), raf;
+  function step(now) {
+    const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
+    const a = (-stiffness * (x - to) - damping * v) / mass;
+    v += a * dt; x += v * dt;
+    onUpdate(x);
+    if (Math.abs(v) < 0.6 && Math.abs(x - to) < 0.4) { onUpdate(to); onDone && onDone(); return; }
+    raf = requestAnimationFrame(step);
+  }
+  raf = requestAnimationFrame(step);
+  return () => cancelAnimationFrame(raf);   // cancel = interruptible
+}
+
+/* ---- nav condense on scroll ---------------------------------------------- */
+const nav = document.getElementById("nav");
+addEventListener("scroll", () => nav.classList.toggle("condensed", scrollY > 40), { passive: true });
+
+/* ---- theme toggle -------------------------------------------------------- */
+document.getElementById("theme").addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : cur === "light" ? "dark"
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", next);
+});
+// Shareable theme via ?theme=light|dark (also drives the README screenshots).
+{ const t = new URLSearchParams(location.search).get("theme");
+  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); }
+
+/* ---- segmented control: spring the indicator ----------------------------- */
+const seg = document.getElementById("seg"), ind = document.getElementById("seg-ind");
+const segBtns = [...seg.querySelectorAll("button")];
+let cancelSeg;
+function moveIndicator(btn, animate) {
+  const r = btn.getBoundingClientRect(), sr = seg.getBoundingClientRect();
+  const left = r.left - sr.left, width = r.width;
+  ind.style.width = width + "px";
+  const target = left;
+  const current = parseFloat(ind.dataset.x || "2");
+  cancelSeg && cancelSeg();
+  if (!animate) { ind.style.transform = `translateX(${target}px)`; ind.dataset.x = target; return; }
+  cancelSeg = spring(current, target, 0, { stiffness: 320, damping: 30 }, (x) => {
+    ind.style.transform = `translateX(${x}px)`; ind.dataset.x = x;
+  });
+}
+segBtns.forEach((b) => b.addEventListener("click", () => {
+  segBtns.forEach((x) => x.setAttribute("aria-selected", x === b));
+  moveIndicator(b, true);
+}));
+addEventListener("load", () => moveIndicator(segBtns[0], false));
+addEventListener("resize", () => moveIndicator(seg.querySelector('[aria-selected="true"]'), false));
+
+/* ---- bottom sheet: full gesture physics ---------------------------------- */
+const sheet = document.getElementById("sheet"), scrim = document.getElementById("scrim");
+const rubber = (o, dim, c = 0.55) => (o * dim * c) / (dim + c * Math.abs(o));
+const project = (vel, d = 0.998) => (vel / 1000) * d / (1 - d);
+let H = 0, startY = 0, curY = 0, samples = [], cancelSheet, dragging = false;
+const setY = (y) => { curY = y; sheet.style.transform = `translateY(${y}px)`; };
+
+function openSheet() {
+  scrim.hidden = false; H = sheet.offsetHeight;
+  cancelSheet && cancelSheet(); setY(H);
+  cancelSheet = spring(H, 0, 0, { stiffness: 190, damping: 24 }, setY);
+  scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, fill: "forwards" });
+}
+function closeSheet(velocity = 0) {
+  cancelSheet && cancelSheet();
+  cancelSheet = spring(curY, H, velocity, { stiffness: 190, damping: 26 }, setY, () => { scrim.hidden = true; });
+  scrim.animate([{ opacity: getComputedStyle(scrim).opacity }, { opacity: 0 }], { duration: 250, fill: "forwards" });
+}
+document.getElementById("open-sheet").addEventListener("click", openSheet);
+scrim.addEventListener("click", () => closeSheet());
+
+sheet.addEventListener("pointerdown", (e) => {
+  sheet.setPointerCapture(e.pointerId); cancelSheet && cancelSheet();
+  dragging = true; startY = e.clientY - curY; samples = [{ y: curY, t: e.timeStamp }];
+});
+sheet.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  let y = e.clientY - startY;
+  if (y < 0) y = -rubber(-y, H);          // resist past the top edge
+  setY(y);
+  samples.push({ y, t: e.timeStamp }); if (samples.length > 5) samples.shift();
+});
+sheet.addEventListener("pointerup", (e) => {
+  if (!dragging) return; dragging = false; sheet.releasePointerCapture(e.pointerId);
+  const a = samples[0], b = samples[samples.length - 1];
+  const vel = (b.t !== a.t) ? (b.y - a.y) / ((b.t - a.t) / 1000) : 0;   // px/s
+  const landing = curY + project(vel);
+  if (landing > H * 0.5 || vel > 800) closeSheet(vel);
+  else cancelSheet = spring(curY, 0, vel, { stiffness: 200, damping: 26 }, setY);
+});
+</script>
+</body>
+</html>
