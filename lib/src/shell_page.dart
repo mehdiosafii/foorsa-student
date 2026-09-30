@@ -56,6 +56,13 @@ class _ShellPageState extends State<ShellPage> {
   bool _errorThisLoad = false;
   /// While offline: quiet retry loop behind the branded overlay.
   Timer? _retryTimer;
+  /// The last page that loaded cleanly. A retry, or a WebView rebuilt after
+  /// its renderer died, returns the student there instead of to Home.
+  WebUri? _lastGoodUrl;
+  /// A new key rebuilds the WebView from scratch; Android needs that once its
+  /// render process is gone, because the old view can never draw again.
+  Key _webViewKey = UniqueKey();
+  bool _retryInFlight = false;
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
 
@@ -99,8 +106,12 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _retry() {
+    // One attempt at a time: on a slow network a 6 s tick would otherwise
+    // cancel the load still on its way and start another, for ever.
+    if (_retryInFlight) return;
+    _retryInFlight = true;
     _controller?.loadUrl(
-        urlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)));
+        urlRequest: URLRequest(url: _lastGoodUrl ?? WebUri(AppConfig.baseUrl)));
   }
 
   void _exitOffline() {
@@ -533,7 +544,8 @@ class _ShellPageState extends State<ShellPage> {
               child: !_bootWebView
                   ? const SizedBox.expand()
                   : InAppWebView(
-                initialUrlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)),
+                key: _webViewKey,
+                initialUrlRequest: URLRequest(url: _lastGoodUrl ?? WebUri(AppConfig.baseUrl)),
                 initialUserScripts: UnmodifiableListView([UserScript(
                   source: 'if(location.origin === "https://student.foorsa.ma") window.foorsaCalendarNonce = "$_calendarNonce";',
                   injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
@@ -671,11 +683,34 @@ class _ShellPageState extends State<ShellPage> {
                   _errorThisLoad = false;
                 },
                 onLoadStop: (controller, url) async {
+                  _retryInFlight = false;
                   if (!_firstLoadDone) setState(() => _firstLoadDone = true);
-                  if (!_errorThisLoad) _exitOffline();
+                  if (!_errorThisLoad) {
+                    if (url != null && _isInternal(url)) _lastGoodUrl = url;
+                    _exitOffline();
+                  }
+                },
+                // iOS: the system reclaimed the page's process (memory
+                // pressure, a long time in the background). The view stays
+                // blank until something reloads it.
+                onWebContentProcessDidTerminate: (controller) {
+                  controller.reload();
+                },
+                // Android: the renderer crashed or was killed. The view can
+                // never draw again, so build a new one where the student was.
+                onRenderProcessGone: (controller, detail) {
+                  if (!mounted) return;
+                  setState(() {
+                    _controller = null;
+                    _webViewKey = UniqueKey();
+                  });
                 },
                 onReceivedError: (controller, request, error) {
+                  // A load the WebView cancelled itself (a new navigation
+                  // started, a download took over) is not being offline.
+                  if (error.type == WebResourceErrorType.CANCELLED) return;
                   if (request.isForMainFrame ?? true) {
+                    _retryInFlight = false;
                     _errorThisLoad = true;
                     _enterOffline();
                   }
