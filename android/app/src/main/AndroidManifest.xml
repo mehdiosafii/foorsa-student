@@ -4,6 +4,10 @@
     <!-- WebView camera capture for document/photo uploads -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <!-- Portal prayer times: approximate location, asked only when the student
+         turns them on, used on the phone and never sent to Foorsa. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-feature android:name="android.hardware.location" android:required="false"/>
     <!-- Legacy devices only: MediaStore needs no permission on API 29+ -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                      android:maxSdkVersion="28"/>

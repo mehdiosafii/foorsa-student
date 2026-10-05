@@ -254,8 +254,9 @@ class _ShellPageState extends State<ShellPage> {
         }
       } else {
         // iOS: no public Downloads folder — keep the file in the app's
-        // documents (visible in Files via the app container). The share
-        // sheet ships with the iOS build milestone.
+        // documents, shown in Files under "On My iPhone › Foorsa Student"
+        // (UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace). The
+        // share sheet ships with the iOS build milestone.
         final docs = await getApplicationDocumentsDirectory();
         final target = File('${docs.path}/$name');
         await tmp.copy(target.path);
@@ -265,7 +266,9 @@ class _ShellPageState extends State<ShellPage> {
       dismissSpinner();
       final path = openPath;
       messenger?.showSnackBar(SnackBar(
-        content: const Text('Enregistré dans Téléchargements'),
+        content: Text(Platform.isIOS
+            ? 'Enregistré dans Fichiers › Foorsa Student'
+            : 'Enregistré dans Téléchargements'),
         action: SnackBarAction(
           label: 'Ouvrir',
           onPressed: () {
@@ -457,15 +460,38 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
+  /// Only the portal's document scanner asks for a capture device, and only
+  /// for the camera. Everything else is refused: the app declares no
+  /// microphone permission or purpose string (iOS would terminate the app on
+  /// a microphone grant), and a page outside the portal gets nothing.
   Future<PermissionResponse> _onPermissionRequest(
       InAppWebViewController controller, PermissionRequest request) async {
-    if (request.resources.contains(PermissionResourceType.CAMERA)) {
-      await ph.Permission.camera.request();
+    final cameraOnly = request.resources.isNotEmpty &&
+        request.resources.every((r) => r == PermissionResourceType.CAMERA);
+    var granted = false;
+    if (cameraOnly && _isInternal(request.origin)) {
+      granted = (await ph.Permission.camera.request()).isGranted;
     }
     return PermissionResponse(
       resources: request.resources,
-      action: PermissionResponseAction.GRANT,
+      action: granted
+          ? PermissionResponseAction.GRANT
+          : PermissionResponseAction.DENY,
     );
+  }
+
+  /// The portal's prayer times ask for the phone's location and compute the
+  /// times on the phone. Only portal pages may ask (Android; iOS asks through
+  /// WebKit with NSLocationWhenInUseUsageDescription).
+  Future<GeolocationPermissionShowPromptResponse> _onGeolocationPrompt(
+      InAppWebViewController controller, String origin) async {
+    var allow = false;
+    final uri = Uri.tryParse(origin);
+    if (uri != null && _isInternal(uri)) {
+      allow = (await ph.Permission.locationWhenInUse.request()).isGranted;
+    }
+    return GeolocationPermissionShowPromptResponse(
+        origin: origin, allow: allow, retain: allow);
   }
 
   Future<void> _handleBack() async {
@@ -512,7 +538,10 @@ class _ShellPageState extends State<ShellPage> {
                   : InAppWebView(
                 initialUrlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)),
                 initialSettings: InAppWebViewSettings(
-                  allowFileAccess: true,
+                  // The portal is remote; no file:// page is ever loaded, and
+                  // uploads come back as data URLs from the native picker.
+                  allowFileAccess: false,
+                  geolocationEnabled: true,
                   javaScriptEnabled: true,
                   javaScriptCanOpenWindowsAutomatically: true,
                   supportMultipleWindows: true,
@@ -643,6 +672,7 @@ class _ShellPageState extends State<ShellPage> {
                   }
                 },
                 onPermissionRequest: _onPermissionRequest,
+                onGeolocationPermissionsShowPrompt: _onGeolocationPrompt,
                 onDownloadStartRequest: (controller, request) =>
                     _download(request),
                 onCreateWindow: (controller, action) async {

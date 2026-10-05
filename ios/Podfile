@@ -1,8 +1,14 @@
 # Uncomment this line to define a global platform for your project
-# platform :ios, '12.0'
+# platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+# file_picker: the shell only opens the document picker (FileType.custom).
+# Leaving the photo-gallery and music pickers compiled in links Photos and
+# MediaPlayer APIs that would each need a purpose string at App Store upload.
+Pod::PICKER_MEDIA = false
+Pod::PICKER_AUDIO = false
 
 project 'Runner', {
   'Debug' => :debug,
@@ -40,5 +46,14 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    # permission_handler compiles every permission out unless enabled here;
+    # without PERMISSION_CAMERA=1, Permission.camera reports "denied" on iOS
+    # and never shows the system prompt.
+    target.build_configurations.each do |config|
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+        'PERMISSION_CAMERA=1',
+      ]
+    end
   end
 end
