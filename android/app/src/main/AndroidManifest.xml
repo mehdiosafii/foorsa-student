@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- WebView camera capture for document/photo uploads -->
     <uses-permission android:name="android.permission.CAMERA"/>
@@ -6,6 +7,12 @@
     <!-- Legacy devices only: MediaStore needs no permission on API 29+ -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                      android:maxSdkVersion="28"/>
+    <!-- open_filex adds broad media read permissions; the app only opens its
+         own files and uploads go through the system picker, so drop them
+         (Google Play photo & video permissions policy). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove"/>
 
     <application
         android:label="Foorsa Student"
