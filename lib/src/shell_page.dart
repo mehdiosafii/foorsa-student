@@ -480,6 +480,20 @@ class _ShellPageState extends State<ShellPage> {
     );
   }
 
+  /// The portal's prayer times ask for the phone's location and compute the
+  /// times on the phone. Only portal pages may ask (Android; iOS asks through
+  /// WebKit with NSLocationWhenInUseUsageDescription).
+  Future<GeolocationPermissionShowPromptResponse> _onGeolocationPrompt(
+      InAppWebViewController controller, String origin) async {
+    var allow = false;
+    final uri = Uri.tryParse(origin);
+    if (uri != null && _isInternal(uri)) {
+      allow = (await ph.Permission.locationWhenInUse.request()).isGranted;
+    }
+    return GeolocationPermissionShowPromptResponse(
+        origin: origin, allow: allow, retain: allow);
+  }
+
   Future<void> _handleBack() async {
     final c = _controller;
     if (c != null && await c.canGoBack()) {
@@ -527,6 +541,7 @@ class _ShellPageState extends State<ShellPage> {
                   // The portal is remote; no file:// page is ever loaded, and
                   // uploads come back as data URLs from the native picker.
                   allowFileAccess: false,
+                  geolocationEnabled: true,
                   javaScriptEnabled: true,
                   javaScriptCanOpenWindowsAutomatically: true,
                   supportMultipleWindows: true,
@@ -657,6 +672,7 @@ class _ShellPageState extends State<ShellPage> {
                   }
                 },
                 onPermissionRequest: _onPermissionRequest,
+                onGeolocationPermissionsShowPrompt: _onGeolocationPrompt,
                 onDownloadStartRequest: (controller, request) =>
                     _download(request),
                 onCreateWindow: (controller, action) async {

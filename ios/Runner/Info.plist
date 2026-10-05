@@ -30,6 +30,8 @@
 		<true/>
 		<key>NSCameraUsageDescription</key>
 		<string>Foorsa Student uses the camera to scan your documents and take your ID photo for your application file.</string>
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>Foorsa Student uses your approximate location only when you turn on prayer times, to calculate them on your phone. It is not sent to Foorsa.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Foorsa Student lets you choose a photo of a document to upload to your application file.</string>
 		<key>UIFileSharingEnabled</key>
