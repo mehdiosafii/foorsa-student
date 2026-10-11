@@ -24,6 +24,7 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:url_launcher/url_launcher.dart' as launcher;
 
 import 'config.dart';
+import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
 
 class ShellPage extends StatefulWidget {
@@ -592,6 +593,13 @@ class _ShellPageState extends State<ShellPage> {
                   );
                   // Tactile tick for portal button presses —
                   // navigator.vibrate is unreliable inside the WebView.
+                  // What this build can do, so the portal can tell it from
+                  // older builds: embeddedFrames = an iframe (a YouTube
+                  // player) plays in the page instead of leaving the app.
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellCapabilities',
+                    callback: (args) => const {'embeddedFrames': true},
+                  );
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellHaptic',
                     callback: (args) {
@@ -689,6 +697,13 @@ class _ShellPageState extends State<ShellPage> {
                 shouldOverrideUrlLoading: (controller, action) async {
                   final uri = action.request.url;
                   if (uri == null) return NavigationActionPolicy.ALLOW;
+                  // An iframe loading its page (the YouTube player on a
+                  // place's card) stays in its frame; only the page itself
+                  // leaves the app for a non-Foorsa address.
+                  if (isEmbeddedWebNavigation(uri,
+                      isForMainFrame: action.isForMainFrame)) {
+                    return NavigationActionPolicy.ALLOW;
+                  }
                   if (_isInternal(uri)) return NavigationActionPolicy.ALLOW;
                   await _openExternally(uri);
                   return NavigationActionPolicy.CANCEL;
