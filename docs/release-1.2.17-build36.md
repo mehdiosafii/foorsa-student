@@ -1,7 +1,6 @@
 # Native hardening — 1.2.17 (36)
 
-Base: 6248b3ce3ec3c657b60d3670eabba550cea529ff. Candidate source is prepared
-for review; no App Store Connect upload or distribution archive was created.
+Base: 6248b3ce3ec3c657b60d3670eabba550cea529ff. Candidate application source was committed as 06e354920ffcd2525126dd58bfa6aaa91777e066. A signed archive and IPA were produced locally and passed deep, strict signature verification. No App Store Connect upload was performed.
 
 ## Changes
 
@@ -58,6 +57,7 @@ not a claim of physical-device readiness. Real WKScriptMessage rejection from
 an attacker frame, normal camera/file picker flows, embedded lesson/video
 playback, PDF/image preview and save, permission denial/revoke, iPhone/iPad
 rotation, offline recovery and background/resume still require interactive
-verification on the exact release candidate. No signed build-36 archive was
-exported here. Android's upstream JavaScript bridge is unchanged by the
+verification on the exact release candidate. The signed build-36 IPA is recorded in local output/verification/signed-build36.json (SHA-256 95ed9244c353dcbd8d0f61e01b5124f4565099d54b15ca5065c1c984f1256aaf). Android's upstream JavaScript bridge is unchanged by the
 specifically iOS-native guard.
+
+The compiled Swift boundary test passed locally. Adding it to the hosted workflow is prepared as a separate local patch, but GitHub refused that workflow change because the installed OAuth credential lacks workflow scope. Existing hosted Flutter checks and iOS build passed. The PR remains a draft: merging a version bump to main automatically uploads, so merge is blocked until App Store Connect access and the remaining review checks are resolved.
