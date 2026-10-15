@@ -25,6 +25,7 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 
 import 'config.dart';
 import 'embedded_navigation.dart';
+import 'document_transfer.dart';
 import 'flicker_spinner.dart';
 
 class ShellPage extends StatefulWidget {
@@ -101,12 +102,7 @@ class _ShellPageState extends State<ShellPage> {
     if (_loadFailed) setState(() => _loadFailed = false);
   }
 
-  bool _isInternal(Uri uri) {
-    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
-    final host = uri.host.toLowerCase();
-    if (AppConfig.internalHosts.contains(host)) return true;
-    return AppConfig.internalHostSuffixes.any((s) => host.endsWith(s));
-  }
+  bool _isInternal(Uri uri) => AppConfig.isInternal(uri);
 
   Future<bool> _openExternally(Uri uri) async {
     try {
@@ -176,26 +172,30 @@ class _ShellPageState extends State<ShellPage> {
   // ── Native download (FoorsaShellDownloadFile) ────────────────────────────
   static const MethodChannel _downloadsChannel = MethodChannel('foorsa/downloads');
 
+  VoidCallback _showTransferSpinner() {
+    if (!mounted) return () {};
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(child: FlickerSpinner(size: 44)),
+      ),
+    );
+    navigator.push(route);
+    return () {
+      // Remove this dialog only, never a newer preview or another modal route.
+      if (route.isActive) navigator.removeRoute(route);
+    };
+  }
+
   Future<Map<String, dynamic>> _downloadForWeb(
       String url, String filename, String mime) async {
     final uri = Uri.tryParse(url);
     if (uri == null || url.isEmpty) return {'ok': false, 'error': 'bad url'};
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final dismissSpinner = _showTransferSpinner();
 
     try {
       var name = filename.trim().isEmpty ? 'document' : filename.trim();
@@ -205,16 +205,7 @@ class _ShellPageState extends State<ShellPage> {
 
       // Same fetch as the preview: the URL is pre-authenticated (?t=) and
       // already carries Content-Disposition — no extra headers.
-      final client = HttpClient();
-      try {
-        final response = await client.getUrl(uri).then((r) => r.close());
-        if (response.statusCode >= 400) {
-          throw HttpException('HTTP ${response.statusCode}');
-        }
-        await response.pipe(tmp.openWrite());
-      } finally {
-        client.close();
-      }
+      await transferDocument(uri, tmp);
 
       var openPath = tmp.path;
       if (Platform.isAndroid) {
@@ -300,7 +291,17 @@ class _ShellPageState extends State<ShellPage> {
       dismissSpinner();
       var reason = e.toString();
       if (reason.length > 90) reason = reason.substring(0, 90);
+      messenger?.showSnackBar(SnackBar(
+        content: Text(e is TimeoutException
+            ? 'Le téléchargement a expiré. Réessayez.'
+            : 'Impossible de télécharger le fichier.'),
+        action: SnackBarAction(label: 'Réessayer', onPressed: () {
+          if (mounted) _downloadForWeb(url, filename, mime);
+        }),
+      ));
       return {'ok': false, 'error': reason};
+    } finally {
+      dismissSpinner();
     }
   }
 
@@ -314,21 +315,7 @@ class _ShellPageState extends State<ShellPage> {
     if (uri == null) return;
     _previewBusy = true;
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final dismissSpinner = _showTransferSpinner();
 
     try {
       final dir = await getTemporaryDirectory();
@@ -336,19 +323,8 @@ class _ShellPageState extends State<ShellPage> {
       name = name.replaceAll(RegExp('[^A-Za-z0-9._ -]'), '_');
       final file = File('${dir.path}/$name');
 
-      final client = HttpClient();
-      try {
-        // Two different applicant documents can share a filename and size.
-        // Fetch the authenticated URL every time so a prior preview never
-        // appears in place of the document the student just opened.
-        final response = await client.getUrl(uri).then((r) => r.close());
-        if (response.statusCode >= 400) {
-          throw HttpException('HTTP ${response.statusCode}');
-        }
-        await response.pipe(file.openWrite());
-      } finally {
-        client.close();
-      }
+      // Always fetch: distinct applicant documents can share a filename.
+      await transferDocument(uri, file);
 
       dismissSpinner();
       if (!mounted) return;
@@ -367,11 +343,18 @@ class _ShellPageState extends State<ShellPage> {
               content: Text("Impossible d'ouvrir le fichier")));
         }
       }
-    } catch (_) {
+    } catch (e) {
       dismissSpinner();
-      messenger?.showSnackBar(
-          const SnackBar(content: Text("Impossible d'ouvrir le fichier")));
+      messenger?.showSnackBar(SnackBar(
+        content: Text(e is TimeoutException
+            ? "Le chargement a expiré. Réessayez."
+            : "Impossible d'ouvrir le fichier"),
+        action: SnackBarAction(label: 'Réessayer', onPressed: () {
+          if (mounted) _previewFile(url, filename, mime);
+        }),
+      ));
     } finally {
+      dismissSpinner();
       _previewBusy = false;
     }
   }
@@ -478,7 +461,7 @@ class _ShellPageState extends State<ShellPage> {
     final cameraOnly = request.resources.isNotEmpty &&
         request.resources.every((r) => r == PermissionResourceType.CAMERA);
     var granted = false;
-    if (cameraOnly && _isInternal(request.origin)) {
+    if (cameraOnly && AppConfig.isNativePermissionOrigin(request.origin)) {
       granted = (await ph.Permission.camera.request()).isGranted;
     }
     return PermissionResponse(
@@ -496,7 +479,7 @@ class _ShellPageState extends State<ShellPage> {
       InAppWebViewController controller, String origin) async {
     var allow = false;
     final uri = Uri.tryParse(origin);
-    if (uri != null && _isInternal(uri)) {
+    if (uri != null && AppConfig.isNativePermissionOrigin(uri)) {
       allow = (await ph.Permission.locationWhenInUse.request()).isGranted;
     }
     return GeolocationPermissionShowPromptResponse(
@@ -718,6 +701,9 @@ class _ShellPageState extends State<ShellPage> {
                   if (isEmbeddedWebNavigation(uri,
                       isForMainFrame: action.isForMainFrame)) {
                     return NavigationActionPolicy.ALLOW;
+                  }
+                  if (action.isForMainFrame == false) {
+                    return NavigationActionPolicy.CANCEL;
                   }
                   if (_isInternal(uri)) return NavigationActionPolicy.ALLOW;
                   await _openExternally(uri);
