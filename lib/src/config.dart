@@ -7,17 +7,27 @@ class AppConfig {
   /// The student portal this shell wraps.
   static const String baseUrl = 'https://student.foorsa.ma';
 
-  /// Hosts that stay inside the WebView. Anything else opens externally.
-  static const List<String> internalHosts = <String>[
-    'student.foorsa.ma',
-    'foorsa.ma',
-    'www.foorsa.ma',
-  ];
-  static const List<String> internalHostSuffixes = <String>[
-    '.foorsa.ma',
-    '.supabase.co',
-    '.vercel.app',
-  ];
+  /// Exact owned HTTPS origins allowed for top-level navigation.
+  static const Set<String> internalOrigins = {
+    baseUrl,
+    'https://foorsa.ma',
+    'https://www.foorsa.ma',
+  };
+
+  static bool isInternal(Uri uri) =>
+      uri.scheme == 'https' &&
+      uri.hasAuthority &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty &&
+      internalOrigins.contains(uri.origin);
+
+  /// Native permissions are reserved for the student portal.
+  static bool isNativePermissionOrigin(Uri uri) =>
+      uri.scheme == 'https' &&
+      uri.hasAuthority &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty &&
+      uri.origin == baseUrl;
 
   /// User-Agent product so the portal can detect the native shell.
   static const String userAgentProduct = 'FoorsaStudentApp';

@@ -12,6 +12,8 @@ analyzer:
     - build/**
     - android/**
     - ios/**
+    # Pinned upstream dependency; app lint rules do not apply to vendor code.
+    - third_party/**
 include: package:flutter_lints/flutter.yaml
 
 linter:

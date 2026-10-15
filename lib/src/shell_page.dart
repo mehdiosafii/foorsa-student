@@ -25,7 +25,9 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 
 import 'config.dart';
 import 'embedded_navigation.dart';
+import 'document_transfer.dart';
 import 'flicker_spinner.dart';
+import 'initial_load_recovery.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -38,15 +40,19 @@ class ShellPage extends StatefulWidget {
 class _ShellPageState extends State<ShellPage> {
   InAppWebViewController? _controller;
   PackageInfo? _packageInfo;
-  bool _firstLoadDone = false;
+  final _initialLoad = InitialLoadRecovery();
+  int _webViewGeneration = 0;
+  Timer? _introTimer;
+  Timer? _bootTimer;
   bool _introDone = false;
   bool _bootWebView = false;
   bool _loadFailed = false;
+  bool _slowLoadNoticeDismissed = false;
   /// The CURRENT navigation reported a main-frame error. Android fires
   /// onLoadStop even for failed loads, so "finished" alone must never be
   /// trusted as success — this flag is what onLoadStop consults.
   bool _errorThisLoad = false;
-  /// While offline: quiet retry loop behind the branded overlay.
+  /// Retry once after an error; never interrupt a still-running navigation.
   Timer? _retryTimer;
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
@@ -54,14 +60,16 @@ class _ShellPageState extends State<ShellPage> {
   @override
   void initState() {
     super.initState();
+    _initialLoad.addListener(_refreshInitialLoad);
+    _initialLoad.start();
     // Minimum splash so a fast load can't flash it; the screen otherwise
     // lifts the moment the portal's first load finishes.
-    Timer(const Duration(milliseconds: 800), () {
+    _introTimer = Timer(const Duration(milliseconds: 800), () {
       if (mounted) setState(() => _introDone = true);
     });
     // Let the loading screen paint its first frame before the WebView's
     // platform-view init grabs the UI thread.
-    Timer(const Duration(milliseconds: 300), () {
+    _bootTimer = Timer(const Duration(milliseconds: 300), () {
       if (mounted) setState(() => _bootWebView = true);
     });
     PackageInfo.fromPlatform().then((v) => _packageInfo = v);
@@ -75,24 +83,42 @@ class _ShellPageState extends State<ShellPage> {
   }
 
 
-  // ── Offline handling ──────────────────────────────────────────────────────
-  void _enterOffline() {
-    if (!_loadFailed) {
-      setState(() {
-        _loadFailed = true;
-        _firstLoadDone = true;
-      });
-    }
-    // Auto-recover: retry quietly until a load succeeds. The branded offline
-    // screen stays on top the whole time, so a failed retry can never flash
-    // the WebView's own error page.
-    _retryTimer ??=
-        Timer.periodic(const Duration(seconds: 6), (_) => _retry());
+  void _refreshInitialLoad() {
+    if (mounted) setState(() {});
   }
 
-  void _retry() {
-    _controller?.loadUrl(
-        urlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)));
+  // ── Offline handling ──────────────────────────────────────────────────────
+  void _enterOffline() {
+    _initialLoad.finish();
+    if (!_loadFailed) setState(() => _loadFailed = true);
+    // Only a reported error schedules a retry. A slow retry gets its full
+    // deadline and must never be restarted every six seconds.
+    _retryTimer ??= Timer(const Duration(seconds: 6), () {
+      _retry(recreate: false);
+    });
+  }
+
+  void _retry({bool recreate = true}) {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    if (!mounted) return;
+    final controller = _controller;
+    setState(() {
+      _loadFailed = false;
+      _errorThisLoad = false;
+      _slowLoadNoticeDismissed = false;
+      if (recreate || controller == null) {
+        // A new platform view also recovers failed WebKit startup. Persistent
+        // website data is retained; no cookies or student storage are cleared.
+        _controller = null;
+        _webViewGeneration++;
+      }
+    });
+    _initialLoad.start();
+    if (!recreate && controller != null) {
+      controller.loadUrl(
+          urlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)));
+    }
   }
 
   void _exitOffline() {
@@ -101,12 +127,7 @@ class _ShellPageState extends State<ShellPage> {
     if (_loadFailed) setState(() => _loadFailed = false);
   }
 
-  bool _isInternal(Uri uri) {
-    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
-    final host = uri.host.toLowerCase();
-    if (AppConfig.internalHosts.contains(host)) return true;
-    return AppConfig.internalHostSuffixes.any((s) => host.endsWith(s));
-  }
+  bool _isInternal(Uri uri) => AppConfig.isInternal(uri);
 
   Future<bool> _openExternally(Uri uri) async {
     try {
@@ -176,26 +197,32 @@ class _ShellPageState extends State<ShellPage> {
   // ── Native download (FoorsaShellDownloadFile) ────────────────────────────
   static const MethodChannel _downloadsChannel = MethodChannel('foorsa/downloads');
 
+  VoidCallback _showTransferSpinner() {
+    if (!mounted) return () {};
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(child: FlickerSpinner(size: 44)),
+      ),
+    );
+    navigator.push(route);
+    return () {
+      // Remove this dialog only, never a newer preview or another modal route.
+      if (route.isActive) navigator.removeRoute(route);
+    };
+  }
+
   Future<Map<String, dynamic>> _downloadForWeb(
       String url, String filename, String mime) async {
     final uri = Uri.tryParse(url);
     if (uri == null || url.isEmpty) return {'ok': false, 'error': 'bad url'};
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final persistFeedback =
+        MediaQuery.maybeOf(context)?.accessibleNavigation ?? false;
+    final dismissSpinner = _showTransferSpinner();
 
     try {
       var name = filename.trim().isEmpty ? 'document' : filename.trim();
@@ -205,16 +232,7 @@ class _ShellPageState extends State<ShellPage> {
 
       // Same fetch as the preview: the URL is pre-authenticated (?t=) and
       // already carries Content-Disposition — no extra headers.
-      final client = HttpClient();
-      try {
-        final response = await client.getUrl(uri).then((r) => r.close());
-        if (response.statusCode >= 400) {
-          throw HttpException('HTTP ${response.statusCode}');
-        }
-        await response.pipe(tmp.openWrite());
-      } finally {
-        client.close();
-      }
+      await transferDocument(uri, tmp);
 
       var openPath = tmp.path;
       if (Platform.isAndroid) {
@@ -285,6 +303,8 @@ class _ShellPageState extends State<ShellPage> {
       dismissSpinner();
       final path = openPath;
       messenger?.showSnackBar(SnackBar(
+        persist: persistFeedback,
+        showCloseIcon: true,
         content: Text(Platform.isIOS
             ? 'Enregistré dans Fichiers › Foorsa Student'
             : 'Enregistré dans Téléchargements'),
@@ -300,7 +320,19 @@ class _ShellPageState extends State<ShellPage> {
       dismissSpinner();
       var reason = e.toString();
       if (reason.length > 90) reason = reason.substring(0, 90);
+      messenger?.showSnackBar(SnackBar(
+        persist: persistFeedback,
+        showCloseIcon: true,
+        content: Text(e is TimeoutException
+            ? 'Le téléchargement a expiré. Réessayez.'
+            : 'Impossible de télécharger le fichier.'),
+        action: SnackBarAction(label: 'Réessayer', onPressed: () {
+          if (mounted) _downloadForWeb(url, filename, mime);
+        }),
+      ));
       return {'ok': false, 'error': reason};
+    } finally {
+      dismissSpinner();
     }
   }
 
@@ -314,21 +346,9 @@ class _ShellPageState extends State<ShellPage> {
     if (uri == null) return;
     _previewBusy = true;
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final persistFeedback =
+        MediaQuery.maybeOf(context)?.accessibleNavigation ?? false;
+    final dismissSpinner = _showTransferSpinner();
 
     try {
       final dir = await getTemporaryDirectory();
@@ -336,19 +356,8 @@ class _ShellPageState extends State<ShellPage> {
       name = name.replaceAll(RegExp('[^A-Za-z0-9._ -]'), '_');
       final file = File('${dir.path}/$name');
 
-      final client = HttpClient();
-      try {
-        // Two different applicant documents can share a filename and size.
-        // Fetch the authenticated URL every time so a prior preview never
-        // appears in place of the document the student just opened.
-        final response = await client.getUrl(uri).then((r) => r.close());
-        if (response.statusCode >= 400) {
-          throw HttpException('HTTP ${response.statusCode}');
-        }
-        await response.pipe(file.openWrite());
-      } finally {
-        client.close();
-      }
+      // Always fetch: distinct applicant documents can share a filename.
+      await transferDocument(uri, file);
 
       dismissSpinner();
       if (!mounted) return;
@@ -367,11 +376,20 @@ class _ShellPageState extends State<ShellPage> {
               content: Text("Impossible d'ouvrir le fichier")));
         }
       }
-    } catch (_) {
+    } catch (e) {
       dismissSpinner();
-      messenger?.showSnackBar(
-          const SnackBar(content: Text("Impossible d'ouvrir le fichier")));
+      messenger?.showSnackBar(SnackBar(
+        persist: persistFeedback,
+        showCloseIcon: true,
+        content: Text(e is TimeoutException
+            ? "Le chargement a expiré. Réessayez."
+            : "Impossible d'ouvrir le fichier"),
+        action: SnackBarAction(label: 'Réessayer', onPressed: () {
+          if (mounted) _previewFile(url, filename, mime);
+        }),
+      ));
     } finally {
+      dismissSpinner();
       _previewBusy = false;
     }
   }
@@ -478,7 +496,7 @@ class _ShellPageState extends State<ShellPage> {
     final cameraOnly = request.resources.isNotEmpty &&
         request.resources.every((r) => r == PermissionResourceType.CAMERA);
     var granted = false;
-    if (cameraOnly && _isInternal(request.origin)) {
+    if (cameraOnly && AppConfig.isNativePermissionOrigin(request.origin)) {
       granted = (await ph.Permission.camera.request()).isGranted;
     }
     return PermissionResponse(
@@ -496,7 +514,7 @@ class _ShellPageState extends State<ShellPage> {
       InAppWebViewController controller, String origin) async {
     var allow = false;
     final uri = Uri.tryParse(origin);
-    if (uri != null && _isInternal(uri)) {
+    if (uri != null && AppConfig.isNativePermissionOrigin(uri)) {
       allow = (await ph.Permission.locationWhenInUse.request()).isGranted;
     }
     return GeolocationPermissionShowPromptResponse(
@@ -527,11 +545,16 @@ class _ShellPageState extends State<ShellPage> {
   @override
   void dispose() {
     _retryTimer?.cancel();
+    _introTimer?.cancel();
+    _bootTimer?.cancel();
+    _initialLoad.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final generation = _webViewGeneration;
+    bool isCurrentAttempt() => mounted && generation == _webViewGeneration;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -546,6 +569,7 @@ class _ShellPageState extends State<ShellPage> {
               child: !_bootWebView
                   ? const SizedBox.expand()
                   : InAppWebView(
+                key: ValueKey(generation),
                 initialUrlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)),
                 initialSettings: InAppWebViewSettings(
                   // The portal is remote; no file:// page is ever loaded, and
@@ -573,6 +597,7 @@ class _ShellPageState extends State<ShellPage> {
                   offscreenPreRaster: true,
                 ),
                 onWebViewCreated: (controller) {
+                  if (!isCurrentAttempt()) return;
                   _controller = controller;
                   controller.addJavaScriptHandler(
                     handlerName: AppConfig.bridgeName,
@@ -682,13 +707,22 @@ class _ShellPageState extends State<ShellPage> {
                   );
                 },
                 onLoadStart: (controller, url) {
+                  if (!isCurrentAttempt()) return;
                   _errorThisLoad = false;
                 },
                 onLoadStop: (controller, url) async {
-                  if (!_firstLoadDone) setState(() => _firstLoadDone = true);
+                  if (!isCurrentAttempt()) return;
+                  _initialLoad.finish();
                   if (!_errorThisLoad) _exitOffline();
                 },
+                onWebContentProcessDidTerminate: (controller) {
+                  if (!isCurrentAttempt()) return;
+                  // Offer recovery only while the initial attempt is pending.
+                  // Never force a reload of a completed student session.
+                  _initialLoad.interrupted();
+                },
                 onReceivedError: (controller, request, error) {
+                  if (!isCurrentAttempt()) return;
                   if (request.isForMainFrame ?? true) {
                     _errorThisLoad = true;
                     _enterOffline();
@@ -719,15 +753,100 @@ class _ShellPageState extends State<ShellPage> {
                       isForMainFrame: action.isForMainFrame)) {
                     return NavigationActionPolicy.ALLOW;
                   }
+                  if (action.isForMainFrame == false) {
+                    return NavigationActionPolicy.CANCEL;
+                  }
                   if (_isInternal(uri)) return NavigationActionPolicy.ALLOW;
                   await _openExternally(uri);
                   return NavigationActionPolicy.CANCEL;
                 },
               ),
             ),
-            if (!_firstLoadDone || !_introDone) const _BrandLoading(),
+            if (_initialLoad.blocksContent || !_introDone)
+              const _BrandLoading(),
+            if (!_slowLoadNoticeDismissed && _initialLoad.problem != null)
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 12,
+                child: SafeArea(
+                  child: _SlowLoadNotice(
+                    problem: _initialLoad.problem!,
+                    onRetry: _retry,
+                    onDismiss: () =>
+                        setState(() => _slowLoadNoticeDismissed = true),
+                  ),
+                ),
+              ),
             if (_loadFailed)
               _OfflineView(onRetry: _retry),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// This banner leaves the page visible and interactive if it is already usable.
+class _SlowLoadNotice extends StatelessWidget {
+  const _SlowLoadNotice({
+    required this.problem,
+    required this.onRetry,
+    required this.onDismiss,
+  });
+
+  final InitialLoadProblem problem;
+  final VoidCallback onRetry;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 8,
+      borderRadius: BorderRadius.circular(16),
+      color: Theme.of(context).colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      problem == InitialLoadProblem.interrupted
+                          ? 'Le chargement de la page a été interrompu.'
+                          : 'Le chargement prend plus de temps que prévu.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: onDismiss,
+                  tooltip: 'Fermer',
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Si la page ne répond pas, réessayez pour la recharger.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Réessayer'),
+            ),
           ],
         ),
       ),
@@ -818,7 +937,7 @@ class _OfflineView extends StatelessWidget {
                     style: TextStyle(color: Color(0xFFB6C2D6), fontSize: 14)),
                 const SizedBox(height: 14),
                 const Text(
-                  'Vérifiez votre Wi-Fi ou vos données mobiles.\nLa page se rechargera automatiquement.',
+                  'Vérifiez votre Wi-Fi ou vos données mobiles.\nUne nouvelle tentative démarrera automatiquement.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                       color: Color(0xFF9FB0C8), fontSize: 13, height: 1.5),

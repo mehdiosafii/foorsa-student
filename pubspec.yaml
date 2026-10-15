@@ -2,7 +2,7 @@ name: foorsa_student
 description: "Foorsa Student portal."
 publish_to: "none"
 
-version: 1.2.17+35
+version: 1.2.17+37
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -20,6 +20,11 @@ dependencies:
   flutter_pdfview: ^1.4.5
   image_picker: ^1.1.2
   file_picker: ^8.1.2
+
+dependency_overrides:
+  # Pinned 1.1.2 with a native origin/frame gate; see third_party README.
+  flutter_inappwebview_ios:
+    path: third_party/flutter_inappwebview_ios
 
 dev_dependencies:
   flutter_test:
