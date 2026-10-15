@@ -276,6 +276,8 @@ class _ShellPageState extends State<ShellPage> {
       dismissSpinner();
       final path = openPath;
       messenger?.showSnackBar(SnackBar(
+        persist: false,
+        showCloseIcon: true,
         content: Text(Platform.isIOS
             ? 'Enregistré dans Fichiers › Foorsa Student'
             : 'Enregistré dans Téléchargements'),
@@ -292,6 +294,8 @@ class _ShellPageState extends State<ShellPage> {
       var reason = e.toString();
       if (reason.length > 90) reason = reason.substring(0, 90);
       messenger?.showSnackBar(SnackBar(
+        persist: false,
+        showCloseIcon: true,
         content: Text(e is TimeoutException
             ? 'Le téléchargement a expiré. Réessayez.'
             : 'Impossible de télécharger le fichier.'),
@@ -346,6 +350,8 @@ class _ShellPageState extends State<ShellPage> {
     } catch (e) {
       dismissSpinner();
       messenger?.showSnackBar(SnackBar(
+        persist: false,
+        showCloseIcon: true,
         content: Text(e is TimeoutException
             ? "Le chargement a expiré. Réessayez."
             : "Impossible d'ouvrir le fichier"),
