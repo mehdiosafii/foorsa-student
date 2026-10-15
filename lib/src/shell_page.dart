@@ -108,11 +108,13 @@ class _ShellPageState extends State<ShellPage> {
     return AppConfig.internalHostSuffixes.any((s) => host.endsWith(s));
   }
 
-  Future<void> _openExternally(Uri uri) async {
+  Future<bool> _openExternally(Uri uri) async {
     try {
-      await launcher.launchUrl(uri,
+      return await launcher.launchUrl(uri,
           mode: launcher.LaunchMode.externalApplication);
-    } catch (_) {}
+    } catch (_) {
+      return false;
+    }
   }
 
 
@@ -216,9 +218,9 @@ class _ShellPageState extends State<ShellPage> {
 
       var openPath = tmp.path;
       if (Platform.isAndroid) {
-        var savedViaStore = false;
+        bool? savedViaStore;
         try {
-          final r = await _downloadsChannel.invokeMethod<bool>(
+          savedViaStore = await _downloadsChannel.invokeMethod<bool>(
             'saveToDownloads',
             {
               'path': tmp.path,
@@ -226,9 +228,17 @@ class _ShellPageState extends State<ShellPage> {
               'mime': mime.isEmpty ? 'application/octet-stream' : mime,
             },
           );
-          savedViaStore = r == true;
-        } catch (_) {
-          savedViaStore = false;
+        } catch (e) {
+          // On API 29+ a MediaStore failure cannot be repaired with a
+          // legacy storage permission. Let the web layer use its fallback.
+          throw FileSystemException(
+            'Could not save to Downloads',
+            tmp.path,
+            e is OSError ? e : null,
+          );
+        }
+        if (savedViaStore == null) {
+          throw const FileSystemException('Could not save to Downloads');
         }
         if (!savedViaStore) {
           // API <= 28: direct write to the public Downloads directory.
@@ -259,7 +269,15 @@ class _ShellPageState extends State<ShellPage> {
         // (UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace). The
         // share sheet ships with the iOS build milestone.
         final docs = await getApplicationDocumentsDirectory();
-        final target = File('${docs.path}/$name');
+        final dot = name.lastIndexOf('.');
+        final stem = dot > 0 ? name.substring(0, dot) : name;
+        final ext = dot > 0 ? name.substring(dot) : '';
+        var target = File('${docs.path}/$name');
+        var n = 1;
+        while (await target.exists()) {
+          target = File('${docs.path}/$stem ($n)$ext');
+          n += 1;
+        }
         await tmp.copy(target.path);
         openPath = target.path;
       }
@@ -320,24 +338,14 @@ class _ShellPageState extends State<ShellPage> {
 
       final client = HttpClient();
       try {
-        // Same name + same size already in the temp dir -> reuse it.
-        var needDownload = true;
-        if (await file.exists()) {
-          try {
-            final head = await client.headUrl(uri).then((r) => r.close());
-            if (head.contentLength > 0 &&
-                head.contentLength == await file.length()) {
-              needDownload = false;
-            }
-          } catch (_) {}
+        // Two different applicant documents can share a filename and size.
+        // Fetch the authenticated URL every time so a prior preview never
+        // appears in place of the document the student just opened.
+        final response = await client.getUrl(uri).then((r) => r.close());
+        if (response.statusCode >= 400) {
+          throw HttpException('HTTP ${response.statusCode}');
         }
-        if (needDownload) {
-          final response = await client.getUrl(uri).then((r) => r.close());
-          if (response.statusCode >= 400) {
-            throw HttpException('HTTP ${response.statusCode}');
-          }
-          await response.pipe(file.openWrite());
-        }
+        await response.pipe(file.openWrite());
       } finally {
         client.close();
       }
@@ -501,6 +509,7 @@ class _ShellPageState extends State<ShellPage> {
       await c.goBack();
       return;
     }
+    if (!mounted) return;
     final now = DateTime.now();
     if (_lastBackPress != null &&
         now.difference(_lastBackPress!) < const Duration(seconds: 2)) {
@@ -583,12 +592,18 @@ class _ShellPageState extends State<ShellPage> {
                   // Called by the portal's Contact button.
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellOpenUrl',
-                    callback: (args) {
+                    callback: (args) async {
                       if (args.isNotEmpty) {
                         final uri = Uri.tryParse(args[0].toString());
-                        if (uri != null) _openExternally(uri);
+                        if (uri != null && await _openExternally(uri)) {
+                          return true;
+                        }
                       }
-                      return null;
+                      // The portal falls back to same-frame navigation only
+                      // when this bridge call rejects.
+                      throw PlatformException(
+                          code: 'external_open_failed',
+                          message: 'Could not open external URL');
                     },
                   );
                   // Tactile tick for portal button presses —
@@ -772,9 +787,9 @@ class _OfflineView extends StatelessWidget {
           Container(
             padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.07),
+              color: Colors.white.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white.withOpacity(0.14)),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -783,9 +798,9 @@ class _OfflineView extends StatelessWidget {
                   width: 64,
                   height: 64,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.10),
+                    color: Colors.white.withValues(alpha: 0.10),
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.18)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
                   ),
                   child: const Icon(Icons.wifi_off_rounded,
                       color: Colors.white, size: 30),

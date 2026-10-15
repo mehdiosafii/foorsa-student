@@ -34,6 +34,7 @@ class MainActivity : FlutterActivity() {
                     val values = android.content.ContentValues().apply {
                         put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
                         put(android.provider.MediaStore.Downloads.MIME_TYPE, mime)
+                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
                         put(
                             android.provider.MediaStore.Downloads.RELATIVE_PATH,
                             android.os.Environment.DIRECTORY_DOWNLOADS
@@ -43,10 +44,19 @@ class MainActivity : FlutterActivity() {
                         android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
                         values
                     ) ?: throw IllegalStateException("MediaStore insert failed")
-                    contentResolver.openOutputStream(uri).use { out ->
-                        java.io.FileInputStream(java.io.File(path)).use { input ->
-                            input.copyTo(out ?: throw IllegalStateException("no output stream"))
+                    try {
+                        contentResolver.openOutputStream(uri).use { out ->
+                            java.io.FileInputStream(java.io.File(path)).use { input ->
+                                input.copyTo(out ?: throw IllegalStateException("no output stream"))
+                            }
                         }
+                        val published = contentResolver.update(uri, android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                        }, null, null)
+                        if (published != 1) throw IllegalStateException("Download could not be published")
+                    } catch (e: Exception) {
+                        contentResolver.delete(uri, null, null)
+                        throw e
                     }
                     result.success(true)
                 } catch (e: Exception) {
