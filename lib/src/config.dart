@@ -5,7 +5,10 @@ class AppConfig {
   AppConfig._();
 
   /// The student portal this shell wraps.
-  static const String baseUrl = 'https://student.foorsa.ma';
+  // Staging builds can point at a preview portal without editing production.
+  static const String baseUrl = String.fromEnvironment(
+    'FOORSA_PORTAL_URL', defaultValue: 'https://student.foorsa.ma',
+  );
 
   /// Hosts that stay inside the WebView. Anything else opens externally.
   static const List<String> internalHosts = <String>[
