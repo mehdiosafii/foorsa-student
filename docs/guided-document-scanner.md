@@ -80,3 +80,18 @@ counselor do that work.
 
 This remains a draft. Avoid auto-deployment and preserve the existing
 human-review override until these checks are completed.
+
+## Capture recovery regression coverage
+
+The scanner releases its camera on non-resumed lifecycle states, recovers when
+pause/resume overlaps a failed capture, and waits for initialization cleanup
+before switching to the regular camera. Still captures and cleanup have bounded
+waits; a late or abandoned capture is deleted from temporary storage. Turning
+Auto off stops the preview analysis stream to reduce work on older phones.
+
+Camera permissions and document image delivery use the exact configured HTTPS
+portal origin, including its port. `test/trusted_portal_test.dart` covers
+production/staging origins, sibling domains, alternate ports and lookalikes.
+Validation uses the PR scanner workflow for analysis, unit tests and Android,
+plus a branch-only iOS workflow run with TestFlight upload disabled. Device QA must still exercise pause/resume during
+capture, slow initialization, fallback, unsupported formats and torch recovery.

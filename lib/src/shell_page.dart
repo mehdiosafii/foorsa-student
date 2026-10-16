@@ -29,6 +29,7 @@ import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
 import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/scan_document_profile.dart';
+import 'trusted_portal.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -64,9 +65,7 @@ class _ShellPageState extends State<ShellPage> {
 
   Future<void> _publishScannerNonce(InAppWebViewController controller) async {
     final current = await controller.getUrl();
-    final trusted = Uri.parse(AppConfig.baseUrl).host.toLowerCase();
-    if (current == null || current.scheme != 'https' ||
-        current.host.toLowerCase() != trusted) return;
+    if (!_isTrustedPortal(current)) return;
     final nonce = _scannerNonce;
     // evaluateJavascript executes in the main frame. A cross-origin iframe
     // cannot read this token, so it cannot request an official-document
@@ -132,6 +131,10 @@ class _ShellPageState extends State<ShellPage> {
     final host = uri.host.toLowerCase();
     if (AppConfig.internalHosts.contains(host)) return true;
     return AppConfig.internalHostSuffixes.any((s) => host.endsWith(s));
+  }
+
+  bool _isTrustedPortal(Uri? uri) {
+    return isTrustedPortalOrigin(uri, AppConfig.baseUrl);
   }
 
   Future<bool> _openExternally(Uri uri) async {
@@ -210,10 +213,7 @@ class _ShellPageState extends State<ShellPage> {
     // passport/ID pixels over the JS bridge. The broad _isInternal() host
     // whitelist used for navigation is NOT sufficient authorization here.
     final activeUrl = await _controller?.getUrl();
-    final trustedHost = Uri.parse(AppConfig.baseUrl).host.toLowerCase();
-    if (activeUrl == null ||
-        activeUrl.scheme != 'https' ||
-        activeUrl.host.toLowerCase() != trustedHost) {
+    if (!_isTrustedPortal(activeUrl)) {
       return {'unsupported': true};
     }
     if (callingNonce is! String || callingNonce.isEmpty ||
@@ -241,9 +241,7 @@ class _ShellPageState extends State<ShellPage> {
       // navigation during camera use must not receive official-document
       // pixels, even if the original request was from the correct host.
       final destination = await _controller?.getUrl();
-      final samePortal = destination != null
-          && destination.scheme == 'https'
-          && destination.host.toLowerCase() == trustedHost;
+      final samePortal = _isTrustedPortal(destination);
       // This is an official-document photo. The portal receives its bytes
       // immediately; don't retain a second unencrypted copy in camera temp.
       try {
@@ -567,7 +565,7 @@ class _ShellPageState extends State<ShellPage> {
     final cameraOnly = request.resources.isNotEmpty &&
         request.resources.every((r) => r == PermissionResourceType.CAMERA);
     var granted = false;
-    if (cameraOnly && _isInternal(request.origin)) {
+    if (cameraOnly && _isTrustedPortal(request.origin)) {
       granted = (await ph.Permission.camera.request()).isGranted;
     }
     return PermissionResponse(
