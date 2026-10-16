@@ -27,7 +27,6 @@ import 'config.dart';
 import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
 import 'guided_scanner/guided_scan_page.dart';
-import 'guided_scanner/scan_guidance.dart';
 import 'guided_scanner/scan_document_profile.dart';
 
 class ShellPage extends StatefulWidget {
