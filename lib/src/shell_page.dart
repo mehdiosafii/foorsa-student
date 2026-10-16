@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -52,6 +53,29 @@ class _ShellPageState extends State<ShellPage> {
   Timer? _retryTimer;
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
+  String _scannerNonce = _newScannerNonce();
+
+  static String _newScannerNonce() {
+    final random = math.Random.secure();
+    return base64UrlEncode(
+      List<int>.generate(24, (_) => random.nextInt(256)),
+    );
+  }
+
+  Future<void> _publishScannerNonce(InAppWebViewController controller) async {
+    final current = await controller.getUrl();
+    final trusted = Uri.parse(AppConfig.baseUrl).host.toLowerCase();
+    if (current == null || current.scheme != 'https' ||
+        current.host.toLowerCase() != trusted) return;
+    final nonce = _scannerNonce;
+    // evaluateJavascript executes in the main frame. A cross-origin iframe
+    // cannot read this token, so it cannot request an official-document
+    // capture through the old List-arguments JS handler in WebView 6.1.5.
+    await controller.evaluateJavascript(source:
+      'Object.defineProperty(window, "__foorsaScannerNonce", '
+      '{value: ${jsonEncode(nonce)}, configurable: true, enumerable: false});'
+    );
+  }
 
   @override
   void initState() {
@@ -176,7 +200,8 @@ class _ShellPageState extends State<ShellPage> {
 
 
   // ── Guided document capture (new shells; old shells keep the picker) ──
-  Future<Map<String, dynamic>> _guidedScanForWeb(Object? request) async {
+  Future<Map<String, dynamic>> _guidedScanForWeb(
+      Object? request, Object? callingNonce) async {
     if (!mounted || (!Platform.isIOS && !Platform.isAndroid)) {
       return {'unsupported': true};
     }
@@ -191,9 +216,13 @@ class _ShellPageState extends State<ShellPage> {
         activeUrl.host.toLowerCase() != trustedHost) {
       return {'unsupported': true};
     }
+    if (callingNonce is! String || callingNonce.isEmpty ||
+        callingNonce != _scannerNonce) {
+      return {'unsupported': true};
+    }
     try {
       final status = await ph.Permission.camera.request();
-      if (!status.isGranted) return {'unsupported': true};
+      if (!status.isGranted) return {'cancelled': true};
       if (!mounted) return {'cancelled': true};
       final result = await Navigator.of(context).push<GuidedScanResult>(
         MaterialPageRoute<GuidedScanResult>(
@@ -703,6 +732,7 @@ class _ShellPageState extends State<ShellPage> {
                     handlerName: 'FoorsaShellScanDocument',
                     callback: (args) => _guidedScanForWeb(
                       args.isNotEmpty ? args[0] : 'page',
+                      args.length > 1 ? args[1] : null,
                     ),
                   );
                   controller.addJavaScriptHandler(
@@ -750,10 +780,19 @@ class _ShellPageState extends State<ShellPage> {
                 },
                 onLoadStart: (controller, url) {
                   _errorThisLoad = false;
+                  _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
                   if (!_firstLoadDone) setState(() => _firstLoadDone = true);
-                  if (!_errorThisLoad) _exitOffline();
+                  if (!_errorThisLoad) {
+                    _exitOffline();
+                    try {
+                      await _publishScannerNonce(controller);
+                    } catch (_) {
+                      // Missing nonce means the guided camera safely falls
+                      // back to the old picker, never to an unsecured bridge.
+                    }
+                  }
                 },
                 onReceivedError: (controller, request, error) {
                   if (request.isForMainFrame ?? true) {
