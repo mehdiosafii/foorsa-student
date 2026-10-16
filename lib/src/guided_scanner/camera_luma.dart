@@ -13,6 +13,7 @@ ScanLumaGrid? sampleCameraLuma(
   CameraImage image, {
   int targetWidth = 120,
   int targetHeight = 160,
+  double? viewportAspect,
 }) {
   if (image.width <= 0 || image.height <= 0 || image.planes.isEmpty
       || targetWidth < 40 || targetHeight < 40) {
@@ -31,18 +32,36 @@ ScanLumaGrid? sampleCameraLuma(
   if (rowStride <= 0 || pixelStride <= 0) return null;
   final data = Uint8List(targetWidth * targetHeight);
   // Preview buffers are normally landscape on devices held portrait. Rotate
-  // this grid rather than allocate a rotated full-resolution camera frame.
+  // a tiny grid, never the full-resolution camera image. A BoxFit.cover
+  // preview also crops the image: analyse exactly that visible center rather
+  // than asking for document edges in pixels the user cannot see.
   final landscapeBuffer = image.width > image.height;
+  final portraitWidth = landscapeBuffer ? image.height : image.width;
+  final portraitHeight = landscapeBuffer ? image.width : image.height;
+  final sourceAspect = portraitWidth / portraitHeight;
+  var cropLeft = 0.0, cropTop = 0.0, cropWidth = 1.0, cropHeight = 1.0;
+  if (viewportAspect != null && viewportAspect > 0 &&
+      viewportAspect.isFinite) {
+    if (sourceAspect > viewportAspect) {
+      cropWidth = viewportAspect / sourceAspect;
+      cropLeft = (1 - cropWidth) / 2;
+    } else {
+      cropHeight = sourceAspect / viewportAspect;
+      cropTop = (1 - cropHeight) / 2;
+    }
+  }
   for (var y = 0; y < targetHeight; y++) {
     for (var x = 0; x < targetWidth; x++) {
+      final nx = cropLeft + (x + 0.5) * cropWidth / targetWidth;
+      final ny = cropTop + (y + 0.5) * cropHeight / targetHeight;
       final int sx;
       final int sy;
       if (landscapeBuffer) {
-        sx = ((y + 0.5) * image.width / targetHeight).floor();
-        sy = ((targetWidth - x - 0.5) * image.height / targetWidth).floor();
+        sx = (ny * image.width).floor();
+        sy = ((1 - nx) * image.height).floor();
       } else {
-        sx = ((x + 0.5) * image.width / targetWidth).floor();
-        sy = ((y + 0.5) * image.height / targetHeight).floor();
+        sx = (nx * image.width).floor();
+        sy = (ny * image.height).floor();
       }
       final index = sy * rowStride + sx * pixelStride;
       if (index < 0 || index >= bytes.length) return null;
