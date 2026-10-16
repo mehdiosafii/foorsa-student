@@ -1,0 +1,42 @@
+name: Guided scanner validation
+
+on:
+  pull_request:
+    paths:
+      - 'lib/src/guided_scanner/**'
+      - 'lib/src/shell_page.dart'
+      - 'lib/src/config.dart'
+      - 'test/guided_scanner_test.dart'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/guided-scanner.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+      - name: Resolve Flutter camera dependencies
+        run: flutter pub get
+      - name: Validate Flutter analyzer
+        run: flutter analyze --no-fatal-infos
+      - name: Test detection and stable auto shutter
+        run: flutter test
+      - name: Verify Android plugin build
+        run: flutter build apk --debug
+      - name: Inspect resolved dependency lockfile
+        if: always()
+        run: |
+          echo '=====BEGIN_FOORSA_PUBSPEC_LOCK====='
+          cat pubspec.lock
+          echo '=====END_FOORSA_PUBSPEC_LOCK====='
