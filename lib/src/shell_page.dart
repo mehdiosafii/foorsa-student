@@ -28,6 +28,7 @@ import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
 import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/scan_guidance.dart';
+import 'guided_scanner/scan_document_profile.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -176,7 +177,7 @@ class _ShellPageState extends State<ShellPage> {
 
 
   // ── Guided document capture (new shells; old shells keep the picker) ──
-  Future<Map<String, dynamic>> _guidedScanForWeb(String documentKind) async {
+  Future<Map<String, dynamic>> _guidedScanForWeb(Object? request) async {
     if (!mounted || (!Platform.isIOS && !Platform.isAndroid)) {
       return {'unsupported': true};
     }
@@ -188,7 +189,7 @@ class _ShellPageState extends State<ShellPage> {
         MaterialPageRoute<GuidedScanResult>(
           fullscreenDialog: true,
           builder: (_) => GuidedScanPage(
-            kind: GuidedDocumentKindInfo.fromPortal(documentKind),
+            profile: GuidedDocumentProfile.fromPortal(request),
           ),
         ),
       );
@@ -676,7 +677,7 @@ class _ShellPageState extends State<ShellPage> {
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellScanDocument',
                     callback: (args) => _guidedScanForWeb(
-                      args.isNotEmpty ? args[0].toString() : 'page',
+                      args.isNotEmpty ? args[0] : 'page',
                     ),
                   );
                   controller.addJavaScriptHandler(
