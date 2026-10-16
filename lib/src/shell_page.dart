@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,6 +27,8 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 import 'config.dart';
 import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
+import 'guided_scanner/guided_scan_page.dart';
+import 'guided_scanner/scan_document_profile.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -50,6 +53,29 @@ class _ShellPageState extends State<ShellPage> {
   Timer? _retryTimer;
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
+  String _scannerNonce = _newScannerNonce();
+
+  static String _newScannerNonce() {
+    final random = math.Random.secure();
+    return base64UrlEncode(
+      List<int>.generate(24, (_) => random.nextInt(256)),
+    );
+  }
+
+  Future<void> _publishScannerNonce(InAppWebViewController controller) async {
+    final current = await controller.getUrl();
+    final trusted = Uri.parse(AppConfig.baseUrl).host.toLowerCase();
+    if (current == null || current.scheme != 'https' ||
+        current.host.toLowerCase() != trusted) return;
+    final nonce = _scannerNonce;
+    // evaluateJavascript executes in the main frame. A cross-origin iframe
+    // cannot read this token, so it cannot request an official-document
+    // capture through the old List-arguments JS handler in WebView 6.1.5.
+    await controller.evaluateJavascript(source:
+      'Object.defineProperty(window, "__foorsaScannerNonce", '
+      '{value: ${jsonEncode(nonce)}, configurable: true, enumerable: false});'
+    );
+  }
 
   @override
   void initState() {
@@ -172,6 +198,69 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
+
+  // ── Guided document capture (new shells; old shells keep the picker) ──
+  Future<Map<String, dynamic>> _guidedScanForWeb(
+      Object? request, Object? callingNonce) async {
+    if (!mounted || (!Platform.isIOS && !Platform.isAndroid)) {
+      return {'unsupported': true};
+    }
+    // The shell can navigate to external/embedded hosts. Only the exact
+    // configured student portal may invoke a scanner that returns sensitive
+    // passport/ID pixels over the JS bridge. The broad _isInternal() host
+    // whitelist used for navigation is NOT sufficient authorization here.
+    final activeUrl = await _controller?.getUrl();
+    final trustedHost = Uri.parse(AppConfig.baseUrl).host.toLowerCase();
+    if (activeUrl == null ||
+        activeUrl.scheme != 'https' ||
+        activeUrl.host.toLowerCase() != trustedHost) {
+      return {'unsupported': true};
+    }
+    if (callingNonce is! String || callingNonce.isEmpty ||
+        callingNonce != _scannerNonce) {
+      return {'unsupported': true};
+    }
+    try {
+      final status = await ph.Permission.camera.request();
+      if (!status.isGranted) return {'cancelled': true};
+      if (!mounted) return {'cancelled': true};
+      final result = await Navigator.of(context).push<GuidedScanResult>(
+        MaterialPageRoute<GuidedScanResult>(
+          fullscreenDialog: true,
+          builder: (_) => GuidedScanPage(
+            profile: GuidedDocumentProfile.fromPortal(request),
+          ),
+        ),
+      );
+      if (result == null) return {'cancelled': true};
+      if (result.useLegacyCamera) return await _pickForWeb('camera', false);
+      final picture = result.file;
+      if (picture == null) return {'cancelled': true};
+      final bytes = await picture.readAsBytes();
+      // Recheck the trusted origin after the modal closes: a WebView
+      // navigation during camera use must not receive official-document
+      // pixels, even if the original request was from the correct host.
+      final destination = await _controller?.getUrl();
+      final samePortal = destination != null
+          && destination.scheme == 'https'
+          && destination.host.toLowerCase() == trustedHost;
+      // This is an official-document photo. The portal receives its bytes
+      // immediately; don't retain a second unencrypted copy in camera temp.
+      try {
+        await File(picture.path).delete();
+      } catch (_) {
+        // Device camera providers may manage the temporary file themselves.
+      }
+      if (!samePortal || callingNonce != _scannerNonce) {
+        return {'cancelled': true};
+      }
+      return {'files': [_fileEntry(picture.name, bytes)]};
+    } catch (_) {
+      // Never strand students on unsupported/low-memory cameras. The portal
+      // can fall back to its original native image_picker camera.
+      return {'unsupported': true};
+    }
+  }
 
   // ── Native download (FoorsaShellDownloadFile) ────────────────────────────
   static const MethodChannel _downloadsChannel = MethodChannel('foorsa/downloads');
@@ -638,6 +727,16 @@ class _ShellPageState extends State<ShellPage> {
                       args.length > 1 && args[1] == true,
                     ),
                   );
+                  // The guided scanner is opt-in and only called by the
+                  // document workflow. Existing camera/file handlers remain
+                  // unchanged for receipts, profile photos and old versions.
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellScanDocument',
+                    callback: (args) => _guidedScanForWeb(
+                      args.isNotEmpty ? args[0] : 'page',
+                      args.length > 1 ? args[1] : null,
+                    ),
+                  );
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellCameraStatus',
                     callback: (args) async {
@@ -683,10 +782,19 @@ class _ShellPageState extends State<ShellPage> {
                 },
                 onLoadStart: (controller, url) {
                   _errorThisLoad = false;
+                  _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
                   if (!_firstLoadDone) setState(() => _firstLoadDone = true);
-                  if (!_errorThisLoad) _exitOffline();
+                  if (!_errorThisLoad) {
+                    _exitOffline();
+                    try {
+                      await _publishScannerNonce(controller);
+                    } catch (_) {
+                      // Missing nonce means the guided camera safely falls
+                      // back to the old picker, never to an unsecured bridge.
+                    }
+                  }
                 },
                 onReceivedError: (controller, request, error) {
                   if (request.isForMainFrame ?? true) {
