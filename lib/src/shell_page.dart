@@ -180,6 +180,17 @@ class _ShellPageState extends State<ShellPage> {
     if (!mounted || (!Platform.isIOS && !Platform.isAndroid)) {
       return {'unsupported': true};
     }
+    // The shell can navigate to external/embedded hosts. Only the exact
+    // configured student portal may invoke a scanner that returns sensitive
+    // passport/ID pixels over the JS bridge. The broad _isInternal() host
+    // whitelist used for navigation is NOT sufficient authorization here.
+    final activeUrl = await _controller?.getUrl();
+    final trustedHost = Uri.parse(AppConfig.baseUrl).host.toLowerCase();
+    if (activeUrl == null ||
+        activeUrl.scheme != 'https' ||
+        activeUrl.host.toLowerCase() != trustedHost) {
+      return {'unsupported': true};
+    }
     try {
       final status = await ph.Permission.camera.request();
       if (!status.isGranted) return {'unsupported': true};
