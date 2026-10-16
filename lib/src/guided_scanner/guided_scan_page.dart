@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 
 import 'camera_luma.dart';
 import 'scan_guidance.dart';
+import 'scan_document_profile.dart';
 
 class GuidedScanResult {
   const GuidedScanResult.captured(this.file) : useLegacyCamera = false;
@@ -26,9 +27,9 @@ class GuidedScanResult {
 }
 
 class GuidedScanPage extends StatefulWidget {
-  const GuidedScanPage({super.key, required this.kind});
+  const GuidedScanPage({super.key, required this.profile});
 
-  final GuidedDocumentKind kind;
+  final GuidedDocumentProfile profile;
 
   @override
   State<GuidedScanPage> createState() => _GuidedScanPageState();
@@ -200,8 +201,16 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       }
       return;
     }
+    final kind = switch (widget.profile.layout) {
+      GuidedScanLayout.passport => GuidedDocumentKind.passport,
+      GuidedScanLayout.card => GuidedDocumentKind.idCard,
+      _ => GuidedDocumentKind.page,
+    };
     final result = _analyzer.analyse(
-      grid, widget.kind, previous: _previous,
+      grid, kind,
+      previous: _previous,
+      profile: widget.profile,
+      viewportAspect: _viewportAspect ?? 0.5,
     );
     _previous = grid;
     final capture = _gate.consume(result, now);
@@ -364,7 +373,12 @@ class _GuidedScanPageState extends State<GuidedScanPage>
             // Painted in viewport coordinates using the same normalized
             // guide used by live frame analysis.
             CustomPaint(
-              painter: _ScanGuidePainter(widget.kind.guide, accent),
+              painter: _ScanGuidePainter(
+                _analysis?.bounds ?? widget.profile.guide(_viewportAspect ?? 0.5),
+                accent,
+                zones: widget.profile.zones,
+                detected: _analysis?.bounds != null,
+              ),
             ),
             Align(
               alignment: Alignment.topCenter,
@@ -383,7 +397,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                         ),
                         Expanded(
                           child: Text(
-                            'Scan ${widget.kind.label}',
+                            'Scan ${widget.profile.title}',
                             textAlign: TextAlign.center,
                             style: const TextStyle(
                               color: Colors.white, fontSize: 17,
@@ -403,12 +417,23 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      widget.kind.instruction,
+                      widget.profile.instruction,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Colors.white70, fontSize: 12, height: 1.4,
                       ),
                     ),
+                    if (widget.profile.pagesHint.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        widget.profile.pagesHint,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFFB8DDFF),
+                          fontSize: 11, height: 1.4,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -531,12 +556,20 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 }
 
 class _ScanGuidePainter extends CustomPainter {
-  const _ScanGuidePainter(this.normalizedGuide, this.color);
+  const _ScanGuidePainter(this.normalizedGuide, this.color, {
+    required this.zones,
+    required this.detected,
+  });
+
   final Rect normalizedGuide;
   final Color color;
+  final List<String> zones;
+  final bool detected;
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Dynamic border is the candidate's ACTUAL detected extent; the guide
+    // is only displayed while no complete document is confidently located.
     final rect = Rect.fromLTRB(
       normalizedGuide.left * size.width,
       normalizedGuide.top * size.height,
@@ -555,7 +588,7 @@ class _ScanGuidePainter extends CustomPainter {
     canvas.drawRRect(
       rounded,
       Paint()
-        ..color = color.withValues(alpha: 0.36)
+        ..color = color.withValues(alpha: detected ? 0.48 : 0.22)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5,
     );
@@ -579,10 +612,45 @@ class _ScanGuidePainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 4,
     );
+
+    // These zones are visual hints only. We DO NOT pretend the camera has
+    // already recognized the passport photo/MRZ or verified a medical stamp.
+    if (zones.contains('passport_mrz')) {
+      final zone = Rect.fromLTWH(
+        rect.left + rect.width * 0.07,
+        rect.top + rect.height * 0.77,
+        rect.width * 0.86,
+        rect.height * 0.17,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(zone, const Radius.circular(5)),
+        Paint()
+          ..color = color.withValues(alpha: 0.50)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.3,
+      );
+    }
+    if (zones.contains('passport_photo')) {
+      final zone = Rect.fromLTWH(
+        rect.left + rect.width * 0.08,
+        rect.top + rect.height * 0.14,
+        rect.width * 0.23,
+        rect.height * 0.51,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(zone, const Radius.circular(4)),
+        Paint()
+          ..color = color.withValues(alpha: 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+    }
   }
 
   @override
   bool shouldRepaint(covariant _ScanGuidePainter oldDelegate) =>
       oldDelegate.normalizedGuide != normalizedGuide ||
-      oldDelegate.color != color;
+      oldDelegate.color != color ||
+      oldDelegate.detected != detected ||
+      oldDelegate.zones != zones;
 }
