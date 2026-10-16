@@ -251,8 +251,11 @@ class ScanFrameAnalyzer {
       final b = (guide.bottom * h).round();
       final midTop = (t + (b - t) * 0.15).round();
       final midBottom = (b - (b - t) * 0.15).round();
-      final midLeft = (l + (r - l) * 0.14).round();
-      final midRight = (r - (r - l) * 0.14).round();
+      // Sample almost the entire horizontal border. Interior printed
+      // baselines often span the middle 70% of a document and otherwise
+      // masquerade as its top/bottom edge.
+      final midLeft = (l + (r - l) * 0.04).round();
+      final midRight = (r - (r - l) * 0.04).round();
       final bandX = math.max(4, (w * (profile == null ? 0.1 : 0.16)).round());
       final bandY = math.max(5, (h * (profile == null ? 0.075 : 0.14)).round());
       final left = _vertical(current, l, bandX, midTop, midBottom);
@@ -276,7 +279,10 @@ class ScanFrameAnalyzer {
         sawClipped = true;
         continue;
       }
-      final ratio = (width / height) * aspect;
+      // Source grid pixels are 120x160 while the actual phone viewport may
+      // have any aspect. Convert detected pixel dimensions to normalized
+      // viewport proportions BEFORE evaluating physical paper aspect.
+      final ratio = (width / w) / (height / h) * aspect;
       if (profile != null && !profile.supportsRatio(ratio)) {
         sawWrongShape = true;
         continue;
