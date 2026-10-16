@@ -168,10 +168,14 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
   void _checkFrame(CameraImage image) {
     if (_busy || _closing || !mounted ||
-        !_autoEnabled || !_streamSupported) return;
+        !_autoEnabled || !_streamSupported) {
+      return;
+    }
     final now = DateTime.now();
     if (_lastProcessed != null &&
-        now.difference(_lastProcessed!).inMilliseconds < 230) return;
+        now.difference(_lastProcessed!).inMilliseconds < 230) {
+      return;
+    }
     _lastProcessed = now;
     final grid = sampleCameraLuma(image);
     if (grid == null) {
