@@ -251,7 +251,9 @@ class _ShellPageState extends State<ShellPage> {
       } catch (_) {
         // Device camera providers may manage the temporary file themselves.
       }
-      if (!samePortal) return {'cancelled': true};
+      if (!samePortal || callingNonce != _scannerNonce) {
+        return {'cancelled': true};
+      }
       return {'files': [_fileEntry(picture.name, bytes)]};
     } catch (_) {
       // Never strand students on unsupported/low-memory cameras. The portal
