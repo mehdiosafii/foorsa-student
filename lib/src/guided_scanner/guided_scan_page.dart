@@ -54,6 +54,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   bool _torch = false;
   String? _captureError;
   double _progress = 0;
+  double? _viewportAspect;
 
   @override
   void initState() {
@@ -177,7 +178,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       return;
     }
     _lastProcessed = now;
-    final grid = sampleCameraLuma(image);
+    final grid = sampleCameraLuma(image, viewportAspect: _viewportAspect);
     if (grid == null) {
       // Unsupported preview formats must never auto-trigger.
       if (_streamSupported && mounted) {
@@ -271,6 +272,9 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   Widget _cameraPreview(CameraController camera) {
     return LayoutBuilder(
       builder: (context, bounds) {
+        if (bounds.maxWidth > 0 && bounds.maxHeight > 0) {
+          _viewportAspect = bounds.maxWidth / bounds.maxHeight;
+        }
         final size = camera.value.previewSize;
         if (size == null || size.width <= 0 || size.height <= 0) {
           return const SizedBox.expand();
