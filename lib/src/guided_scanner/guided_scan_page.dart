@@ -39,6 +39,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     with WidgetsBindingObserver {
   CameraController? _camera;
   Future<void>? _pendingDispose;
+  Future<void>? _pendingStart;
   final _analyzer = const ScanFrameAnalyzer();
   final _gate = ScanAutoCaptureGate();
 
@@ -62,14 +63,39 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(_startCamera());
+    _scheduleCameraStart();
+  }
+
+  void _scheduleCameraStart() {
+    if (_initializing || _closing) return;
+    final start = _startCamera();
+    _pendingStart = start;
+    unawaited(start.whenComplete(() {
+      if (identical(_pendingStart, start)) _pendingStart = null;
+    }));
+  }
+
+  Future<void> _disposeCamera(CameraController camera) async {
+    try {
+      await camera.dispose().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // Camera backends can already have released the device after a pause.
+    }
+  }
+
+  Future<void> _discardLateCapture(Future<XFile> capture) async {
+    try {
+      final photo = await capture;
+      await File(photo.path).delete();
+    } catch (_) {
+      // Disposing a timed-out controller normally completes capture in error.
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_closing) return;
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
+    if (state != AppLifecycleState.resumed) {
       _appActive = false;
       // Invalidate an initialize/start-stream still in flight as well.
       // Otherwise a permission dialog can leave a disposed preview alive.
@@ -77,15 +103,16 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       final previous = _camera;
       _camera = null;
       if (previous != null && !_busy) {
-        _pendingDispose = previous.dispose();
+        _pendingDispose = _disposeCamera(previous);
       }
       _gate.reset();
       _previous = null;
+      _lastProcessed = null;
       if (mounted) setState(() => _streamSupported = false);
-    } else if (state == AppLifecycleState.resumed) {
+    } else {
       _appActive = true;
       if (_camera == null && !_busy && !_initializing) {
-        unawaited(_startCamera());
+        _scheduleCameraStart();
       }
     }
   }
@@ -96,7 +123,9 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     final generation = ++_cameraGeneration;
     CameraController? opened;
     try {
-      await _pendingDispose;
+      final pendingDispose = _pendingDispose;
+      _pendingDispose = null;
+      await pendingDispose;
       if (!mounted || _closing || !_appActive || generation != _cameraGeneration) return;
       final cameras = await availableCameras();
       final rearCameras = cameras.where(
@@ -123,7 +152,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
           break;
         } catch (error) {
           lastError = error;
-          await opened.dispose();
+          await _disposeCamera(opened);
           opened = null;
           if (error is CameraException &&
               error.code.toLowerCase().contains('access')) {
@@ -134,7 +163,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
       if (opened == null) throw lastError ?? StateError('Camera unavailable');
       if (!mounted || _closing || !_appActive || generation != _cameraGeneration) {
-        await opened.dispose();
+        await _disposeCamera(opened);
         return;
       }
       _camera = opened;
@@ -143,13 +172,19 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       } catch (_) {
         // Rotation metadata still travels with the JPEG on older hardware.
       }
-      try {
-        await opened.startImageStream(_checkFrame);
+      if (_autoEnabled) {
+        try {
+          await opened.startImageStream(_checkFrame);
+          _streamSupported = true;
+        } catch (_) {
+          // A few camera implementations support still photos but no image
+          // stream. Keep the shutter usable; never fake "auto-ready".
+          _streamSupported = false;
+        }
+      } else {
+        // Auto-capture was disabled before a lifecycle restart. Do not resume
+        // the expensive stream until the student turns it back on.
         _streamSupported = true;
-      } catch (_) {
-        // A few camera implementations support still photos but no image
-        // stream. Keep the shutter usable; never fake "auto-ready".
-        _streamSupported = false;
       }
       if (!_appActive || generation != _cameraGeneration) {
         // An inactive event already owns disposal of this controller.
@@ -159,11 +194,12 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         setState(() {
           _cameraFailed = false;
           _captureError = null;
+          _torch = false;
         });
       }
     } catch (_) {
       if (opened != null && _camera != opened) {
-        await opened.dispose().catchError((Object _) {});
+        await _disposeCamera(opened);
       }
       if (mounted && !_closing) {
         setState(() {
@@ -177,7 +213,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       // reopen the camera; otherwise the preview may remain blank.
       if (_appActive && !_closing && mounted && !_busy &&
           _camera == null && generation != _cameraGeneration) {
-        unawaited(_startCamera());
+        _scheduleCameraStart();
       }
     }
   }
@@ -198,6 +234,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       // Unsupported preview formats must never auto-trigger.
       if (_streamSupported && mounted) {
         setState(() => _streamSupported = false);
+        final camera = _camera;
+        if (camera != null) unawaited(_stopImageStream(camera));
       }
       return;
     }
@@ -226,6 +264,9 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   Future<void> _takePhoto() async {
     final camera = _camera;
     if (_busy || camera == null || !camera.value.isInitialized) return;
+    Future<XFile>? capture;
+    XFile? capturedPhoto;
+    var delivered = false;
     setState(() {
       _busy = true;
       _captureError = null;
@@ -233,14 +274,36 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     try {
       // CameraX/AVFoundation cannot consistently take still photographs
       // concurrently with the preview stream. Stop it before takePicture.
-      if (camera.value.isStreamingImages) await camera.stopImageStream();
-      final photo = await camera.takePicture();
-      if (!mounted || _closing) return;
+      if (camera.value.isStreamingImages) {
+        await camera.stopImageStream().timeout(const Duration(seconds: 3));
+      }
+      capture = camera.takePicture();
+      final photo = await capture.timeout(
+        const Duration(seconds: 15),
+      );
+      capturedPhoto = photo;
+      if (!mounted || _closing) {
+        await _disposeCamera(camera);
+        return;
+      }
       HapticFeedback.mediumImpact();
       _closing = true;
+      _camera = null;
+      _cameraGeneration++;
+      await _disposeCamera(camera);
+      if (!mounted) return;
       Navigator.of(context).pop(GuidedScanResult.captured(photo));
-    } catch (_) {
+      delivered = true;
+    } catch (error) {
+      final captureTimedOut = error is TimeoutException;
+      if (captureTimedOut && capture != null) {
+        unawaited(_discardLateCapture(capture));
+      }
       if (!mounted || _closing) return;
+      if (captureTimedOut && _camera == camera) {
+        _camera = null;
+        _cameraGeneration++;
+      }
       _gate.reset();
       _previous = null;
       setState(() {
@@ -248,12 +311,25 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         _progress = 0;
         _captureError = 'Could not take the photo. Try again or use the regular camera.';
       });
-      if (camera.value.isInitialized &&
+      // A pause can detach the controller while takePicture is in flight.
+      // If resume already happened, start a fresh controller now instead of
+      // leaving the page permanently on "Opening camera…".
+      if (captureTimedOut || _camera != camera || !_appActive) {
+        await _disposeCamera(camera);
+        if (_appActive && mounted && !_closing) _scheduleCameraStart();
+      } else if (camera.value.isInitialized && _autoEnabled &&
           !camera.value.isStreamingImages && _streamSupported) {
         try {
           await camera.startImageStream(_checkFrame);
         } catch (_) {
           if (mounted) setState(() => _streamSupported = false);
+        }
+      }
+    } finally {
+      if (_camera != camera || _closing) await _disposeCamera(camera);
+      if (!delivered && capturedPhoto != null) {
+        try { await File(capturedPhoto.path).delete(); } catch (_) {
+          // The capture may already have been removed during route disposal.
         }
       }
     }
@@ -262,16 +338,21 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   Future<void> _useOtherCamera() async {
     if (_busy || _closing) return;
     _closing = true;
+    _cameraGeneration++;
+    // A low-end device may still be opening the guided camera. Wait for that
+    // attempt to observe _closing and release its controller before launching
+    // the OS camera, otherwise the fallback can fail with "camera in use".
+    final pendingStart = _pendingStart;
+    if (pendingStart != null) {
+      try {
+        await pendingStart.timeout(const Duration(seconds: 3));
+      } catch (_) {
+        // A wedged camera backend must not make the fallback button hang.
+      }
+    }
     final previous = _camera;
     _camera = null;
-    _cameraGeneration++;
-    try {
-      // Release CameraX / AVFoundation before opening the OS camera intent.
-      // Popping an animated route alone can leave the sensor in use.
-      if (previous != null) await previous.dispose();
-    } catch (_) {
-      // An unsupported camera still deserves the standard camera fallback.
-    }
+    if (previous != null) await _disposeCamera(previous);
     if (mounted) {
       Navigator.of(context).pop(const GuidedScanResult.fallback());
     }
@@ -289,14 +370,43 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     }
   }
 
-  void _toggleAuto() {
+  Future<void> _stopImageStream(CameraController camera) async {
+    try {
+      if (camera.value.isInitialized && camera.value.isStreamingImages) {
+        await camera.stopImageStream().timeout(const Duration(seconds: 3));
+      }
+    } catch (_) {
+      // Manual capture remains available if stream shutdown is unsupported.
+    }
+  }
+
+  Future<void> _toggleAuto() async {
     _gate.reset();
     _previous = null;
+    _lastProcessed = null;
+    final enabling = !_autoEnabled;
     setState(() {
-      _autoEnabled = !_autoEnabled;
+      _autoEnabled = enabling;
       _progress = 0;
       _analysis = null;
     });
+    final camera = _camera;
+    if (camera == null || !camera.value.isInitialized) return;
+    if (!enabling) {
+      // Keeping a full camera image stream alive while auto-capture is off is
+      // expensive on budget phones even though Dart ignores the callbacks.
+      await _stopImageStream(camera);
+      return;
+    }
+    if (!camera.value.isStreamingImages) {
+      try {
+        await camera.startImageStream(_checkFrame);
+      } catch (_) {
+        if (mounted && _camera == camera) {
+          setState(() => _streamSupported = false);
+        }
+      }
+    }
   }
 
   @override
@@ -306,7 +416,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     WidgetsBinding.instance.removeObserver(this);
     final camera = _camera;
     _camera = null;
-    if (camera != null) unawaited(camera.dispose());
+    if (camera != null) unawaited(_disposeCamera(camera));
     super.dispose();
   }
 
