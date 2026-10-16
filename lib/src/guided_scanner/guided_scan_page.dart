@@ -46,6 +46,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   DateTime? _lastProcessed;
   int _cameraGeneration = 0;
   bool _initializing = false;
+  bool _appActive = true;
   bool _closing = false;
   bool _busy = false;
   bool _cameraFailed = false;
@@ -68,20 +69,23 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     if (_closing) return;
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
-      // Camera plugin lifecycle is caller-owned. Release it while another
-      // app or the lock screen uses the sensor, then reopen on resume.
-      if (_camera != null && !_busy) {
-        final previous = _camera;
-        _camera = null;
-        _cameraGeneration++;
-        _pendingDispose = previous?.dispose();
-        _gate.reset();
-        _previous = null;
-        if (mounted) setState(() => _streamSupported = false);
+      _appActive = false;
+      // Invalidate an initialize/start-stream still in flight as well.
+      // Otherwise a permission dialog can leave a disposed preview alive.
+      _cameraGeneration++;
+      final previous = _camera;
+      _camera = null;
+      if (previous != null && !_busy) {
+        _pendingDispose = previous.dispose();
       }
-    } else if (state == AppLifecycleState.resumed &&
-        _camera == null && !_busy && !_initializing) {
-      unawaited(_startCamera());
+      _gate.reset();
+      _previous = null;
+      if (mounted) setState(() => _streamSupported = false);
+    } else if (state == AppLifecycleState.resumed) {
+      _appActive = true;
+      if (_camera == null && !_busy && !_initializing) {
+        unawaited(_startCamera());
+      }
     }
   }
 
@@ -92,7 +96,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     CameraController? opened;
     try {
       await _pendingDispose;
-      if (!mounted || _closing || generation != _cameraGeneration) return;
+      if (!mounted || _closing || !_appActive || generation != _cameraGeneration) return;
       final cameras = await availableCameras();
       final rearCameras = cameras.where(
         (camera) => camera.lensDirection == CameraLensDirection.back,
@@ -128,7 +132,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       }
 
       if (opened == null) throw lastError ?? StateError('Camera unavailable');
-      if (!mounted || _closing || generation != _cameraGeneration) {
+      if (!mounted || _closing || !_appActive || generation != _cameraGeneration) {
         await opened.dispose();
         return;
       }
@@ -145,6 +149,10 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         // A few camera implementations support still photos but no image
         // stream. Keep the shutter usable; never fake "auto-ready".
         _streamSupported = false;
+      }
+      if (!_appActive || generation != _cameraGeneration) {
+        // An inactive event already owns disposal of this controller.
+        return;
       }
       if (mounted && !_closing) {
         setState(() {
@@ -164,6 +172,12 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       }
     } finally {
       _initializing = false;
+      // A resume that arrived while initialize() was outstanding must
+      // reopen the camera; otherwise the preview may remain blank.
+      if (_appActive && !_closing && mounted && !_busy &&
+          _camera == null && generation != _cameraGeneration) {
+        unawaited(_startCamera());
+      }
     }
   }
 
