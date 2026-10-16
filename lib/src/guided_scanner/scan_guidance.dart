@@ -9,6 +9,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'scan_document_profile.dart';
+
 enum GuidedDocumentKind { passport, idCard, page }
 
 extension GuidedDocumentKindInfo on GuidedDocumentKind {
@@ -115,6 +117,17 @@ class _Line {
   final double strength;
 }
 
+
+class _ScanCandidate {
+  const _ScanCandidate(this.l, this.r, this.t, this.b, this.support, this.score);
+  final int l;
+  final int r;
+  final int t;
+  final int b;
+  final double support;
+  final double score;
+}
+
 class ScanFrameAnalyzer {
   const ScanFrameAnalyzer();
 
@@ -207,6 +220,8 @@ class ScanFrameAnalyzer {
     ScanLumaGrid current,
     GuidedDocumentKind kind, {
     ScanLumaGrid? previous,
+    GuidedDocumentProfile? profile,
+    double viewportAspect = 0.5,
   }) {
     if (!current.valid) {
       return const ScanFrameAnalysis(
@@ -214,64 +229,89 @@ class ScanFrameAnalyzer {
         motion: double.infinity, brightness: 0, sharpness: 0, contrast: 0,
       );
     }
-    final guide = kind.guide;
     final w = current.width;
     final h = current.height;
-    final l = (guide.left * w).round();
-    final r = (guide.right * w).round();
-    final t = (guide.top * h).round();
-    final b = (guide.bottom * h).round();
-    final middleTop = (t + (b - t) * 0.15).round();
-    final middleBottom = (b - (b - t) * 0.15).round();
-    final middleLeft = (l + (r - l) * 0.14).round();
-    final middleRight = (r - (r - l) * 0.14).round();
-    final horizontalBand = math.max(4, (w * 0.1).round());
-    final verticalBand = math.max(5, (h * 0.075).round());
-    final left = _vertical(
-      current, l, horizontalBand, middleTop, middleBottom,
-    );
-    final right = _vertical(
-      current, r, horizontalBand, middleTop, middleBottom,
-    );
-    final top = _horizontal(
-      current, t, verticalBand, middleLeft, middleRight,
-    );
-    final bottom = _horizontal(
-      current, b, verticalBand, middleLeft, middleRight,
-    );
+    final aspect = viewportAspect.isFinite && viewportAspect > 0.25 &&
+      viewportAspect < 1.3 ? viewportAspect : 0.5;
+    final guides = profile?.candidateGuides(aspect) ?? [kind.guide];
     final motion = _motion(current, previous);
-    if (left == null || right == null || top == null || bottom == null) {
-      return ScanFrameAnalysis(
-        hint: ScanHint.position, bounds: null, edgeSupport: 0,
-        motion: motion, brightness: 0, sharpness: 0, contrast: 0,
+    _ScanCandidate? best;
+    var sawSmall = false;
+    var sawClipped = false;
+    var sawWrongShape = false;
+
+    // Follow detected borders within a generous band around the initial
+    // document hint. Portrait and landscape are both attempted for variable
+    // university formats. The actual detected bounds (not the hint) are what
+    // the UI highlights and the shutter stability gate tracks.
+    for (final guide in guides) {
+      final l = (guide.left * w).round();
+      final r = (guide.right * w).round();
+      final t = (guide.top * h).round();
+      final b = (guide.bottom * h).round();
+      final midTop = (t + (b - t) * 0.15).round();
+      final midBottom = (b - (b - t) * 0.15).round();
+      final midLeft = (l + (r - l) * 0.14).round();
+      final midRight = (r - (r - l) * 0.14).round();
+      final bandX = math.max(4, (w * (profile == null ? 0.1 : 0.16)).round());
+      final bandY = math.max(5, (h * (profile == null ? 0.075 : 0.14)).round());
+      final left = _vertical(current, l, bandX, midTop, midBottom);
+      final right = _vertical(current, r, bandX, midTop, midBottom);
+      final top = _horizontal(current, t, bandY, midLeft, midRight);
+      final bottom = _horizontal(current, b, bandY, midLeft, midRight);
+      if (left == null || right == null || top == null || bottom == null) continue;
+      final x0 = left.position;
+      final x1 = right.position;
+      final y0 = top.position;
+      final y1 = bottom.position;
+      if (x1 <= x0 || y1 <= y0) continue;
+      final width = x1 - x0;
+      final height = y1 - y0;
+      if (width < (r - l) * 0.68 || height < (b - t) * 0.68) {
+        sawSmall = true;
+        continue;
+      }
+      if (x0 < w * 0.035 || x1 > w * 0.965 ||
+          y0 < h * 0.035 || y1 > h * 0.965) {
+        sawClipped = true;
+        continue;
+      }
+      final ratio = (width / height) * aspect;
+      if (profile != null && !profile.supportsRatio(ratio)) {
+        sawWrongShape = true;
+        continue;
+      }
+      final support = math.min(
+        math.min(left.support, right.support),
+        math.min(top.support, bottom.support),
       );
+      // Prefer complete straight borders, not high-contrast printed text.
+      // A shape closer to the expected paper ratio wins when multiple
+      // rectangle candidates are found, without requiring an exact match.
+      final expectedRatio = (guide.width / guide.height) * aspect;
+      final aspectPenalty = (ratio - expectedRatio).abs() / expectedRatio;
+      final score = support * 4
+          + (left.strength + right.strength + top.strength + bottom.strength) / 280
+          - aspectPenalty * (profile == null ? 0 : 0.8);
+      final candidate = _ScanCandidate(x0, x1, y0, y1, support, score);
+      if (best == null || candidate.score > best.score) best = candidate;
     }
 
-    final x0 = left.position;
-    final x1 = right.position;
-    final y0 = top.position;
-    final y1 = bottom.position;
-    if (x1 - x0 < (r - l) * 0.74 || y1 - y0 < (b - t) * 0.72) {
+    if (best == null) {
+      final hint = sawClipped ? ScanHint.moveBack
+        : sawSmall ? ScanHint.moveCloser
+        : sawWrongShape ? ScanHint.position : ScanHint.position;
       return ScanFrameAnalysis(
-        hint: ScanHint.moveCloser, bounds: null, edgeSupport: 0,
+        hint: hint, bounds: null, edgeSupport: 0,
         motion: motion, brightness: 0, sharpness: 0, contrast: 0,
       );
     }
-    if (x0 < w * 0.035 || x1 > w * 0.965
-        || y0 < h * 0.035 || y1 > h * 0.965) {
-      return ScanFrameAnalysis(
-        hint: ScanHint.moveBack, bounds: null, edgeSupport: 0,
-        motion: motion, brightness: 0, sharpness: 0, contrast: 0,
-      );
-    }
-
-    final bounds = Rect.fromLTRB(
-      x0 / w, y0 / h, x1 / w, y1 / h,
-    );
-    final support = math.min(
-      math.min(left.support, right.support),
-      math.min(top.support, bottom.support),
-    );
+    final x0 = best.l;
+    final x1 = best.r;
+    final y0 = best.t;
+    final y1 = best.b;
+    final support = best.support;
+    final bounds = Rect.fromLTRB(x0 / w, y0 / h, x1 / w, y1 / h);
     final innerX0 = math.max(2, x0 + ((x1 - x0) * 0.07).round());
     final innerX1 = math.min(w - 3, x1 - ((x1 - x0) * 0.07).round());
     final innerY0 = math.max(2, y0 + ((y1 - y0) * 0.07).round());
