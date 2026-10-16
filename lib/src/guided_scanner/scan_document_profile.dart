@@ -64,6 +64,16 @@ class GuidedDocumentProfile {
   final List<String> zones;
   final String pages;
 
+  /// Small, non-sensitive hints for the native camera. Native code still
+  /// validates every value and falls back to a general page guide.
+  Map<String, Object> toNativeRequest() => {
+    'documentKey': documentKey,
+    'title': title,
+    'instruction': instruction,
+    'layout': layout.name,
+    'pages': pages,
+  };
+
   bool get acceptsLandscape =>
       layout == GuidedScanLayout.adaptive ||
       layout == GuidedScanLayout.card ||
