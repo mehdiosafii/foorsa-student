@@ -208,6 +208,13 @@ class _ShellPageState extends State<ShellPage> {
       final picture = result.file;
       if (picture == null) return {'cancelled': true};
       final bytes = await picture.readAsBytes();
+      // Recheck the trusted origin after the modal closes: a WebView
+      // navigation during camera use must not receive official-document
+      // pixels, even if the original request was from the correct host.
+      final destination = await _controller?.getUrl();
+      final samePortal = destination != null
+          && destination.scheme == 'https'
+          && destination.host.toLowerCase() == trustedHost;
       // This is an official-document photo. The portal receives its bytes
       // immediately; don't retain a second unencrypted copy in camera temp.
       try {
@@ -215,6 +222,7 @@ class _ShellPageState extends State<ShellPage> {
       } catch (_) {
         // Device camera providers may manage the temporary file themselves.
       }
+      if (!samePortal) return {'cancelled': true};
       return {'files': [_fileEntry(picture.name, bytes)]};
     } catch (_) {
       // Never strand students on unsupported/low-memory cameras. The portal
