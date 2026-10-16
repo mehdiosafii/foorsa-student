@@ -26,6 +26,8 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 import 'config.dart';
 import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
+import 'guided_scanner/guided_scan_page.dart';
+import 'guided_scanner/scan_guidance.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -172,6 +174,36 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
+
+  // ── Guided document capture (new shells; old shells keep the picker) ──
+  Future<Map<String, dynamic>> _guidedScanForWeb(String documentKind) async {
+    if (!mounted || (!Platform.isIOS && !Platform.isAndroid)) {
+      return {'unsupported': true};
+    }
+    try {
+      final status = await ph.Permission.camera.request();
+      if (!status.isGranted) return {'unsupported': true};
+      if (!mounted) return {'cancelled': true};
+      final result = await Navigator.of(context).push<GuidedScanResult>(
+        MaterialPageRoute<GuidedScanResult>(
+          fullscreenDialog: true,
+          builder: (_) => GuidedScanPage(
+            kind: GuidedDocumentKindInfo.fromPortal(documentKind),
+          ),
+        ),
+      );
+      if (result == null) return {'cancelled': true};
+      if (result.useLegacyCamera) return _pickForWeb('camera', false);
+      final picture = result.file;
+      if (picture == null) return {'cancelled': true};
+      final bytes = await picture.readAsBytes();
+      return {'files': [_fileEntry(picture.name, bytes)]};
+    } catch (_) {
+      // Never strand students on unsupported/low-memory cameras. The portal
+      // can fall back to its original native image_picker camera.
+      return {'unsupported': true};
+    }
+  }
 
   // ── Native download (FoorsaShellDownloadFile) ────────────────────────────
   static const MethodChannel _downloadsChannel = MethodChannel('foorsa/downloads');
@@ -636,6 +668,15 @@ class _ShellPageState extends State<ShellPage> {
                     callback: (args) => _pickForWeb(
                       args.isNotEmpty ? args[0].toString() : 'file',
                       args.length > 1 && args[1] == true,
+                    ),
+                  );
+                  // The guided scanner is opt-in and only called by the
+                  // document workflow. Existing camera/file handlers remain
+                  // unchanged for receipts, profile photos and old versions.
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellScanDocument',
+                    callback: (args) => _guidedScanForWeb(
+                      args.isNotEmpty ? args[0].toString() : 'page',
                     ),
                   );
                   controller.addJavaScriptHandler(
