@@ -2,14 +2,19 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+import 'scan_document_profile.dart';
+
 /// System scans are already cropped and filtered. Preserve that marker and
 /// every page so the portal never crops twice or silently keeps only page one.
 class NativeDocumentScanner {
   static const channel = MethodChannel('foorsa/document_scanner');
 
-  Future<Map<String, dynamic>> scan() async {
+  Future<Map<String, dynamic>> scan({GuidedDocumentProfile? profile}) async {
     try {
-      final response = await channel.invokeMapMethod<String, dynamic>('scan');
+      final response = await channel.invokeMapMethod<String, dynamic>(
+        'scan',
+        {'profile': profile?.toNativeRequest()},
+      );
       if (response?['unsupported'] == true) return {'unsupported': true};
       if (response?['cancelled'] == true) return {'cancelled': true};
       if (response?['error'] is String) return {'error': response!['error']};
@@ -24,7 +29,17 @@ class NativeDocumentScanner {
       }
       return {
         'processed': true,
-        'engine': 'visionkit',
+        'engine': response?['engine'] is String
+            ? response!['engine']
+            : 'avfoundation_vision',
+        'scannerBuild': response?['scannerBuild'] is String
+            ? response!['scannerBuild']
+            : 'custom-live-v2',
+        'capabilities': response?['capabilities'] is List
+            ? List<String>.unmodifiable(
+                (response!['capabilities'] as List).whereType<String>(),
+              )
+            : const <String>[],
         'files': [
           for (var i = 0; i < pages.length; i++)
             {
@@ -36,7 +51,9 @@ class NativeDocumentScanner {
         ],
       };
     } on MissingPluginException {
-      return {'unsupported': true};
+      return {
+        'error': 'The iOS document scanner is unavailable in this app build.'
+      };
     } catch (_) {
       // A failed scan is not permission to open a different camera silently.
       return {

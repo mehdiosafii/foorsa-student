@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:foorsa_student/src/guided_scanner/native_document_scanner.dart';
+import 'package:foorsa_student/src/guided_scanner/scan_document_profile.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -20,21 +21,50 @@ void main() {
   tearDown(() =>
       messenger.setMockMethodCallHandler(NativeDocumentScanner.channel, null));
 
-  test('keeps all pages in order and marks system scans as already processed',
+  test('keeps all pages in order and exposes non-sensitive native diagnostics',
       () async {
     final first = Uint8List.fromList([1, 2, 3]);
     final second = Uint8List.fromList([4, 5, 6]);
     reply({
-      'pages': [first, second]
+      'pages': [first, second],
+      'engine': 'avfoundation_vision',
+      'scannerBuild': 'custom-live-v2',
+      'capabilities': ['live_quadrilateral', 'multi_page'],
     });
     final result = await scanner.scan();
     expect(result['processed'], true);
-    expect(result['engine'], 'visionkit');
+    expect(result['engine'], 'avfoundation_vision');
+    expect(result['scannerBuild'], 'custom-live-v2');
+    expect(result['capabilities'], contains('live_quadrilateral'));
     final files = result['files'] as List;
     expect(files.length, 2);
     expect(files[0]['name'], 'scan-page-1.jpg');
     expect(
         files[1]['dataUrl'], 'data:image/jpeg;base64,${base64Encode(second)}');
+  });
+  test('passes only validated document guidance to the native camera',
+      () async {
+    Object? arguments;
+    messenger.setMockMethodCallHandler(NativeDocumentScanner.channel,
+        (call) async {
+      arguments = call.arguments;
+      return {
+        'pages': [
+          Uint8List.fromList([1])
+        ]
+      };
+    });
+    final profile = GuidedDocumentProfile.fromPortal({
+      'documentKey': 'identity',
+      'title': 'Passport',
+      'instruction': 'Include all four corners.',
+      'layout': 'adaptive',
+    });
+    await scanner.scan(profile: profile);
+    final native = (arguments as Map)['profile'] as Map;
+    expect(native['documentKey'], 'identity');
+    expect(native['layout'], 'passport');
+    expect(native.keys, hasLength(5));
   });
   test(
       'cancellation and native errors remain final rather than opening another camera',
@@ -47,12 +77,11 @@ void main() {
         (_) async => throw PlatformException(code: 'camera_failed'));
     expect((await scanner.scan())['error'], isA<String>());
   });
-  test('only unsupported hardware and missing plugin opt into framed fallback',
-      () async {
+  test('only unsupported hardware opts into framed fallback', () async {
     reply({'unsupported': true});
     expect(await scanner.scan(), {'unsupported': true});
     messenger.setMockMethodCallHandler(NativeDocumentScanner.channel, null);
-    expect(await scanner.scan(), {'unsupported': true});
+    expect((await scanner.scan())['error'], contains('unavailable'));
   });
   test('malformed and partial page batches fail without dropping pages',
       () async {

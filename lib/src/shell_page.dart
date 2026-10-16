@@ -233,8 +233,9 @@ class _ShellPageState extends State<ShellPage> {
         return {'error': 'Allow camera access for Foorsa Student in Settings, then try again.'};
       }
       if (!mounted) return {'cancelled': true};
+      final profile = GuidedDocumentProfile.fromPortal(request);
       if (Platform.isIOS) {
-        final native = await NativeDocumentScanner().scan();
+        final native = await NativeDocumentScanner().scan(profile: profile);
         final destination = await _controller?.getUrl();
         if (!mounted || !_isTrustedPortal(destination) || callingNonce != _scannerNonce) {
           return {'cancelled': true};
@@ -247,7 +248,7 @@ class _ShellPageState extends State<ShellPage> {
         MaterialPageRoute<GuidedScanResult>(
           fullscreenDialog: true,
           builder: (_) => GuidedScanPage(
-            profile: GuidedDocumentProfile.fromPortal(request),
+            profile: profile,
           ),
         ),
       );
@@ -818,7 +819,9 @@ class _ShellPageState extends State<ShellPage> {
                   _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
-                  if (!_firstLoadDone) setState(() => _firstLoadDone = true);
+                  if (!_firstLoadDone) {
+                    setState(() => _firstLoadDone = true);
+                  }
                   if (!_errorThisLoad) {
                     _exitOffline();
                     try {
@@ -860,7 +863,9 @@ class _ShellPageState extends State<ShellPage> {
                       isForMainFrame: action.isForMainFrame)) {
                     return NavigationActionPolicy.ALLOW;
                   }
-                  if (_isInternal(uri)) return NavigationActionPolicy.ALLOW;
+                  if (_isInternal(uri)) {
+                    return NavigationActionPolicy.ALLOW;
+                  }
                   await _openExternally(uri);
                   return NavigationActionPolicy.CANCEL;
                 },
