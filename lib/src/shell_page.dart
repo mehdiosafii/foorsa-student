@@ -28,6 +28,7 @@ import 'config.dart';
 import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
 import 'guided_scanner/guided_scan_page.dart';
+import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
 import 'trusted_portal.dart';
 
@@ -55,6 +56,7 @@ class _ShellPageState extends State<ShellPage> {
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
   String _scannerNonce = _newScannerNonce();
+  bool _scanInProgress = false;
 
   static String _newScannerNonce() {
     final random = math.Random.secure();
@@ -71,8 +73,9 @@ class _ShellPageState extends State<ShellPage> {
     // cannot read this token, so it cannot request an official-document
     // capture through the old List-arguments JS handler in WebView 6.1.5.
     await controller.evaluateJavascript(source:
+      'if (location.origin === ${jsonEncode(Uri.parse(AppConfig.baseUrl).origin)}) {'
       'Object.defineProperty(window, "__foorsaScannerNonce", '
-      '{value: ${jsonEncode(nonce)}, configurable: true, enumerable: false});'
+      '{value: ${jsonEncode(nonce)}, configurable: true, enumerable: false});}'
     );
   }
 
@@ -208,22 +211,38 @@ class _ShellPageState extends State<ShellPage> {
     if (!mounted || (!Platform.isIOS && !Platform.isAndroid)) {
       return {'unsupported': true};
     }
-    // The shell can navigate to external/embedded hosts. Only the exact
-    // configured student portal may invoke a scanner that returns sensitive
-    // passport/ID pixels over the JS bridge. The broad _isInternal() host
-    // whitelist used for navigation is NOT sufficient authorization here.
-    final activeUrl = await _controller?.getUrl();
-    if (!_isTrustedPortal(activeUrl)) {
-      return {'unsupported': true};
+    if (_scanInProgress) {
+      return {'error': 'A scan is already open. Finish or cancel it first.'};
     }
-    if (callingNonce is! String || callingNonce.isEmpty ||
-        callingNonce != _scannerNonce) {
-      return {'unsupported': true};
-    }
+    _scanInProgress = true;
     try {
+      // The shell can navigate to external/embedded hosts. Only the exact
+      // configured student portal may invoke a scanner that returns sensitive
+      // passport/ID pixels over the JS bridge. The broad _isInternal() host
+      // whitelist used for navigation is NOT sufficient authorization here.
+      final activeUrl = await _controller?.getUrl();
+      if (!_isTrustedPortal(activeUrl)) {
+        return {'error': 'Open your document in the student portal to scan it.'};
+      }
+      if (callingNonce is! String || callingNonce.isEmpty ||
+          callingNonce != _scannerNonce) {
+        return {'error': 'The scanner connection expired. Close and reopen your document to try again.'};
+      }
       final status = await ph.Permission.camera.request();
-      if (!status.isGranted) return {'cancelled': true};
+      if (!status.isGranted) {
+        return {'error': 'Allow camera access for Foorsa Student in Settings, then try again.'};
+      }
       if (!mounted) return {'cancelled': true};
+      if (Platform.isIOS) {
+        final native = await NativeDocumentScanner().scan();
+        final destination = await _controller?.getUrl();
+        if (!mounted || !_isTrustedPortal(destination) || callingNonce != _scannerNonce) {
+          return {'cancelled': true};
+        }
+        // Only unsupported hardware uses the framed Flutter camera. Errors
+        // and cancellation never silently switch to an ordinary photo picker.
+        if (native['unsupported'] != true) return native;
+      }
       final result = await Navigator.of(context).push<GuidedScanResult>(
         MaterialPageRoute<GuidedScanResult>(
           fullscreenDialog: true,
@@ -233,7 +252,14 @@ class _ShellPageState extends State<ShellPage> {
         ),
       );
       if (result == null) return {'cancelled': true};
-      if (result.useLegacyCamera) return await _pickForWeb('camera', false);
+      if (result.useLegacyCamera) {
+        final picked = await _pickForWeb('camera', false);
+        final destination = await _controller?.getUrl();
+        if (!mounted || !_isTrustedPortal(destination) || callingNonce != _scannerNonce) {
+          return {'cancelled': true};
+        }
+        return picked;
+      }
       final picture = result.file;
       if (picture == null) return {'cancelled': true};
       final bytes = await picture.readAsBytes();
@@ -254,9 +280,9 @@ class _ShellPageState extends State<ShellPage> {
       }
       return {'files': [_fileEntry(picture.name, bytes)]};
     } catch (_) {
-      // Never strand students on unsupported/low-memory cameras. The portal
-      // can fall back to its original native image_picker camera.
-      return {'unsupported': true};
+      return {'error': 'The document camera could not open. Please try again.'};
+    } finally {
+      _scanInProgress = false;
     }
   }
 
@@ -736,6 +762,15 @@ class _ShellPageState extends State<ShellPage> {
                     ),
                   );
                   controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellScannerSession',
+                    callback: (args) async {
+                      // Publish into the trusted main frame, never return the
+                      // capability to an iframe that requested this refresh.
+                      await _publishScannerNonce(controller);
+                      return {'ready': true};
+                    },
+                  );
+                  controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellCameraStatus',
                     callback: (args) async {
                       final granted = await ph.Permission.camera.isGranted;
@@ -789,8 +824,8 @@ class _ShellPageState extends State<ShellPage> {
                     try {
                       await _publishScannerNonce(controller);
                     } catch (_) {
-                      // Missing nonce means the guided camera safely falls
-                      // back to the old picker, never to an unsecured bridge.
+                      // The portal can request publication again just before
+                      // scanning, without depending on page load timing.
                     }
                   }
                 },

@@ -1,3 +1,15 @@
+# iPhone system document camera (build 37)
+
+On supported iPhones the document scan bridge uses Apple VisionKit. The system camera supplies live edge highlighting, automatic/manual shutter, crop/rotate review, and colour/grayscale/black-and-white choices. The student can scan up to 20 pages in one session; no pages are silently discarded. If a batch exceeds the size limit, the system review stays open for removal/retry. Unsupported devices retain the existing framed Flutter camera.
+
+The native result includes `processed: true` and `engine: visionkit`. The portal must retain all pages and skip automatic recropping/re-enhancement of these results. Uploaded files still follow the existing portal/CRM document workflow. Only supported devices can exercise real camera behavior; simulator tests cannot verify live detection.
+
+Before scanning, `FoorsaShellScannerSession` republishes the navigation nonce into the trusted main frame. It never returns the nonce to the calling frame. This removes reliance on page-load timing. A failed scanner session returns a visible error rather than opening a plain camera. Origin and nonce are checked again after capture; app-managed system scan bytes stay in memory rather than app-created temporary files.
+
+Verification: Flutter bridge tests cover all pages, processed metadata, cancellation, unsupported fallback, and invalid results. A signed iOS archive verifies VisionKit linkage and plugin registration. Real iPhone QA must cover tracking on a contrasting surface, auto/manual capture, crop and colour review, multi-page save, permission denial, cancel, and upload to the test applicant.
+
+---
+
 # Foorsa Student — document-aware guided auto-capture
 
 ## The student experience
