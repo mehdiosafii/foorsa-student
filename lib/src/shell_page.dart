@@ -193,7 +193,7 @@ class _ShellPageState extends State<ShellPage> {
         ),
       );
       if (result == null) return {'cancelled': true};
-      if (result.useLegacyCamera) return _pickForWeb('camera', false);
+      if (result.useLegacyCamera) return await _pickForWeb('camera', false);
       final picture = result.file;
       if (picture == null) return {'cancelled': true};
       final bytes = await picture.readAsBytes();
