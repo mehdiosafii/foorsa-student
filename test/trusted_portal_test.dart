@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/src/trusted_portal.dart';
+import 'package:foorsa_student/src/trusted_portal.dart';
 
 void main() {
   const portal = 'https://student.foorsa.ma';
