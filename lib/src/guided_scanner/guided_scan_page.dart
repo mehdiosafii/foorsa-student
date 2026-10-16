@@ -250,6 +250,24 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     }
   }
 
+  Future<void> _useOtherCamera() async {
+    if (_busy || _closing) return;
+    _closing = true;
+    final previous = _camera;
+    _camera = null;
+    _cameraGeneration++;
+    try {
+      // Release CameraX / AVFoundation before opening the OS camera intent.
+      // Popping an animated route alone can leave the sensor in use.
+      if (previous != null) await previous.dispose();
+    } catch (_) {
+      // An unsupported camera still deserves the standard camera fallback.
+    }
+    if (mounted) {
+      Navigator.of(context).pop(const GuidedScanResult.fallback());
+    }
+  }
+
   Future<void> _toggleTorch() async {
     final camera = _camera;
     if (camera == null || _busy) return;
@@ -486,11 +504,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                         ),
                       ),
                       TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () => Navigator.of(context).pop(
-                                const GuidedScanResult.fallback(),
-                              ),
+                        onPressed: _busy ? null : _useOtherCamera,
                         style: TextButton.styleFrom(
                           foregroundColor: Colors.white,
                         ),
