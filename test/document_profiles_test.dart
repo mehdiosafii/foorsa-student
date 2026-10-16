@@ -83,7 +83,7 @@ void main() {
   });
 
   for (final key in ['identity','parent_id','medical_check','transcript','highest_degree']) {
-    test('detects document-specific ${key} frame without exact placement', () {
+    test('detects document-specific $key frame without exact placement', () {
       final p = profile(key);
       final guide = p.guide(previewAspect);
       final frame = simulatedDocument(guide, dx: 5, dy: -5);
@@ -92,7 +92,7 @@ void main() {
         previous: frame, profile: p, viewportAspect: previewAspect,
       );
       expect(result.hint, ScanHint.ready,
-        reason: 'Recognize shifted ${key} without a rigid exact-fit rectangle');
+        reason: 'Recognize shifted $key without a rigid exact-fit rectangle');
       expect(result.bounds, isNotNull);
       expect(result.bounds!.left, isNot(closeTo(guide.left, 0.001)));
     });
