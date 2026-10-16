@@ -84,6 +84,15 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(topLeft.y, landscapeRect.minY, accuracy: 0.001)
   }
 
+  func testPassportAcceptsDataPageAndOpenSpread() {
+    let passport = FoorsaScannerProfile(arguments: ["profile": ["layout": "passport"]])
+    XCTAssertTrue(passport.accepts(aspectRatio: 125.0 / 88.0))
+    XCTAssertTrue(passport.accepts(aspectRatio: 125.0 / 176.0))
+    XCTAssertTrue(passport.accepts(aspectRatio: 1275.0 / 1600.0))
+    XCTAssertFalse(passport.accepts(aspectRatio: 0.35))
+    XCTAssertFalse(passport.accepts(aspectRatio: 2.5))
+  }
+
   func testStabilityRequiresContinuousHoldAndResetsForMovement() {
     var tracker = ScannerStabilityTracker(requiredDuration: 0.7)
     XCTAssertFalse(tracker.observe(page, at: 0).ready)

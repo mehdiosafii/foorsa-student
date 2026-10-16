@@ -676,7 +676,10 @@ final class FoorsaScannerViewController: UIViewController {
     latestImageSize = imageSize
     renderQuadrilateral(quadrilateral, imageSize: imageSize)
     guard !isCapturing else { return }
-    let state = tracker.observe(quadrilateral, at: time)
+    let shapeAccepted = quadrilateral.map {
+      profile.accepts(aspectRatio: $0.estimatedAspectRatio(in: imageSize))
+    } ?? false
+    let state = tracker.observe(shapeAccepted ? quadrilateral : nil, at: time)
     overlay.progress = state.progress
     if quadrilateral == nil {
       if autoCaptureLocked {
@@ -691,8 +694,7 @@ final class FoorsaScannerViewController: UIViewController {
       return
     }
     documentMissingSince = nil
-    guard let quadrilateral,
-          profile.accepts(aspectRatio: quadrilateral.estimatedAspectRatio(in: imageSize)) else {
+    guard shapeAccepted else {
       statusLabel.text = "Rotate the document so its full shape fits the guide."
       return
     }

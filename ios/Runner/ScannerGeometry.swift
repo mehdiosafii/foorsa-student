@@ -21,7 +21,9 @@ struct FoorsaScannerProfile {
 
   func accepts(aspectRatio ratio: CGFloat) -> Bool {
     switch layout {
-    case .passport: return ratio >= 1.14 && ratio <= 1.84
+    case .passport:
+      // Accept both the landscape data page and the full open passport spread.
+      return (ratio >= 0.60 && ratio <= 1.0) || (ratio >= 1.14 && ratio <= 1.84)
     case .card: return ratio >= 1.27 && ratio <= 2.0
     case .portrait: return ratio >= 0.50 && ratio <= 1.12
     case .adaptive:
