@@ -197,6 +197,13 @@ class _ShellPageState extends State<ShellPage> {
       final picture = result.file;
       if (picture == null) return {'cancelled': true};
       final bytes = await picture.readAsBytes();
+      // This is an official-document photo. The portal receives its bytes
+      // immediately; don't retain a second unencrypted copy in camera temp.
+      try {
+        await File(picture.path).delete();
+      } catch (_) {
+        // Device camera providers may manage the temporary file themselves.
+      }
       return {'files': [_fileEntry(picture.name, bytes)]};
     } catch (_) {
       // Never strand students on unsupported/low-memory cameras. The portal
