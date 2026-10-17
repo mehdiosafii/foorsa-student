@@ -4,9 +4,34 @@ import Foundation
 struct FoorsaScannerProfile {
   enum Layout: String { case passport, card, portrait, adaptive }
 
+  // Keep this list aligned with the portal's canonical folder keys. A caller's
+  // layout hint cannot turn a known paper document into a passport or card.
+  private static let folderLayouts: [String: Layout] = [
+    "identity": .passport, "parent_id": .card,
+    "highest_degree": .adaptive, "last_year_degree": .adaptive,
+    "transcript": .adaptive, "last_year_transcript": .adaptive,
+    "medical_check": .portrait, "criminal_record": .adaptive,
+    "bank_statement": .adaptive, "english_test": .adaptive,
+    "recommendation_letter": .portrait, "study_plan": .portrait,
+    "research_proposal": .portrait, "cv": .portrait,
+    "birth_certificate": .adaptive, "contract": .portrait,
+    "receipts": .adaptive, "admissions": .adaptive,
+    "universities_notices": .adaptive, "visa_documents": .adaptive,
+    "application_form": .portrait, "authorizations": .portrait,
+    "introduction_video": .portrait, "csca": .adaptive,
+    "previous_chinese_universities": .adaptive,
+    "publications": .portrait, "supervisor_acceptance": .adaptive,
+    "drive_files": .adaptive,
+  ]
+
+  let documentKey: String
   let title: String
   let instruction: String
   let layout: Layout
+
+  // A card contains far less text than a full paper page and can be legible at
+  // a smaller camera footprint. Keep corner accuracy and edge margins equal.
+  var minimumCaptureArea: CGFloat { layout == .card ? 0.12 : 0.16 }
 
   init(arguments: Any?) {
     let arguments = arguments as? [String: Any]
@@ -16,18 +41,30 @@ struct FoorsaScannerProfile {
     title = rawTitle.flatMap { $0.isEmpty || $0.count > 70 ? nil : $0 } ?? "Scan document"
     instruction = rawInstruction.flatMap { $0.isEmpty || $0.count > 200 ? nil : $0 }
       ?? "Keep every corner and all printed details visible."
-    layout = Layout(rawValue: source?["layout"] as? String ?? "") ?? .adaptive
+    let rawKey = (source?["documentKey"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    documentKey = Self.folderLayouts[rawKey] == nil ? "drive_files" : rawKey
+    if rawKey.isEmpty {
+      // Older callers supplied only a layout. Retain that bounded hint.
+      layout = Layout(rawValue: source?["layout"] as? String ?? "") ?? .adaptive
+    } else {
+      layout = Self.folderLayouts[documentKey] ?? .adaptive
+    }
   }
 
   func accepts(aspectRatio ratio: CGFloat) -> Bool {
+    guard ratio.isFinite, ratio > 0 else { return false }
+    let shape = max(ratio, 1 / ratio)
     switch layout {
     case .passport:
-      // Accept both the landscape data page and the full open passport spread.
-      return (ratio >= 0.60 && ratio <= 1.0) || (ratio >= 1.14 && ratio <= 1.84)
-    case .card: return ratio >= 1.27 && ratio <= 2.0
-    case .portrait: return ratio >= 0.50 && ratio <= 1.12
+      // Data pages and open spreads can present either side vertically.
+      return shape >= 1.14 && shape <= 1.84
+    case .card: return shape >= 1.27 && shape <= 2.0
+    case .portrait: return shape <= 2.0
     case .adaptive:
-      return (ratio >= 0.49 && ratio <= 1.12) || (ratio >= 1.14 && ratio <= 2.10)
+      // Receipt slips have longer borders; all other unknown or flexible
+      // papers keep the ordinary document range.
+      return shape <= (documentKey == "receipts" ? 3.2 : 2.1)
     }
   }
 }
@@ -121,35 +158,52 @@ struct ScannerStabilityState: Equatable {
 }
 
 struct ScannerStabilityTracker {
+  static let maximumObservationAge: TimeInterval = 0.65
   private(set) var anchor: ScannerQuadrilateral?
   private(set) var stableSince: TimeInterval?
   private(set) var lastSeen: TimeInterval?
+  private var lastProcessingDuration: TimeInterval = 0
+  private var consecutiveObservations = 0
   let requiredDuration: TimeInterval
+  let minimumArea: CGFloat
 
-  init(requiredDuration: TimeInterval = 0.72) {
+  init(requiredDuration: TimeInterval = 0.72, minimumArea: CGFloat = 0.16) {
     self.requiredDuration = requiredDuration
+    self.minimumArea = minimumArea
   }
 
   mutating func observe(
     _ quadrilateral: ScannerQuadrilateral?,
-    at time: TimeInterval
+    at time: TimeInterval,
+    processingDuration: TimeInterval = 0
   ) -> ScannerStabilityState {
-    guard let quadrilateral, quadrilateral.isComplete() else {
+    guard time.isFinite, processingDuration.isFinite,
+          processingDuration >= 0, processingDuration <= Self.maximumObservationAge,
+          let quadrilateral, quadrilateral.isComplete(minimumArea: minimumArea) else {
       reset()
       return ScannerStabilityState(progress: 0, ready: false)
     }
-    defer { lastSeen = time }
+    // Account for time spent analyzing the previous frame, while retaining a
+    // hard ceiling so a camera interruption cannot count as a continuous hold.
+    let allowedGap = min(Self.maximumObservationAge, max(0.28, lastProcessingDuration * 1.5 + 0.12))
+    defer {
+      lastSeen = time
+      lastProcessingDuration = processingDuration
+    }
     guard let anchor, let stableSince,
           quadrilateral.maximumCornerDistance(to: anchor) <= 0.026,
           abs(quadrilateral.area - anchor.area) <= 0.035,
-          lastSeen.map({ time - $0 < 0.28 }) ?? false else {
+          lastSeen.map({ time > $0 && time - $0 < allowedGap }) ?? false else {
       self.anchor = quadrilateral
       self.stableSince = time
+      consecutiveObservations = 1
       return ScannerStabilityState(progress: 0, ready: false)
     }
     // Slowly follow hand drift while preserving a stable reference window.
     self.anchor = anchor.blended(with: quadrilateral, amount: 0.18)
-    let progress = min(1, max(0, CGFloat((time - stableSince) / requiredDuration)))
+    consecutiveObservations += 1
+    let progress = min(1, CGFloat(consecutiveObservations - 1) / 3,
+      max(0, CGFloat((time - stableSince) / requiredDuration)))
     return ScannerStabilityState(progress: progress, ready: progress >= 1)
   }
 
@@ -157,6 +211,8 @@ struct ScannerStabilityTracker {
     anchor = nil
     stableSince = nil
     lastSeen = nil
+    lastProcessingDuration = 0
+    consecutiveObservations = 0
   }
 }
 

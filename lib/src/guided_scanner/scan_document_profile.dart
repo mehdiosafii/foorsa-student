@@ -74,23 +74,20 @@ class GuidedDocumentProfile {
     'pages': pages,
   };
 
-  bool get acceptsLandscape =>
-      layout == GuidedScanLayout.adaptive ||
-      layout == GuidedScanLayout.card ||
-      layout == GuidedScanLayout.passport;
+  bool get acceptsLandscape => true;
 
-  bool get acceptsPortrait =>
-      layout == GuidedScanLayout.adaptive ||
-      layout == GuidedScanLayout.portrait;
+  bool get acceptsPortrait => true;
 
   /// These are deliberately wide: the guide suggests positioning but must
   /// not reject different Moroccan documents or Chinese university forms.
-  List<double> get expectedAspectRatios => switch (layout) {
-    GuidedScanLayout.passport => [1.42],
-    GuidedScanLayout.card => [1.585],
-    GuidedScanLayout.portrait => [0.71],
-    GuidedScanLayout.adaptive => [0.71, 1.42],
-  };
+  List<double> get expectedAspectRatios => documentKey == 'receipts'
+    ? [0.71, 1.42, 0.35, 2.85]
+    : switch (layout) {
+      GuidedScanLayout.passport => [1.42, 0.71],
+      GuidedScanLayout.card => [1.585, 0.63],
+      GuidedScanLayout.portrait => [0.71, 1.42],
+      GuidedScanLayout.adaptive => [0.71, 1.42],
+    };
 
   static GuidedDocumentProfile fromPortal(Object? request) {
     if (request is GuidedDocumentProfile) return request;
@@ -182,13 +179,13 @@ class GuidedDocumentProfile {
   /// certificate may be a small horizontal paper. Do not require exact size.
   bool supportsRatio(double ratio) {
     if (ratio <= 0 || !ratio.isFinite) return false;
+    final shape = ratio >= 1 ? ratio : 1 / ratio;
     return switch (layout) {
-      GuidedScanLayout.passport => ratio >= 1.14 && ratio <= 1.84,
-      GuidedScanLayout.card => ratio >= 1.27 && ratio <= 2.00,
-      GuidedScanLayout.portrait => ratio >= 0.50 && ratio <= 1.12,
+      GuidedScanLayout.passport => shape >= 1.14 && shape <= 1.84,
+      GuidedScanLayout.card => shape >= 1.27 && shape <= 2.00,
+      GuidedScanLayout.portrait => shape <= 2.00,
       GuidedScanLayout.adaptive =>
-        (ratio >= 0.49 && ratio <= 1.12) ||
-        (ratio >= 1.14 && ratio <= 2.10),
+        shape <= (documentKey == 'receipts' ? 3.20 : 2.10),
     };
   }
 
