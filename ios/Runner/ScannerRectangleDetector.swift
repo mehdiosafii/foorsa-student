@@ -120,7 +120,34 @@ private struct BoundaryPixels {
     let edges = outline(rectangle)
     return edges.allSatisfy {$0.1 >= 8} && edges.filter {$0.2 >= $0.1 * 0.32}.count >= 3
   }
-  func refine(_ rectangle: VNRectangleObservation) -> VNRectangleObservation? {
+  func outerVariation(a: CGPoint, b: CGPoint, n: CGPoint) -> Double {
+    var values:[SIMD3<Double>]=[]
+    for j in 0..<19 {
+      let t=CGFloat(j+1)/20,c=CGPoint(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)
+      for d in [CGFloat(3),7,11] {
+        guard let v=color(CGPoint(x:c.x+n.x*d,y:c.y+n.y*d)) else{return 999}
+        values.append(v)
+      }
+    }
+    let m=SIMD3(values.map{$0.x}.sorted()[values.count/2],values.map{$0.y}.sorted()[values.count/2],values.map{$0.z}.sorted()[values.count/2])
+    return values.map{let d=$0-m;return sqrt((d*d).sum()/3)}.sorted()[Int(Double(values.count-1)*0.85)]
+  }
+  // A booklet binding is a narrow dark valley, unlike an outer paper/background
+  // step. Require both flanks and continuity along almost the full edge.
+  func crease(a: CGPoint, b: CGPoint, n: CGPoint) -> Double {
+    var values: [Double] = []
+    for i in 0..<31 {
+      let t=CGFloat(i+1)/32, p=CGPoint(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)
+      func luma(_ d:CGFloat)->Double? {
+        guard let c=color(CGPoint(x:p.x+n.x*d,y:p.y+n.y*d)) else{return nil}
+        return (c.x+c.y+c.z)/3
+      }
+      guard let c=luma(0),let a=luma(-3),let b=luma(3),let aa=luma(-5),let bb=luma(5) else{return 0}
+      values.append(min(a-c,b-c,aa-c,bb-c))
+    }
+    return values.sorted()[6]
+  }
+  func refine(_ rectangle: VNRectangleObservation, diffuseEdge: Int? = nil, bindingEdge: Int? = nil) -> VNRectangleObservation? {
     let source = [rectangle.topLeft, rectangle.topRight, rectangle.bottomRight, rectangle.bottomLeft]
     let points = source.map { CGPoint(x:$0.x*CGFloat(width), y:$0.y*CGFloat(height)) }
     let center = CGPoint(x:points.map(\.x).reduce(0,+)/4,y:points.map(\.y).reduce(0,+)/4)
@@ -142,13 +169,26 @@ private struct BoundaryPixels {
       originals.append(Line(a:a,b:b,broad:e.1,sharp:e.2,coherence:e.3))
     }
     func supported(_ lines:[Line]) -> Bool {
-      lines.allSatisfy({$0.broad >= 8}) &&
+      if let binding = bindingEdge {
+        return lines.enumerated().allSatisfy { i,line in
+          if i == binding {return crease(a:line.a,b:line.b,n:normals[i]) >= 8}
+          return line.broad >= 12 && line.sharp >= line.broad * 0.32 && line.coherence >= 0.9
+        }
+      }
+      if let weak = diffuseEdge {
+        return lines.enumerated().allSatisfy { i, line in
+          if i == weak { return line.broad >= 2 && line.sharp >= 1 && line.coherence >= 0.35 }
+          return line.broad >= 8 && line.sharp >= line.broad * 0.32 && line.coherence >= 0.9
+        }
+      }
+      return lines.allSatisfy({$0.broad >= 8}) &&
         lines.filter({$0.broad >= 12}).count >= 3 &&
         lines.map(\.broad).reduce(0,+)/4 >= 16 &&
         lines.filter({$0.sharp >= $0.broad * 0.32}).count >= 3
     }
     // Strong perimeter evidence means there is no reason to perturb accurate Vision corners.
-    if supported(originals) { return rectangle }
+    if bindingEdge == nil && supported(originals) &&
+      (diffuseEdge == nil || safeExterior(rectangle)) { return rectangle }
     func fit(_ edge:Int, expanding:Bool) -> Line {
       let a=points[edge],b=points[(edge+1)%4],n=normals[edge]
       let length=hypot(b.x-a.x,b.y-a.y)
@@ -158,7 +198,10 @@ private struct BoundaryPixels {
         let aa=CGPoint(x:a.x+n.x*(offset-tilt),y:a.y+n.y*(offset-tilt))
         let bb=CGPoint(x:b.x+n.x*(offset+tilt),y:b.y+n.y*(offset+tilt))
         let e=evidence(a:aa,b:bb,n:n)
-        let score=e.0 / (1 + Double(abs(offset))*0.006 + Double(abs(tilt))*0.005)
+        if ((bindingEdge != nil && bindingEdge != edge) || diffuseEdge != nil) &&
+          outerVariation(a:aa,b:bb,n:n) > min(24,max(8,e.1*0.5)) {return}
+        let rawScore = bindingEdge == edge ? crease(a:aa,b:bb,n:n) : e.0
+        let score=rawScore / (1 + Double(abs(offset))*0.006 + Double(abs(tilt))*0.005)
         if score > bestScore {
           bestScore=score;bestOffset=offset;bestTilt=tilt
           best=Line(a:aa,b:bb,broad:e.1,sharp:e.2,coherence:e.3)
@@ -182,6 +225,7 @@ private struct BoundaryPixels {
     }
     var lines=(0..<4).map { fit($0,expanding:false) }
     if !supported(lines) {
+      guard diffuseEdge == nil && bindingEdge == nil else { return nil }
       // An isolated missing side commonly means clipping. Expanding only that
       // side invents a border across document content; require multi-side evidence.
       let weak=lines.filter {$0.broad < 8 || $0.sharp < $0.broad * 0.48}.count
@@ -256,17 +300,56 @@ enum ScannerRectangleDetector {
     return largest
   }
 
+  // Map a CCW quarter-turn detection back to the original Vision coordinates.
+  // The cyclic shift preserves semantic corner names for non-square images.
+  static func mapFromQuarterTurn(_ rectangle: VNRectangleObservation, turns: Int) -> VNRectangleObservation {
+    let count=((turns % 4)+4)%4
+    let points=[rectangle.topLeft,rectangle.topRight,rectangle.bottomRight,rectangle.bottomLeft].map { point in
+      var p=point
+      for _ in 0..<count {p=CGPoint(x:p.y,y:1-p.x)}
+      return p
+    }
+    let start=(4-count)%4
+    return VNRectangleObservation(requestRevision:VNDetectRectanglesRequestRevision1,
+      topLeft:points[start],bottomLeft:points[(start+3)%4],bottomRight:points[(start+2)%4],topRight:points[(start+1)%4])
+  }
   static func detect(
     in image: CIImage,
     profile: FoorsaScannerProfile,
     purpose: ScannerDetectionPurpose
+  ) throws -> VNRectangleObservation? {
+    let e=image.extent
+    guard !e.isInfinite,!e.isNull,e.minX.isFinite,e.minY.isFinite,
+      e.width.isFinite,e.height.isFinite,e.width >= 32,e.height >= 32 else {return nil}
+    let clarity=ContentClarity.score(image)
+    // Do not run any Vision orientation after an independent severe-blur failure.
+    guard clarity.support < 24 || clarity.q50 >= 0.35 else {return nil}
+    if let primary=try detectSingleOrientation(in:image,profile:profile,purpose:purpose,measuredClarity:clarity) {return primary}
+    guard profile.layout == .passport else {return nil}
+    var rotated=image.transformed(by:CGAffineTransform(translationX:-e.minX,y:-e.minY))
+    // Finite fallback: at most four total pipelines, with every existing boundary,
+    // completeness, document-type and clarity rule retained at every orientation.
+    for turns in 1...3 {
+      rotated=rotated.transformed(by:CGAffineTransform(a:0,b:1,c:-1,d:0,tx:rotated.extent.height,ty:0))
+      guard let candidate=try detectSingleOrientation(in:rotated,profile:profile,purpose:purpose) else {continue}
+      let mapped=mapFromQuarterTurn(candidate,turns:turns)
+      if select([mapped],imageSize:image.extent.size,profile:profile,purpose:.still) != nil {return mapped}
+    }
+    return nil
+  }
+
+  private static func detectSingleOrientation(
+    in image: CIImage,
+    profile: FoorsaScannerProfile,
+    purpose: ScannerDetectionPurpose,
+    measuredClarity: ClarityScores? = nil
   ) throws -> VNRectangleObservation? {
     let extent=image.extent
     guard !extent.isInfinite, !extent.isNull,
       extent.minX.isFinite, extent.minY.isFinite,
       extent.width.isFinite, extent.height.isFinite,
       extent.width >= 32, extent.height >= 32 else {return nil}
-    let clarity = ContentClarity.score(image)
+    let clarity = measuredClarity ?? ContentClarity.score(image)
     guard clarity.support < 24 || clarity.q50 >= 0.35 else { return nil }
     let request = makeRequest(for: purpose)
     let segmentation = VNDetectDocumentSegmentationRequest()
@@ -331,6 +414,45 @@ enum ScannerRectangleDetector {
         // Averaging must not move a supported paper edge into printed content.
         if (strong || (pixels.supportedOutline(refined) && pixels.isolatedOutline(refined))) &&
           pixels.safeExterior(refined) {return refined}
+      }
+    }
+    // When both models agree on the complete outer perimeter, allow one faint
+    // boundary only if its exterior is uniform and the other three sides have
+    // coherent localized edges. Local refinement cannot search outward for a
+    // replacement edge; this path never substitutes an inner rectangle.
+    if document.confidence >= 0.98,
+      let outer = select(proposals, imageSize: image.extent.size, profile: profile, purpose: .still),
+      agreeingCorners(outer) == 4 {
+      let edges = pixels.outline(outer), strips = pixels.exterior(outer)
+      let faint = edges.indices.filter { edges[$0].1 < 8 }
+      if faint.count == 1, let weak = faint.first,
+        edges[weak].1 >= 2, edges[weak].2 >= edges[weak].1 * 0.2,
+        strips[weak][0] <= 6,
+        let refined = pixels.refine(outer, diffuseEdge: weak),
+        pixels.safeExterior(refined),
+        agreeingCorners(refined) == 4,
+        select([refined], imageSize: image.extent.size, profile: profile, purpose: .still) != nil {
+        return refined
+      }
+    }
+    // Single data pages in a booklet may border the facing page at their binding.
+    // Only a narrow, continuous crease may replace one long physical outer side;
+    // all three remaining sides must localize with coherent background contrast.
+    if profile.layout == .passport && document.confidence >= 0.9 {
+      let points=[document.topLeft,document.topRight,document.bottomRight,document.bottomLeft]
+      let lengths=(0..<4).map { i in hypot((points[i].x-points[(i+1)%4].x)*image.extent.width,(points[i].y-points[(i+1)%4].y)*image.extent.height) }
+      let shape=max(lengths[0]+lengths[2],lengths[1]+lengths[3])/min(lengths[0]+lengths[2],lengths[1]+lengths[3])
+      if shape >= 1.3 && shape <= 1.6 {
+        for edge in 0..<4 where lengths[edge] >= (lengths.max() ?? 0)*0.9 {
+          guard let refined=pixels.refine(document,bindingEdge:edge),
+            select([refined],imageSize:image.extent.size,profile:profile,purpose:.still) != nil else {continue}
+          let edges=pixels.outline(refined),strips=pixels.exterior(refined)
+          guard (0..<4).filter({$0 != edge}).allSatisfy({ i in
+            edges[i].1 >= 12 && edges[i].2 >= edges[i].1*0.32 && edges[i].3 >= 0.9 &&
+            strips[i][0] <= min(24,max(8,edges[i].1*0.5))
+          }) else {continue}
+          return refined
+        }
       }
     }
     guard document.confidence >= 0.9 else { return nil }

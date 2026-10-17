@@ -13,6 +13,8 @@ Keep the manifest, source images, output reports, and optional diagnostic PNGs i
 }
 ```
 
+For release gating, an optional top-level `"requiredRawPositives":["passport_phone_01"]` list can name specific raw captures that must succeed. Each ID must be unique and refer to a manifest sample with `capture:"raw"`, `framingSafe:true`, a `rawQuad`, and no `severe_blur` label. Every required ID must be selected by the run and produce exactly one accurate, safe live and still result plus a ready, safe `held_raw_capture` sequence. A required sample omitted by `--split` or `--limit`, or a selected sample that misses these checks, fails `--require-pass`; `gate.json` and `report.md` list it under failed required raw positives. Invalid IDs or declarations are manifest errors (exit 2). Manifests without this field retain the existing category-gate behavior.
+
 Use a crop of the **document itself** as each source image. If a source is a phone screenshot, flatbed sheet, or photo containing a small document, crop the physical document first. Otherwise the generator will treat the screenshot or paper sheet as the ground-truth document boundary. Full-page PDFs exported as page images can remain full pages. Accepted layouts are `passport`, `card`, `portrait`, and `adaptive`.
 
 To evaluate an original phone photo without reprojection, add `"capture":"raw"`, an independent manual corner annotation, and a framing safety label:

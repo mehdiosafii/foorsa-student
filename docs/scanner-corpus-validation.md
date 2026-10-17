@@ -1,5 +1,7 @@
 # Real-document scanner validation — 17 October 2026
 
+**Follow-up: live passport capture is under repair.** A user reported no outline or automatic photo while framing only the details page in build 39. The results below are historical file-processing gates; they did not verify live camera capture. A replacement build must also pass the required original-photo cases and the live-phone capture check described below.
+
 **Validation passed for beta candidate 1.2.18 (39).** Both complete macOS framing sweeps and the physical iPhone gate pass against the final production sources: 5,024 desktop frame evaluations, 832 physical-device framing cases, and 152 saved-JPEG checks across 19 document types. App Store Connect availability is verified separately after upload.
 
 ## Changes
@@ -90,3 +92,17 @@ tools/scanner_stress/run.sh --manifest "$PRIVATE_SCANNER_CORPUS/release-manifest
 ```
 
 The private iOS harness is deliberately excluded from the application repository and release package. Public synthetic native tests remain in `RunnerTests`.
+
+## Live passport follow-up
+
+The full-height aspect-fill preview and its screen-sized passport guide disagreed with the detector's camera-area rules. On a 440 × 956 viewport with a 1440 × 1920 upright camera feed, a passport filling the old guide occupied only 13.37% of the camera image, below the 16% automatic-capture requirement. At 90% of the guide width it occupied 10.83%, below the detector's 12% minimum, so even a perfectly recognized page could yield no outline.
+
+The corrected preview preserves the camera aspect ratio inside the space available between controls. Its guide leaves a framing margin while meeting the unchanged area rules. Tests cover 48 combinations of phone size, orientation, camera aspect ratio, and document profile; a passport at 90% of the guide covers at least 26% of the camera image. The 18 platform-independent native tests pass on macOS, including explicit asymmetric quarter-turn corner mapping. These checks do not replace device layout or live capture acceptance.
+
+The old generated-scene gate also allowed original-photo detection misses. Its passing passport category included rejected unmodified and rotated original passport photos; its normal cases came from two composited document sources. The optional `requiredRawPositives` manifest field now makes each named original-photo case mandatory in live detection, still detection, and held-capture readiness. Missing, filtered-out, or inaccurate required cases block release even when the generated normal cases pass. Synthetic gate regressions verify these failures without customer data.
+
+A separate details-page-only view of real passport content reproduces rejection at the binding and exterior-texture checks. A private diagnostic records numeric camera dimensions, guide bounds, candidate geometry, rejection reasons, and timing without uploading document pixels. Live-phone acceptance and the subsequent replacement TestFlight delivery remain pending; do not use the earlier loaded-image results as evidence that this report is resolved.
+
+The working detector candidate recognizes a continuous passport binding only when three independently supported outer edges also pass exterior checks. A faint-edge recovery now checks the final exterior after bounded local refinement; a synthetic textured-exterior regression rejects while its clean control passes. Passport-only quarter-turn retries run the complete detector at most four times, preserving completeness, type, clarity, and boundary checks. The frozen 2,512-frame sweep passes with 1,842 accurate framing-positive outcomes, zero regressions against the production baseline, and zero unsafe outcomes. A separate required-raw gate passes all 12 complete passport cases (two details-page sources and one original spread, each in four rotations) and rejects all 68 clipping/blur negatives. These are regression cases, not 12 independent documents.
+
+**Live camera acceptance still fails.** The revised candidate's on-phone diagnostic recorded 88 live observations with zero accepted outlines and four failed manual bursts; 86 observations passed the central sharpness check. The available log is partial and has no finish event. Several geometrically plausible rectangle proposals were blocked by a segmentation result touching the image boundary. Their correctness cannot be inferred from coordinates alone. An explicitly labeled local image-replay diagnostic is prepared to capture the actual failing camera view before changing that gate. The replacement TestFlight release remains pending the live-camera fix and acceptance.

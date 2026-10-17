@@ -119,6 +119,36 @@ struct ScannerQuadrilateral: Equatable {
   }
 }
 
+// The preview shows the entire oriented camera image inside the space left by
+// controls. A guide therefore has a predictable camera footprint on tall phones.
+struct ScannerPreviewGeometry {
+  let previewRect: CGRect
+  let guideRect: CGRect
+
+  init(imageSize: CGSize, availableRect: CGRect, guideAspectRatio: CGFloat) {
+    guard imageSize.width.isFinite, imageSize.height.isFinite,
+          imageSize.width > 0, imageSize.height > 0,
+          availableRect.width > 0, availableRect.height > 0,
+          guideAspectRatio.isFinite, guideAspectRatio > 0 else {
+      previewRect = .zero
+      guideRect = .zero
+      return
+    }
+    let scale = min(availableRect.width / imageSize.width,
+      availableRect.height / imageSize.height)
+    let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+    previewRect = CGRect(x: availableRect.midX - size.width / 2,
+      y: availableRect.midY - size.height / 2, width: size.width, height: size.height)
+    // Five percent on each edge leaves room for imperfect framing. Even a
+    // document at 90% of this guide exceeds the unchanged capture-area gate
+    // for passport/card/paper guides and 4:3 or 16:9 camera images.
+    let width = min(size.width * 0.9, size.height * 0.9 * guideAspectRatio)
+    let height = width / guideAspectRatio
+    guideRect = CGRect(x: previewRect.midX - width / 2,
+      y: previewRect.midY - height / 2, width: width, height: height)
+  }
+}
+
 enum ScannerAspectFillMapper {
   static func videoRect(imageSize: CGSize, in bounds: CGRect) -> CGRect {
     guard imageSize.width > 0, imageSize.height > 0,
