@@ -1,10 +1,11 @@
 # Real-document scanner validation — 17 October 2026
 
-**Release status: pending physical-device validation.** Scanner fixes pass both complete macOS framing gates. The iOS Simulator returned invalid document-segmentation results, so it cannot establish native image-processing readiness. A separate on-device diagnostic app is prepared; device-provisioning access currently blocks execution. No new TestFlight build has been uploaded.
+**Validation passed for beta candidate 1.2.18 (39).** Both complete macOS framing sweeps and the physical iPhone gate pass against the final production sources: 5,024 desktop frame evaluations, 832 physical-device framing cases, and 152 saved-JPEG checks across 19 document types. App Store Connect availability is verified separately after upload.
 
 ## Changes
 
 - Live preview and saved photos use the same document detector and profile rules. Rectangle and document-segmentation results are checked against pixel evidence at every edge; fusion must preserve a supported perimeter.
+- Boundary evidence uses explicit high-quality downsampling on both platforms. Core Image otherwise defaults to different sampling on macOS and iOS; thin-stroke aliasing caused one correctly framed JPEG to be rejected on the phone. The exact case reproduces with low-quality sampling on Mac and passes with the final setting on the phone. No crop or quality threshold changed.
 - Sparse pages receive a second sharpness check inside the detected page. Severe defocus, clipped pages, and unsupported inner borders request a retake. Small identity cards use a suitable capture-area threshold.
 - The live outline stays visible during the three-shot burst. Still processing is serial, obsolete queued jobs are canceled, and native preview temporaries are released each frame. The clearest accepted image is selected; this is not multi-frame pixel fusion.
 - Automatic capture supports slower analysis with a bounded observation gap and at least four consecutive valid observations. Movement, missing frames, stale results, rotation, and camera interruptions revoke readiness.
@@ -63,7 +64,8 @@ The baseline accurately captures **1,835/2,098 framing-positive scenes**; the va
 - Release-gate regressions: an injected unsafe still crop and a severe-blur frame with correct corners both block release.
 - Slower-cadence regression: 300 ms and 550 ms observations can finish a continuous hold; too few observations, missing frames, excessive gaps, and stale analysis cannot.
 - iOS 27 Simulator: **15/16 native tests passed**. The synthetic pixel-detector test failed because document segmentation returned a false bottom strip. A diagnostic across all 19 document types showed the same rejection while rectangle detection remained correct. Switching between CIImage and CGImage input, and forcing CPU processing, did not resolve it. Apple warns that [Vision results in Simulator can be inaccurate](https://developer.apple.com/documentation/vision/vnimagerequesthandler/init%28cmsamplebuffer%3Aorientation%3Aoptions%3A%29-335k4).
-- Physical-device validation: a separate diagnostic app compiled successfully with the exact production detector, geometry, clarity, and image-processor sources. The prepared suite has **832 frames**, including all 19 types and 72 annotated raw-photo variants, plus **152 saved-JPEG crop checks**. Signing/provisioning access is required before execution; no on-device pass or timing result is claimed.
+- Physical-device validation: a separate release-optimized diagnostic app with the exact production detector, geometry, clarity, and image-processor sources passed the gate over **832 framing cases** on an **iPhone 17 Pro Max running iOS 27.2**. These include all 19 types, 72 annotated raw-photo variants, and **152/152 normal saved-JPEG checks**, with zero unsafe live, still, held, or severe-blur acceptances. All 19 severe-blur inputs were rejected. A separate validator checks complete manifest coverage, recomputes the fixed geometry gates, checks saved-image decoding/size/coverage, and verifies source fingerprints.
+- Physical detector timing on loaded corpus images: live median **11.40 ms**, p95 **14.73 ms**; still median **11.27 ms**, p95 **13.99 ms**. These measure image analysis on this high-end phone, not end-to-end camera latency or low-end-device performance. The physical synthetic-page result also matches Mac, confirming the Simulator segmentation failure does not occur on this device.
 - Portal: **376 tests passed**, frontend/server typechecks, production build, and bundle budgets passed. Production QA verified corrected fields, exactly one document after identical retry, completed OCR review state, and Drive mirroring. PR #1123 is merged and deployed.
 - Independent review findings on cancellation, analysis cadence, and camera interruption were fixed before the final native build.
 
@@ -73,7 +75,7 @@ Generated boundaries are known projected page-image borders on real document con
 
 Desktop and iOS Simulator timings are diagnostics, not physical-iPhone performance measurements. Physical autofocus, moving outlines, glare recovery, hand motion, thermal behavior, and complete capture-to-submit usability still need on-phone acceptance through TestFlight. The scanner selects the best of three shots and does not fuse pixels across photographs.
 
-Planned beta: **1.2.18 (39)**. Release upload remains gated on physical-device execution and the unchanged crop/quality criteria. The current available TestFlight build remains **1.2.18 (38)** as verified on 17 October 2026.
+Validated beta candidate: **1.2.18 (39)**. Final detector SHA-256: `fd0515e9d798b0ce61d31d69afcb83bb364f66ef2721c42c21a579d57f3ed1c8`. Both desktop sweeps and the physical-device gate use this source. The signed release archive must match the committed candidate and exclude all private fixtures before TestFlight upload.
 
 ## Reproduction
 

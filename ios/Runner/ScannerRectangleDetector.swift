@@ -20,8 +20,10 @@ private struct BoundaryPixels {
     width = Int(scaledWidth)
     height = Int(scaledHeight)
     var bytes = [UInt8](repeating: 0, count: width * height * 4)
+    // Core Image defaults to high-quality downsampling on macOS but not iOS.
+    // Match boundary evidence across devices and avoid aliasing thin printed strokes.
     let normalized = image.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
-      .transformed(by: CGAffineTransform(scaleX: CGFloat(width) / e.width, y: CGFloat(height) / e.height))
+      .transformed(by: CGAffineTransform(scaleX: CGFloat(width) / e.width, y: CGFloat(height) / e.height), highQualityDownsample: true)
     Self.context.render(normalized, toBitmap: &bytes, rowBytes: width * 4,
       bounds: CGRect(x: 0, y: 0, width: width, height: height), format: .RGBA8,
       colorSpace: CGColorSpaceCreateDeviceRGB())
