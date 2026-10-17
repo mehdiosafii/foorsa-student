@@ -1,6 +1,6 @@
 # Real-document scanner validation — 17 October 2026
 
-**Follow-up: hands-free capture succeeds in one real run, but a second completed run exposes unresolved still-photo rejection. Build 40 remains withheld.** A user reported no outline or automatic photo while framing only the details page in build 39. The build-39 results below are historical file-processing gates; they did not verify live camera capture. See the final section for the replacement candidate and its separate validation status.
+**Follow-up: live passport capture, textured-edge recovery, and failed-burst retry are repaired and verified. The final candidate passes the expanded regression and physical saved-image gates below.** A user reported no outline or automatic photo while framing only the details page in build 39. The build-39 results below are historical file-processing gates; they did not verify live camera capture. See the final section for the replacement candidate and its separate validation status.
 
 **Historical file-processing validation for beta 1.2.18 (39).** Both complete macOS framing sweeps and the physical iPhone gate pass against the final production sources: 5,024 desktop frame evaluations, 832 physical-device framing cases, and 152 saved-JPEG checks across 19 document types. App Store Connect availability is verified separately after upload.
 
@@ -127,7 +127,7 @@ The updated passport path compares all four bounded orientation pipelines. It as
 
 The expanded required regression set now contains **203 cases: 52 complete positives and 151 negatives**. This includes the prior 119 cases, eleven images from the new camera run, exact rotations with transformed annotations, deterministic crops inside each page edge, and severe-blur variants. All 52 positives pass live/still accuracy and held readiness, and all 151 negatives are rejected in both paths. These counts include transformations of the same documents and are not independent-customer accuracy estimates. Corner-error and polygon-overlap thresholds are unchanged.
 
-Current detector SHA-256: `c664f38bd2ee11a09066e20de476603c2bea54d895e75c2db44f74a86fb96b05`. The 18 native core tests and iOS 15 source typecheck pass. Independent review found no demonstrated blocker in the new comparison logic and required verification against the unchanged 650 ms live-observation expiry. Every passport analysis now evaluates four orientations; low-end physical-device speed remains unverified.
+Orientation-comparison candidate SHA-256: `c664f38bd2ee11a09066e20de476603c2bea54d895e75c2db44f74a86fb96b05`. The 18 native core tests and iOS 15 source typecheck pass. Independent review found no demonstrated blocker in the new comparison logic and required verification against the unchanged 650 ms live-observation expiry. Every passport analysis now evaluates four orientations; low-end physical-device speed remains unverified.
 
 The exact current candidate also passes the full **2,512-frame sweep across all 19 types**: all 488 normal frames are accurate in live/still detection and held-ready; 1,842/2,098 framing-positive scenes are accurate; all 61 severe-blur challenges are rejected; zero unsafe live, still, held, or quality acceptances occur. Desktop live analysis median/p95 is 18.5/53.5 ms, with passport p95 135.2 ms. These are desktop measurements, not camera latency.
 
@@ -141,11 +141,11 @@ Check 7 disables the manual shutter only in the private diagnostic. Its detector
 
 Live analysis including diagnostic image-save overhead has median/p95/max **85.5/163.7/180.5 ms**, with zero observations exceeding the unchanged 650 ms expiry. These results concern one high-end phone and this passport, not low-end-phone performance or all real-world scenes.
 
-The successful recording verifies hands-free initiation, but the completed earlier run below prevents release clearance. A clean signed **1.2.18 (40)** package from commit `83c0af9444b20e0468bf0dbd02ec2fbf74c07567` matches the validated production sources; its signature, App Store profile, and absence of private fixtures are verified. IPA SHA-256: `b987358d6de3d1adab67e1d08f3238cc3f57ed88d23414347f2b418bd54c8883`. Later commits only record validation documentation. Apple processing and TestFlight availability are verified separately after upload.
+The successful recording verifies hands-free initiation. The initially signed build 40 package from commit `83c0af9` contained detector `c664f38b…`; it was withheld after the preceding failure was discovered and is superseded by the final candidate below. It was never uploaded.
 
 ### Additional completed Check 7 recording
 
-After the complete phone-directory copy finished, a preceding 20-second run was also available. It accepted 107/138 live observations and triggered automatically, but all three still photos were rejected and no page was produced. This is a completed failed attempt, not the later canceled run. The source photos are retained for independent corner annotation and regression repair. The existing build 40 package is withheld pending diagnosis and replacement validation; no upload has occurred.
+After the complete phone-directory copy finished, a preceding 20-second run was also available. It accepted 107/138 live observations and triggered automatically, but all three still photos were rejected and no page was produced. This is a completed failed attempt, not the later canceled run. The source photos are retained for independent corner annotation and regression repair. That build 40 package was withheld; the repair and replacement validation follow below.
 
 ### Textured-edge recovery and failed-burst retry
 
@@ -157,4 +157,8 @@ The expanded **281-case gate passes: 76/76 complete positives accurate in both p
 
 An unsuccessful automatic burst no longer locks future automatic capture. A new steady hold and the existing 2.2-second interval allow a retry; retained pages, duplicates, and the byte limit still lock repeated capture. A private runtime harness on the physical iPhone passed nine controller checks, including first-burst rejection followed by same-page retry, abort recovery, stale-observation rejection, duplicate prevention and byte-cap behavior. Reintroducing the exact old early lock reproduced the failed retry. The harness invokes the actual UIKit controller with synthetic camera completions and a monotonic clock; it does not claim to test real asynchronous camera delivery or optical quality. Controller SHA-256: `4caa2ca8875fff2acf4784d45579fbc65580043337e7918f670f816ff4af62fa`.
 
-The current candidate’s complete 19-type sweep and 25-case physical saved-image replay are recorded separately before release. The earlier signed build 40 package contains the superseded detector and remains withheld.
+The exact final detector also passes the full **2,512-frame sweep across 19 document types**: 488/488 normal frames are accurate in both paths and held-ready, 1,842/2,098 framing-positive scenes are accurate, and zero unsafe live, still, held, or severe-blur acceptances occur. All 61 severe-blur challenges are rejected.
+
+The physical iPhone passes **25/25 saved-image cases** with the exact final detector, including all six newly annotated Check 7 photographs and production JPEG processing. Loaded-image live analysis median/p95/max is **95.2/108.6/166.0 ms** on this high-end phone. These are replay timings, not end-to-end live-camera measurements. Live hands-free acceptance above used the preceding detector; the final detector changes are verified against the same saved camera photos, and the retry change is verified by the separate controller runtime harness. No additional live-camera run of the final detector is claimed.
+
+All required regression, source, saved-image, and controller gates now pass. The final 1.2.18 (40) package must match detector `89513829…` and controller `4caa2ca8…`; the earlier signed packages remain superseded and were not uploaded. Apple processing and TestFlight group availability are verified separately after upload. Low-end-device speed, unseen-document accuracy and all lighting conditions remain outside this validation.
