@@ -11,6 +11,7 @@
 		F0D0C0000000000000000011 /* FoorsaScannerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D0C0000000000000000012 /* FoorsaScannerViewController.swift */; };
 		F0D0C0000000000000000021 /* ScannerGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D0C0000000000000000022 /* ScannerGeometry.swift */; };
 		F0D0C0000000000000000031 /* ScannerImageProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D0C0000000000000000032 /* ScannerImageProcessor.swift */; };
+		F0D0C0000000000000000041 /* ScannerRectangleDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D0C0000000000000000042 /* ScannerRectangleDetector.swift */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
@@ -51,6 +52,7 @@
 		F0D0C0000000000000000012 /* FoorsaScannerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoorsaScannerViewController.swift; sourceTree = "<group>"; };
 		F0D0C0000000000000000022 /* ScannerGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerGeometry.swift; sourceTree = "<group>"; };
 		F0D0C0000000000000000032 /* ScannerImageProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerImageProcessor.swift; sourceTree = "<group>"; };
+		F0D0C0000000000000000042 /* ScannerRectangleDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerRectangleDetector.swift; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		2356F478A1D5F42637202130 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
@@ -152,6 +154,7 @@
 				F0D0C0000000000000000012 /* FoorsaScannerViewController.swift */,
 				F0D0C0000000000000000022 /* ScannerGeometry.swift */,
 				F0D0C0000000000000000032 /* ScannerImageProcessor.swift */,
+				F0D0C0000000000000000042 /* ScannerRectangleDetector.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -416,6 +419,7 @@
 				F0D0C0000000000000000011 /* FoorsaScannerViewController.swift in Sources */,
 				F0D0C0000000000000000021 /* ScannerGeometry.swift in Sources */,
 				F0D0C0000000000000000031 /* ScannerImageProcessor.swift in Sources */,
+				F0D0C0000000000000000041 /* ScannerRectangleDetector.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

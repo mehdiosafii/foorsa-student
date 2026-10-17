@@ -1,9 +1,22 @@
 import Flutter
 import UIKit
+import Vision
 import XCTest
 @testable import Runner
 
 class RunnerTests: XCTestCase {
+  func testStillCaptureDoesNotReplaceWrongShapeWithInnerRectangle() {
+    let outer = VNRectangleObservation(boundingBox: CGRect(x: 0.05, y: 0.35, width: 0.90, height: 0.30))
+    let inner = VNRectangleObservation(boundingBox: CGRect(x: 0.25, y: 0.35, width: 0.48, height: 0.30))
+    let passport = FoorsaScannerProfile(arguments: ["profile": ["documentKey": "identity"]])
+    let receipt = FoorsaScannerProfile(arguments: ["profile": ["documentKey": "receipts"]])
+    let size = CGSize(width: 1200, height: 1200)
+    XCTAssertNil(ScannerRectangleDetector.select([inner, outer], imageSize: size, profile: passport, purpose: .still))
+    XCTAssertEqual(ScannerRectangleDetector.select([inner, outer], imageSize: size, profile: receipt, purpose: .still)?.boundingBox, outer.boundingBox)
+    let clipped = VNRectangleObservation(boundingBox: CGRect(x: 0.05, y: 0.2, width: 0.90, height: 0.81))
+    XCTAssertNil(ScannerRectangleDetector.select([inner, clipped], imageSize: size, profile: passport, purpose: .still))
+  }
+
   private let page = ScannerQuadrilateral(
     topLeft: CGPoint(x: 0.1, y: 0.9),
     topRight: CGPoint(x: 0.9, y: 0.9),
@@ -47,8 +60,9 @@ class RunnerTests: XCTestCase {
     let portrait = FoorsaScannerProfile(arguments: ["profile": ["layout": "portrait"]])
     let card = FoorsaScannerProfile(arguments: ["profile": ["layout": "card"]])
     XCTAssertTrue(portrait.accepts(aspectRatio: portraitPixels))
-    XCTAssertFalse(card.accepts(aspectRatio: portraitPixels))
+    XCTAssertTrue(card.accepts(aspectRatio: portraitPixels))
     XCTAssertTrue(card.accepts(aspectRatio: landscapePixels))
+    XCTAssertFalse(card.accepts(aspectRatio: 1.0))
   }
 
   func testAspectFillMappingMatchesPortraitAndLandscapePreviewCropping() {
@@ -85,12 +99,52 @@ class RunnerTests: XCTestCase {
   }
 
   func testPassportAcceptsDataPageAndOpenSpread() {
-    let passport = FoorsaScannerProfile(arguments: ["profile": ["layout": "passport"]])
+    let passport = FoorsaScannerProfile(arguments: ["profile": [
+      "documentKey": "identity", "layout": "adaptive"
+    ]])
+    XCTAssertEqual(passport.layout, .passport)
     XCTAssertTrue(passport.accepts(aspectRatio: 125.0 / 88.0))
     XCTAssertTrue(passport.accepts(aspectRatio: 125.0 / 176.0))
     XCTAssertTrue(passport.accepts(aspectRatio: 1275.0 / 1600.0))
+    XCTAssertTrue(passport.accepts(aspectRatio: 88.0 / 125.0))
+    XCTAssertTrue(passport.accepts(aspectRatio: 176.0 / 125.0))
     XCTAssertFalse(passport.accepts(aspectRatio: 0.35))
     XCTAssertFalse(passport.accepts(aspectRatio: 2.5))
+  }
+
+  func testKnownDocumentKeysControlShapeAndUnknownKeysStayGeneric() {
+    let card = FoorsaScannerProfile(arguments: ["profile": [
+      "documentKey": " PARENT_ID ", "layout": "passport"
+    ]])
+    XCTAssertEqual(card.documentKey, "parent_id")
+    XCTAssertEqual(card.layout, .card)
+    XCTAssertTrue(card.accepts(aspectRatio: 1 / 1.585))
+    XCTAssertFalse(card.accepts(aspectRatio: 0.35))
+
+    let letter = FoorsaScannerProfile(arguments: ["profile": [
+      "documentKey": "recommendation_letter", "layout": "card"
+    ]])
+    XCTAssertEqual(letter.layout, .portrait)
+    XCTAssertTrue(letter.accepts(aspectRatio: 1.41))
+    XCTAssertTrue(letter.accepts(aspectRatio: 1 / 1.41))
+
+    let receipt = FoorsaScannerProfile(arguments: ["profile": [
+      "documentKey": "receipts", "layout": "passport"
+    ]])
+    XCTAssertTrue(receipt.accepts(aspectRatio: 3.0))
+    XCTAssertTrue(receipt.accepts(aspectRatio: 1 / 3.0))
+    XCTAssertFalse(receipt.accepts(aspectRatio: 3.5))
+    XCTAssertFalse(card.accepts(aspectRatio: 3.0))
+
+    let unknown = FoorsaScannerProfile(arguments: ["profile": [
+      "documentKey": "invented_passport", "layout": "passport"
+    ]])
+    XCTAssertEqual(unknown.documentKey, "drive_files")
+    XCTAssertEqual(unknown.layout, .adaptive)
+    XCTAssertFalse(unknown.accepts(aspectRatio: 3.0))
+    for invalid in [CGFloat.zero, -.infinity, .infinity, .nan] {
+      XCTAssertFalse(receipt.accepts(aspectRatio: invalid))
+    }
   }
 
   func testStabilityRequiresContinuousHoldAndResetsForMovement() {

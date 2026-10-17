@@ -4,6 +4,27 @@ import Foundation
 struct FoorsaScannerProfile {
   enum Layout: String { case passport, card, portrait, adaptive }
 
+  // Keep this list aligned with the portal's canonical folder keys. A caller's
+  // layout hint cannot turn a known paper document into a passport or card.
+  private static let folderLayouts: [String: Layout] = [
+    "identity": .passport, "parent_id": .card,
+    "highest_degree": .adaptive, "last_year_degree": .adaptive,
+    "transcript": .adaptive, "last_year_transcript": .adaptive,
+    "medical_check": .portrait, "criminal_record": .adaptive,
+    "bank_statement": .adaptive, "english_test": .adaptive,
+    "recommendation_letter": .portrait, "study_plan": .portrait,
+    "research_proposal": .portrait, "cv": .portrait,
+    "birth_certificate": .adaptive, "contract": .portrait,
+    "receipts": .adaptive, "admissions": .adaptive,
+    "universities_notices": .adaptive, "visa_documents": .adaptive,
+    "application_form": .portrait, "authorizations": .portrait,
+    "introduction_video": .portrait, "csca": .adaptive,
+    "previous_chinese_universities": .adaptive,
+    "publications": .portrait, "supervisor_acceptance": .adaptive,
+    "drive_files": .adaptive,
+  ]
+
+  let documentKey: String
   let title: String
   let instruction: String
   let layout: Layout
@@ -16,18 +37,30 @@ struct FoorsaScannerProfile {
     title = rawTitle.flatMap { $0.isEmpty || $0.count > 70 ? nil : $0 } ?? "Scan document"
     instruction = rawInstruction.flatMap { $0.isEmpty || $0.count > 200 ? nil : $0 }
       ?? "Keep every corner and all printed details visible."
-    layout = Layout(rawValue: source?["layout"] as? String ?? "") ?? .adaptive
+    let rawKey = (source?["documentKey"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    documentKey = Self.folderLayouts[rawKey] == nil ? "drive_files" : rawKey
+    if rawKey.isEmpty {
+      // Older callers supplied only a layout. Retain that bounded hint.
+      layout = Layout(rawValue: source?["layout"] as? String ?? "") ?? .adaptive
+    } else {
+      layout = Self.folderLayouts[documentKey] ?? .adaptive
+    }
   }
 
   func accepts(aspectRatio ratio: CGFloat) -> Bool {
+    guard ratio.isFinite, ratio > 0 else { return false }
+    let shape = max(ratio, 1 / ratio)
     switch layout {
     case .passport:
-      // Accept both the landscape data page and the full open passport spread.
-      return (ratio >= 0.60 && ratio <= 1.0) || (ratio >= 1.14 && ratio <= 1.84)
-    case .card: return ratio >= 1.27 && ratio <= 2.0
-    case .portrait: return ratio >= 0.50 && ratio <= 1.12
+      // Data pages and open spreads can present either side vertically.
+      return shape >= 1.14 && shape <= 1.84
+    case .card: return shape >= 1.27 && shape <= 2.0
+    case .portrait: return shape <= 2.0
     case .adaptive:
-      return (ratio >= 0.49 && ratio <= 1.12) || (ratio >= 1.14 && ratio <= 2.10)
+      // Receipt slips have longer borders; all other unknown or flexible
+      // papers keep the ordinary document range.
+      return shape <= (documentKey == "receipts" ? 3.2 : 2.1)
     }
   }
 }

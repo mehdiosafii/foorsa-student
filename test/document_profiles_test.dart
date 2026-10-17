@@ -109,16 +109,75 @@ void main() {
     expect(report.autoReady, isTrue);
   });
 
-  test('card-shaped region cannot be a tiny portrait document', () {
+  test('card profile accepts either rotation but rejects a square', () {
     final p = profile('parent_id');
-    expect(p.supportsRatio(0.75), isFalse);
-    final target = profile('medical_check').guide(previewAspect);
+    expect(p.supportsRatio(1.585), isTrue);
+    expect(p.supportsRatio(1 / 1.585), isTrue);
+    expect(p.supportsRatio(1.0), isFalse);
+    expect(p.acceptsPortrait, isTrue);
+    final target = p.candidateGuides(previewAspect)[1];
     final image = simulatedDocument(target);
     final report = analyzer.analyse(
       image, GuidedDocumentKind.idCard, previous: image,
       profile: p, viewportAspect: previewAspect,
     );
-    expect(report.autoReady, isFalse);
+    expect(report.autoReady, isTrue);
+  });
+
+  test('passport data page and open spread work in both camera rotations', () {
+    final p = profile('identity');
+    expect(p.candidateGuides(previewAspect), hasLength(2));
+    for (final ratio in [125 / 88, 88 / 125, 125 / 176, 176 / 125]) {
+      expect(p.supportsRatio(ratio), isTrue, reason: 'passport ratio $ratio');
+    }
+    for (final guide in p.candidateGuides(previewAspect)) {
+      final image = simulatedDocument(guide);
+      final report = analyzer.analyse(
+        image, GuidedDocumentKind.passport, previous: image,
+        profile: p, viewportAspect: previewAspect,
+      );
+      expect(report.autoReady, isTrue);
+    }
+  });
+
+  test('landscape letters and elongated receipts use their own shape rules', () {
+    final letter = profile('recommendation_letter');
+    expect(letter.supportsRatio(1.41), isTrue);
+    expect(letter.candidateGuides(previewAspect), hasLength(2));
+    final letterImage = simulatedDocument(letter.candidateGuides(previewAspect)[1]);
+    expect(analyzer.analyse(
+      letterImage, GuidedDocumentKind.page, previous: letterImage,
+      profile: letter, viewportAspect: previewAspect,
+    ).autoReady, isTrue);
+
+    final receipt = profile('receipts');
+    expect(receipt.candidateGuides(previewAspect), hasLength(4));
+    for (final ratio in [3.0, 1 / 3.0]) {
+      expect(receipt.supportsRatio(ratio), isTrue);
+      expect(profile('identity').supportsRatio(ratio), isFalse);
+      expect(profile('transcript').supportsRatio(ratio), isFalse);
+    }
+    expect(receipt.supportsRatio(3.5), isFalse);
+    expect(profile('totally-unknown').supportsRatio(3.0), isFalse);
+    final tallReceipt = receipt.candidateGuides(previewAspect)[2];
+    final image = simulatedDocument(tallReceipt);
+    expect(analyzer.analyse(
+      image, GuidedDocumentKind.page, previous: image,
+      profile: receipt, viewportAspect: previewAspect,
+    ).autoReady, isTrue);
+  });
+
+  test('invalid shape values and forged layouts fail safely', () {
+    final p = profile('parent_id');
+    for (final ratio in [0.0, -1.0, double.nan, double.infinity,
+      double.negativeInfinity]) {
+      expect(p.supportsRatio(ratio), isFalse);
+    }
+    final unknown = GuidedDocumentProfile.fromPortal({
+      'documentKey': 'forged_passport', 'layout': 'passport',
+    });
+    expect(unknown.documentKey, 'drive_files');
+    expect(unknown.layout, GuidedScanLayout.adaptive);
   });
 
   test('blurry unprinted region cannot trigger automatic shutter', () {

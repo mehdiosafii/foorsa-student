@@ -10,7 +10,7 @@ final class ScannerImageProcessor {
     .priorityRequestLow: false,
   ])
 
-  func process(photoData: Data) -> ScannerProcessedCandidate? {
+  func process(photoData: Data, profile: FoorsaScannerProfile) -> ScannerProcessedCandidate? {
     autoreleasepool {
       guard let source = CIImage(data: photoData, options: [.applyOrientationProperty: true]) else {
         return nil
@@ -19,7 +19,11 @@ final class ScannerImageProcessor {
         translationX: -source.extent.origin.x,
         y: -source.extent.origin.y
       ))
-      guard let observation = detectRectangle(in: upright) else { return nil }
+      guard let observation = try? ScannerRectangleDetector.detect(
+        in: upright,
+        profile: profile,
+        purpose: .still
+      ) else { return nil }
       let extent = upright.extent
       func vector(_ point: CGPoint) -> CIVector {
         CIVector(x: extent.minX + point.x * extent.width,
@@ -60,31 +64,6 @@ final class ScannerImageProcessor {
         fingerprint: fingerprint
       )
     }
-  }
-
-  private func detectRectangle(in image: CIImage) -> VNRectangleObservation? {
-    let request = VNDetectRectanglesRequest()
-    request.maximumObservations = 4
-    request.minimumConfidence = 0.55
-    request.minimumAspectRatio = 0.3
-    request.maximumAspectRatio = 1
-    request.minimumSize = 0.18
-    request.quadratureTolerance = 28
-    do {
-      try VNImageRequestHandler(ciImage: image, orientation: .up).perform([request])
-    } catch {
-      return nil
-    }
-    return request.results?
-      .filter { observation in
-        ScannerQuadrilateral(
-          topLeft: observation.topLeft,
-          topRight: observation.topRight,
-          bottomRight: observation.bottomRight,
-          bottomLeft: observation.bottomLeft
-        ).isComplete(minimumArea: 0.12)
-      }
-      .max { $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height }
   }
 
   private func resized(_ image: CIImage, maximumEdge: CGFloat) -> CIImage {

@@ -740,13 +740,7 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
           let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
     isAnalyzing = true
     lastAnalysisTime = now
-    let request = VNDetectRectanglesRequest()
-    request.maximumObservations = 3
-    request.minimumConfidence = 0.6
-    request.minimumAspectRatio = 0.25
-    request.maximumAspectRatio = 1
-    request.minimumSize = 0.18
-    request.quadratureTolerance = 30
+    let request = ScannerRectangleDetector.makeRequest(for: .live)
     orientationLock.lock()
     let orientation = imageOrientation
     let epoch = analysisEpoch
@@ -774,9 +768,12 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
       return
     }
     let observations = request.results ?? []
-    let best = observations.max {
-      $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height
-    }
+    let best = ScannerRectangleDetector.select(
+      observations,
+      imageSize: imageSize,
+      profile: profile,
+      purpose: .live
+    )
     let quadrilateral = best.map {
       ScannerQuadrilateral(
         topLeft: $0.topLeft,
@@ -808,7 +805,7 @@ extension FoorsaScannerViewController: AVCapturePhotoCaptureDelegate {
         self.pendingProcessingCount += 1
         self.processingQueue.async { [weak self] in
           guard let self else { return }
-          let candidate = self.processor.process(photoData: data)
+          let candidate = self.processor.process(photoData: data, profile: self.profile)
           DispatchQueue.main.async { [weak self] in
             guard let self, self.isCapturing,
                   self.captureGeneration == generation, !self.finishing else { return }
