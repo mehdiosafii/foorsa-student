@@ -21,26 +21,25 @@ void main() {
   tearDown(() =>
       messenger.setMockMethodCallHandler(NativeDocumentScanner.channel, null));
 
-  test('keeps all pages in order and exposes non-sensitive native diagnostics',
+  test('converts one retained page and exposes non-sensitive native diagnostics',
       () async {
     final first = Uint8List.fromList([1, 2, 3]);
-    final second = Uint8List.fromList([4, 5, 6]);
     reply({
-      'pages': [first, second],
+      'pages': [first],
       'engine': 'avfoundation_vision',
-      'scannerBuild': 'custom-live-v2',
-      'capabilities': ['live_quadrilateral', 'multi_page'],
+      'scannerBuild': 'custom-live-v4',
+      'capabilities': ['live_quadrilateral', 'automatic_single_page'],
     });
     final result = await scanner.scan();
     expect(result['processed'], true);
     expect(result['engine'], 'avfoundation_vision');
-    expect(result['scannerBuild'], 'custom-live-v2');
+    expect(result['scannerBuild'], 'custom-live-v4');
     expect(result['capabilities'], contains('live_quadrilateral'));
     final files = result['files'] as List;
-    expect(files.length, 2);
+    expect(files.length, 1);
     expect(files[0]['name'], 'scan-page-1.jpg');
     expect(
-        files[1]['dataUrl'], 'data:image/jpeg;base64,${base64Encode(second)}');
+        files[0]['dataUrl'], 'data:image/jpeg;base64,${base64Encode(first)}');
   });
   test('passes only validated document guidance to the native camera',
       () async {
@@ -83,13 +82,14 @@ void main() {
     messenger.setMockMethodCallHandler(NativeDocumentScanner.channel, null);
     expect((await scanner.scan())['error'], contains('unavailable'));
   });
-  test('malformed and partial page batches fail without dropping pages',
+  test('malformed or multi-page native responses fail safely',
       () async {
     for (final pages in [
       null,
       [],
       [Uint8List(0)],
       [Uint8List(1), 'invalid'],
+      [Uint8List(1), Uint8List(1)],
       List.generate(21, (_) => Uint8List(1))
     ]) {
       reply({'pages': pages});

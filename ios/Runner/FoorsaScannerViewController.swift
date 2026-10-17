@@ -20,14 +20,33 @@ private final class ScannerBurstCancellationToken {
   }
 }
 
+enum ScannerSinglePageCaptureResolution: Equatable {
+  case retry(String)
+  case complete(Data)
+  case ignored
+}
+
+struct ScannerSinglePageCompletionFlow {
+  private(set) var isFinished = false
+
+  mutating func terminate() -> Bool {
+    guard !isFinished else { return false }
+    isFinished = true
+    return true
+  }
+
+  mutating func resolve(_ candidates: [ScannerProcessedCandidate]) -> ScannerSinglePageCaptureResolution {
+    guard !isFinished else { return .ignored }
+    guard let best = ScannerCandidateSelector.best(candidates) else {
+      return .retry("Could not get a sharp, complete page. Keep every corner visible, hold still, and try again.")
+    }
+    isFinished = true
+    return .complete(best.jpeg)
+  }
+}
+
 final class FoorsaScannerViewController: UIViewController {
   typealias Completion = ([String: Any]) -> Void
-
-  private struct Page {
-    let data: Data
-    let fingerprint: ScannerImageFingerprint
-    let thumbnail: UIImage
-  }
 
   private let profile: FoorsaScannerProfile
   private let completion: Completion
@@ -45,15 +64,10 @@ final class FoorsaScannerViewController: UIViewController {
   private var previewLayer: AVCaptureVideoPreviewLayer!
   private let overlay = ScannerOverlayView()
   private let statusLabel = UILabel()
-  private let reviewButton = UIButton(type: .system)
-  private let shutterButton = UIButton(type: .custom)
   private let torchButton = UIButton(type: .system)
-  private let thumbnails = UIStackView()
-  private let thumbnailScroll = UIScrollView()
   private let interruptionView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
   private var tracker = ScannerStabilityTracker()
-  private var pages: [Page] = []
-  private var totalBytes = 0
+  private var completionFlow = ScannerSinglePageCompletionFlow()
   private var lastAnalysisTime: TimeInterval = 0
   private var latestQuadrilateral: ScannerQuadrilateral?
   private var latestImageSize: CGSize?
@@ -65,10 +79,7 @@ final class FoorsaScannerViewController: UIViewController {
   private var pendingProcessingCount = 0
   private var captureGeneration = 0
   private var captureCancellation: ScannerBurstCancellationToken?
-  private var captureWasAutomatic = false
   private var lastCaptureTime: TimeInterval = 0
-  private var autoCaptureLocked = false
-  private var documentMissingSince: TimeInterval?
   private var configured = false
   private var finishing = false
   private var imageOrientation: CGImagePropertyOrientation = .right
@@ -136,12 +147,12 @@ final class FoorsaScannerViewController: UIViewController {
     let available: CGRect
     if usesLandscapeControls {
       available = CGRect(x: safe.minX + 12, y: safe.minY + 67,
-        width: max(0, shutterButton.frame.minX - 24 - safe.minX),
+        width: max(0, torchButton.frame.minX - 24 - safe.minX),
         height: max(0, statusLabel.frame.minY - 12 - safe.minY - 67))
     } else {
       available = CGRect(x: safe.minX + 12, y: statusLabel.frame.maxY + 12,
         width: max(0, safe.width - 24),
-        height: max(0, thumbnailScroll.frame.minY - 12 - statusLabel.frame.maxY - 12))
+        height: max(0, torchButton.frame.minY - 12 - statusLabel.frame.maxY - 12))
     }
     let fallbackSize = usesLandscapeControls
       ? CGSize(width: 4, height: 3) : CGSize(width: 3, height: 4)
@@ -185,7 +196,7 @@ final class FoorsaScannerViewController: UIViewController {
     cancel.setTitleColor(.white, for: .normal)
     cancel.titleLabel?.font = .preferredFont(forTextStyle: .headline)
     cancel.addTarget(self, action: #selector(cancelPressed), for: .touchUpInside)
-    cancel.accessibilityHint = "Closes the scanner without adding pages"
+    cancel.accessibilityHint = "Closes the scanner without capturing the document"
 
     let titleLabel = UILabel()
     titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -197,20 +208,8 @@ final class FoorsaScannerViewController: UIViewController {
     titleLabel.minimumScaleFactor = 0.72
     titleLabel.adjustsFontSizeToFitWidth = true
 
-    reviewButton.translatesAutoresizingMaskIntoConstraints = false
-    var reviewConfiguration = UIButton.Configuration.filled()
-    reviewConfiguration.title = "Review details (0)"
-    reviewConfiguration.baseBackgroundColor = UIColor.systemBlue
-    reviewConfiguration.cornerStyle = .capsule
-    reviewConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 9, leading: 13, bottom: 9, trailing: 13)
-    reviewButton.configuration = reviewConfiguration
-    reviewButton.isEnabled = false
-    reviewButton.addTarget(self, action: #selector(reviewPressed), for: .touchUpInside)
-    reviewButton.accessibilityHint = "Returns all scanned pages to the application review"
-
     chrome.addSubview(cancel)
     chrome.addSubview(titleLabel)
-    chrome.addSubview(reviewButton)
 
     statusLabel.translatesAutoresizingMaskIntoConstraints = false
     statusLabel.text = profile.instruction
@@ -222,17 +221,9 @@ final class FoorsaScannerViewController: UIViewController {
     statusLabel.layer.cornerRadius = 13
     statusLabel.layer.masksToBounds = true
     statusLabel.adjustsFontForContentSizeCategory = true
+    statusLabel.accessibilityTraits.insert(.updatesFrequently)
+    statusLabel.accessibilityHint = "The camera captures automatically when the full document is steady."
     view.addSubview(statusLabel)
-
-    shutterButton.translatesAutoresizingMaskIntoConstraints = false
-    shutterButton.backgroundColor = .white
-    shutterButton.layer.cornerRadius = 34
-    shutterButton.layer.borderWidth = 5
-    shutterButton.layer.borderColor = UIColor.white.withAlphaComponent(0.5).cgColor
-    shutterButton.addTarget(self, action: #selector(shutterPressed), for: .touchUpInside)
-    shutterButton.accessibilityLabel = "Capture page"
-    shutterButton.accessibilityHint = "Takes several photos and keeps the clearest complete scan"
-    view.addSubview(shutterButton)
 
     torchButton.translatesAutoresizingMaskIntoConstraints = false
     torchButton.setImage(UIImage(systemName: "flashlight.off.fill"), for: .normal)
@@ -242,15 +233,6 @@ final class FoorsaScannerViewController: UIViewController {
     torchButton.addTarget(self, action: #selector(torchPressed), for: .touchUpInside)
     torchButton.accessibilityLabel = "Turn torch on"
     view.addSubview(torchButton)
-
-    thumbnailScroll.translatesAutoresizingMaskIntoConstraints = false
-    thumbnailScroll.showsHorizontalScrollIndicator = false
-    thumbnails.axis = .horizontal
-    thumbnails.alignment = .center
-    thumbnails.spacing = 10
-    thumbnails.translatesAutoresizingMaskIntoConstraints = false
-    thumbnailScroll.addSubview(thumbnails)
-    view.addSubview(thumbnailScroll)
 
     interruptionView.isHidden = true
     interruptionView.translatesAutoresizingMaskIntoConstraints = false
@@ -270,27 +252,15 @@ final class FoorsaScannerViewController: UIViewController {
       statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
       statusLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 0.88),
       statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
-      shutterButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-      shutterButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18),
-      torchButton.centerYAnchor.constraint(equalTo: shutterButton.centerYAnchor),
-      torchButton.leadingAnchor.constraint(equalTo: shutterButton.trailingAnchor, constant: 38),
-      thumbnailScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-      thumbnailScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-      thumbnailScroll.bottomAnchor.constraint(equalTo: shutterButton.topAnchor, constant: -14),
-      thumbnailScroll.heightAnchor.constraint(equalToConstant: 78),
+      torchButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -18),
+      torchButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18),
     ]
     landscapeConstraints = [
       statusLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
       statusLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
-      statusLabel.trailingAnchor.constraint(equalTo: shutterButton.leadingAnchor, constant: -12),
-      shutterButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-      shutterButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-      torchButton.centerXAnchor.constraint(equalTo: shutterButton.centerXAnchor),
-      torchButton.topAnchor.constraint(equalTo: thumbnailScroll.bottomAnchor, constant: 8),
-      thumbnailScroll.topAnchor.constraint(equalTo: chrome.bottomAnchor, constant: 8),
-      thumbnailScroll.centerXAnchor.constraint(equalTo: shutterButton.centerXAnchor),
-      thumbnailScroll.widthAnchor.constraint(equalToConstant: 78),
-      thumbnailScroll.heightAnchor.constraint(equalToConstant: 78),
+      statusLabel.trailingAnchor.constraint(equalTo: torchButton.leadingAnchor, constant: -12),
+      torchButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+      torchButton.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
     ]
     NSLayoutConstraint.activate(portraitConstraints)
     NSLayoutConstraint.activate([
@@ -302,22 +272,12 @@ final class FoorsaScannerViewController: UIViewController {
       cancel.bottomAnchor.constraint(equalTo: chrome.bottomAnchor, constant: -10),
       cancel.widthAnchor.constraint(greaterThanOrEqualToConstant: 58),
       cancel.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-      reviewButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-      reviewButton.centerYAnchor.constraint(equalTo: cancel.centerYAnchor),
-      reviewButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
       titleLabel.leadingAnchor.constraint(equalTo: cancel.trailingAnchor, constant: 6),
-      titleLabel.trailingAnchor.constraint(equalTo: reviewButton.leadingAnchor, constant: -6),
+      titleLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -72),
       titleLabel.centerYAnchor.constraint(equalTo: cancel.centerYAnchor),
       statusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-      shutterButton.widthAnchor.constraint(equalToConstant: 68),
-      shutterButton.heightAnchor.constraint(equalToConstant: 68),
       torchButton.widthAnchor.constraint(equalToConstant: 48),
       torchButton.heightAnchor.constraint(equalToConstant: 48),
-      thumbnails.leadingAnchor.constraint(equalTo: thumbnailScroll.contentLayoutGuide.leadingAnchor),
-      thumbnails.trailingAnchor.constraint(equalTo: thumbnailScroll.contentLayoutGuide.trailingAnchor),
-      thumbnails.topAnchor.constraint(equalTo: thumbnailScroll.contentLayoutGuide.topAnchor),
-      thumbnails.bottomAnchor.constraint(equalTo: thumbnailScroll.contentLayoutGuide.bottomAnchor),
-      thumbnails.heightAnchor.constraint(equalTo: thumbnailScroll.frameLayoutGuide.heightAnchor),
       interruptionView.topAnchor.constraint(equalTo: view.topAnchor),
       interruptionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       interruptionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -455,41 +415,16 @@ final class FoorsaScannerViewController: UIViewController {
   @objc private func resumePressed() { resumeSession() }
 
   @objc private func cancelPressed() {
-    guard !finishing else { return }
+    guard !finishing, completionFlow.terminate() else { return }
     finishing = true
     abortCapture()
     completion(["cancelled": true])
   }
 
-  @objc private func reviewPressed() {
-    guard !finishing, !pages.isEmpty else { return }
-    finishing = true
-    abortCapture()
-    completion([
-      "pages": pages.map { $0.data },
-      "engine": "avfoundation_vision",
-      "scannerBuild": "custom-live-v3",
-      "capabilities": [
-        "live_quadrilateral", "stable_auto_capture", "best_of_three",
-        "perspective_correction", "multi_page", "duplicate_guard", "manual_capture",
-      ],
-    ])
-  }
-
-  @objc private func shutterPressed() { beginCapture(automatic: false) }
-
-  private func beginCapture(automatic: Bool) {
+  private func beginCapture() {
     guard !isCapturing, !finishing, configured, session.isRunning, !session.isInterrupted else { return }
-    guard pages.count < 20 else {
-      showMessage("You can scan up to 20 pages at once.")
-      return
-    }
     isCapturing = true
     setCaptureAnalysisPaused(true)
-    captureWasAutomatic = automatic
-    // In-flight capture is already guarded by isCapturing. Lock automatic
-    // capture only after retaining a page (or rejecting a duplicate), so a
-    // rejected/aborted burst can retry after a fresh steady hold.
     captureGeneration += 1
     captureCancellation = ScannerBurstCancellationToken()
     burstRemaining = 3
@@ -499,7 +434,6 @@ final class FoorsaScannerViewController: UIViewController {
     tracker.reset()
     lastCaptureTime = CACurrentMediaTime()
     setCaptureControls(enabled: false)
-    updateReviewButton()
     statusLabel.text = "Hold still — choosing the clearest shot…"
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
     captureNextCandidate()
@@ -507,7 +441,7 @@ final class FoorsaScannerViewController: UIViewController {
     DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
       guard let self, self.isCapturing, self.captureGeneration == generation else { return }
       self.abortCapture()
-      self.showMessage("The camera took too long. Your earlier pages are safe; try this page again.")
+      self.showMessage("The camera took too long. Keep the document visible and try again.")
     }
   }
 
@@ -552,7 +486,6 @@ final class FoorsaScannerViewController: UIViewController {
     burstCandidates.removeAll()
     tracker.reset()
     setCaptureControls(enabled: true)
-    updateReviewButton()
   }
 
   private func finishBurst() {
@@ -561,131 +494,35 @@ final class FoorsaScannerViewController: UIViewController {
       captureCancellation?.cancel()
       captureCancellation = nil
       setCaptureAnalysisPaused(false)
-      captureWasAutomatic = false
       setCaptureControls(enabled: true)
-      updateReviewButton()
       tracker.reset()
       burstCandidates.removeAll()
     }
-    guard let best = ScannerCandidateSelector.best(burstCandidates) else {
-      showMessage("Could not get a sharp, complete page. Keep every corner visible, hold still, and try again.")
-      return
-    }
-    if ScannerDuplicatePolicy.shouldReject(
-      candidate: best.fingerprint,
-      previous: pages.last?.fingerprint,
-      automatic: captureWasAutomatic
-    ) {
-      autoCaptureLocked = true
-      documentMissingSince = nil
-      showMessage("This looks like the same page. Turn to the next page, then capture again.")
-      return
-    }
-    guard totalBytes + best.jpeg.count <= 24 * 1024 * 1024 else {
-      autoCaptureLocked = true
-      documentMissingSince = nil
-      showMessage("These pages are over 24 MB. Review the current pages or remove one before continuing.")
-      return
-    }
-    guard let image = UIImage(data: best.jpeg),
-          let thumbnail = makeThumbnail(from: image) else {
-      showMessage("The page could not be prepared. Please try again.")
-      return
-    }
-    pages.append(Page(data: best.jpeg, fingerprint: best.fingerprint, thumbnail: thumbnail))
-    // Keep automatic capture disabled until the current document leaves the
-    // frame. The shutter remains available for an intentional override.
-    autoCaptureLocked = true
-    documentMissingSince = nil
-    totalBytes += best.jpeg.count
-    rebuildThumbnails()
-    updateReviewButton()
-    statusLabel.text = "Page \(pages.count) added. Turn to the next page or review details."
-    UINotificationFeedbackGenerator().notificationOccurred(.success)
-    UIAccessibility.post(notification: .announcement, argument: "Page \(pages.count) added")
-  }
-
-  private func makeThumbnail(from image: UIImage) -> UIImage? {
-    let maximum = CGSize(width: 120, height: 160)
-    let scale = min(maximum.width / max(image.size.width, 1),
-                    maximum.height / max(image.size.height, 1))
-    let size = CGSize(width: max(1, image.size.width * scale),
-                      height: max(1, image.size.height * scale))
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    format.opaque = true
-    return UIGraphicsImageRenderer(size: size, format: format).image { context in
-      UIColor.white.setFill()
-      context.fill(CGRect(origin: .zero, size: size))
-      image.draw(in: CGRect(origin: .zero, size: size))
+    switch completionFlow.resolve(burstCandidates) {
+    case let .retry(message):
+      showMessage(message)
+    case let .complete(page):
+      finishing = true
+      statusLabel.text = "Page captured. Preparing details…"
+      UINotificationFeedbackGenerator().notificationOccurred(.success)
+      UIAccessibility.post(notification: .announcement, argument: "Page captured. Preparing details.")
+      completion([
+        "pages": [page],
+        "engine": "avfoundation_vision",
+        "scannerBuild": "custom-live-v4",
+        "capabilities": [
+          "live_quadrilateral", "stable_auto_capture", "best_of_three",
+          "perspective_correction", "automatic_single_page",
+        ],
+      ])
+    case .ignored:
+      break
     }
   }
 
   private func setCaptureControls(enabled: Bool) {
-    shutterButton.isEnabled = enabled
-    shutterButton.alpha = enabled ? 1 : 0.45
     torchButton.isEnabled = enabled
-  }
-
-  private func updateReviewButton() {
-    reviewButton.isEnabled = !pages.isEmpty && !isCapturing
-    reviewButton.configuration?.title = "Review details (\(pages.count))"
-    reviewButton.accessibilityValue = "\(pages.count) pages"
-  }
-
-  private func rebuildThumbnails() {
-    thumbnails.arrangedSubviews.forEach { view in
-      thumbnails.removeArrangedSubview(view)
-      view.removeFromSuperview()
-    }
-    for (index, page) in pages.enumerated() {
-      let container = UIView()
-      container.translatesAutoresizingMaskIntoConstraints = false
-      container.widthAnchor.constraint(equalToConstant: 58).isActive = true
-      container.heightAnchor.constraint(equalToConstant: 74).isActive = true
-      let imageView = UIImageView(image: page.thumbnail)
-      imageView.translatesAutoresizingMaskIntoConstraints = false
-      imageView.contentMode = .scaleAspectFill
-      imageView.clipsToBounds = true
-      imageView.layer.cornerRadius = 7
-      imageView.layer.borderWidth = 1
-      imageView.layer.borderColor = UIColor.white.withAlphaComponent(0.75).cgColor
-      imageView.isAccessibilityElement = true
-      imageView.accessibilityLabel = "Scanned page \(index + 1)"
-      let remove = UIButton(type: .system)
-      remove.translatesAutoresizingMaskIntoConstraints = false
-      remove.tag = index
-      remove.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
-      remove.tintColor = .white
-      remove.backgroundColor = UIColor.black.withAlphaComponent(0.75)
-      remove.layer.cornerRadius = 12
-      remove.accessibilityLabel = "Remove page \(index + 1)"
-      remove.addTarget(self, action: #selector(removePage(_:)), for: .touchUpInside)
-      container.addSubview(imageView)
-      container.addSubview(remove)
-      NSLayoutConstraint.activate([
-        imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-        imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-        imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
-        imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        remove.widthAnchor.constraint(equalToConstant: 28),
-        remove.heightAnchor.constraint(equalToConstant: 28),
-        remove.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: 5),
-        remove.topAnchor.constraint(equalTo: container.topAnchor, constant: -2),
-      ])
-      thumbnails.addArrangedSubview(container)
-    }
-    thumbnailScroll.isHidden = pages.isEmpty
-  }
-
-  @objc private func removePage(_ sender: UIButton) {
-    guard pages.indices.contains(sender.tag), !isCapturing else { return }
-    totalBytes -= pages[sender.tag].data.count
-    pages.remove(at: sender.tag)
-    rebuildThumbnails()
-    updateReviewButton()
-    statusLabel.text = pages.isEmpty ? profile.instruction : "Page removed. \(pages.count) pages remain."
-    UIAccessibility.post(notification: .announcement, argument: "Page removed")
+    torchButton.alpha = enabled ? 1 : 0.45
   }
 
   @objc private func torchPressed() {
@@ -705,7 +542,7 @@ final class FoorsaScannerViewController: UIViewController {
   }
 
   private func fail(_ message: String) {
-    guard !finishing else { return }
+    guard !finishing, completionFlow.terminate() else { return }
     finishing = true
     completion(["error": message])
   }
@@ -794,26 +631,17 @@ final class FoorsaScannerViewController: UIViewController {
       processingDuration: processingDuration)
     overlay.progress = state.progress
     if quadrilateral == nil {
-      if autoCaptureLocked {
-        if let missingSince = documentMissingSince, time - missingSince >= 0.45 {
-          autoCaptureLocked = false
-          documentMissingSince = nil
-        } else if documentMissingSince == nil {
-          documentMissingSince = time
-        }
-      }
       statusLabel.text = "Keep every corner visible and hold still while the camera focuses."
       return
     }
-    documentMissingSince = nil
     guard shapeAccepted else {
       statusLabel.text = "Rotate the document so its full shape fits the guide."
       return
     }
     if state.ready {
       statusLabel.text = "Page steady"
-      if !autoCaptureLocked && time - lastCaptureTime > 2.2 {
-        beginCapture(automatic: true)
+      if time - lastCaptureTime > 2.2 {
+        beginCapture()
       }
     } else {
       statusLabel.text = state.progress > 0.15 ? "Hold still…" : profile.instruction

@@ -4,8 +4,8 @@ import 'package:flutter/services.dart';
 
 import 'scan_document_profile.dart';
 
-/// System scans are already cropped and filtered. Preserve that marker and
-/// every page so the portal never crops twice or silently keeps only page one.
+/// The iPhone scanner returns one already-cropped page per invocation. Keep the
+/// existing pages envelope so the portal bridge remains wire-compatible.
 class NativeDocumentScanner {
   static const channel = MethodChannel('foorsa/document_scanner');
 
@@ -20,11 +20,10 @@ class NativeDocumentScanner {
       if (response?['error'] is String) return {'error': response!['error']};
       final pages = response?['pages'];
       if (pages is! List ||
-          pages.isEmpty ||
-          pages.length > 20 ||
+          pages.length != 1 ||
           pages.any((page) => page is! Uint8List || page.isEmpty)) {
         return {
-          'error': 'The scanned pages could not be prepared. Please try again.'
+          'error': 'The scanned page could not be prepared. Please try again.'
         };
       }
       return {
@@ -34,7 +33,7 @@ class NativeDocumentScanner {
             : 'avfoundation_vision',
         'scannerBuild': response?['scannerBuild'] is String
             ? response!['scannerBuild']
-            : 'custom-live-v2',
+            : 'custom-live-v4',
         'capabilities': response?['capabilities'] is List
             ? List<String>.unmodifiable(
                 (response!['capabilities'] as List).whereType<String>(),
