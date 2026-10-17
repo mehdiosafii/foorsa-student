@@ -172,10 +172,10 @@ class _ShellPageState extends State<ShellPage> {
 
   Future<Map<String, dynamic>> _pickForWeb(String mode, bool multiple) async {
     try {
-      if (mode == 'camera') {
-        await ph.Permission.camera.request();
+      if (mode == 'camera' || mode == 'photo') {
+        if (mode == 'camera') await ph.Permission.camera.request();
         final shot = await ImagePicker().pickImage(
-          source: ImageSource.camera,
+          source: mode == 'camera' ? ImageSource.camera : ImageSource.gallery,
           maxWidth: 2600,
           imageQuality: 92,
         );
