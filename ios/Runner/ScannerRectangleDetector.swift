@@ -248,6 +248,31 @@ private struct BoundaryPixels {
     return VNRectangleObservation(requestRevision:VNDetectRectanglesRequestRevision1,
       topLeft:corners[0],bottomLeft:corners[3],bottomRight:corners[2],topRight:corners[1])
   }
+
+  // A physical dark rim separates two surfaces beyond the rim itself. A
+  // printed line on one sheet loses its contrast in these farther bands.
+  func sustainedSurfaceStep(_ rectangle: VNRectangleObservation) -> Bool {
+    let points=[rectangle.topLeft,rectangle.topRight,rectangle.bottomRight,rectangle.bottomLeft]
+      .map { CGPoint(x:$0.x*CGFloat(width), y:$0.y*CGFloat(height)) }
+    return (0..<4).allSatisfy { edge in
+      let a=points[edge],b=points[(edge+1)%4],length=hypot(b.x-a.x,b.y-a.y)
+      guard length > 30 else { return false }
+      let n=CGPoint(x:-(b.y-a.y)/length,y:(b.x-a.x)/length)
+      var contrasts:[Double]=[]
+      var vector=SIMD3<Double>(repeating:0), magnitude=0.0
+      for i in 0..<17 {
+        let t=CGFloat(i+3)/22,p=CGPoint(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)
+        for distance in [CGFloat(12),18] {
+          guard let inside=color(CGPoint(x:p.x-n.x*distance,y:p.y-n.y*distance)),
+            let outside=color(CGPoint(x:p.x+n.x*distance,y:p.y+n.y*distance)) else {return false}
+          let delta=inside-outside,norm=sqrt((delta*delta).sum()/3)
+          contrasts.append(norm); vector += delta; magnitude += norm
+        }
+      }
+      return contrasts.sorted()[contrasts.count/3] >= 12 &&
+        sqrt((vector*vector).sum()/3)/max(1,magnitude) >= 0.9
+    }
+  }
   func strongOutline(_ rectangle: VNRectangleObservation) -> Bool {
     let edges = outline(rectangle)
     let median = edges.map {$0.1}.sorted()[2]
@@ -532,7 +557,7 @@ enum ScannerRectangleDetector {
       // A strong printed panel can satisfy an early contrast/consensus path.
       // Apply the enclosing physical-sheet veto after every page selection,
       // including those that never needed margin completion.
-      if profile.layout != .card, let pixels = BoundaryPixels(image:image),
+      if let pixels = BoundaryPixels(image:image),
         pixels.enclosingClippedSheet(around:candidate).veto { return nil }
       return candidate
     }
@@ -752,7 +777,13 @@ enum ScannerRectangleDetector {
     }
     // Independent exterior support preserves complete low-contrast pages when
     // rectangle detection favors a divider or joins nearby clutter.
-    if document.confidence >= 0.98 && pixels.isolatedOutline(document) { return document }
+    if document.confidence >= 0.98 && pixels.isolatedOutline(document) {
+      // A plain exterior can surround a corner borrowed from nearby clutter.
+      // Multiple strong but unlocalized sides must defer to rectangle consensus;
+      // genuinely faint sides retain the existing low-contrast behavior.
+      let localizedSides = pixels.outline(document).filter { $0.1 < 12 || $0.2 >= $0.1 * 0.2 }.count
+      if profile.layout == .passport || profile.layout == .card || localizedSides >= 3 { return document }
+    }
     // Independent rectangle agreement can confirm a lower-confidence, faint
     // page perimeter when its exterior remains uniform on every side.
     if document.confidence >= 0.9 && pixels.lowContrastOutline(document) &&
@@ -823,10 +854,10 @@ enum ScannerRectangleDetector {
     if profile.layout != .passport && profile.layout != .card && document.confidence >= 0.98 &&
       (proposals.contains(where: { agreeingCorners($0) == 4 }) ||
        (proposals.isEmpty && pixels.lowContrastOutline(document))) &&
-      pixels.uniformOuterBand(document) && !pixels.hasPrintedFrame(document) &&
+      pixels.uniformOuterBand(document) && !pixels.hasPrintedFrame(document, requireMatchingSurfaces: true) &&
       !pixels.enclosingClippedSheet(around:document).veto,
       let completed = pixels.localizedCompletion(document),
-      pixels.safeExterior(completed), !pixels.hasPrintedFrame(completed),
+      pixels.safeExterior(completed), !pixels.hasPrintedFrame(completed, requireMatchingSurfaces: true),
       !pixels.enclosingClippedSheet(around:completed).veto,
       select([completed], imageSize:image.extent.size, profile:profile, purpose:.still) != nil {
       return completed
@@ -837,6 +868,16 @@ enum ScannerRectangleDetector {
         select([refined], imageSize: image.extent.size, profile: profile, purpose: .still) != nil && pixels.safeExterior(refined) { return refined }
       if pixels.lowContrastOutline(document) && pixels.safeExterior(document) { return document }
     }
+    // Card segmentation may preserve the physical perimeter when rectangle
+    // detection attaches one corner to printed content. Keep the observed
+    // card only with strong local edges on all four sides and strict agreement
+    // on the other three corners; never synthesize the missing corner.
+    if profile.layout == .card && document.confidence >= 0.98 &&
+      pixels.strongOutline(document) && pixels.safeExterior(document) &&
+      (!pixels.hasPrintedFrame(document) || pixels.sustainedSurfaceStep(document)) &&
+      !pixels.enclosingClippedSheet(around:document).veto &&
+      proposals.contains(where: { agreeingCorners($0, tolerance: 0.03) >= 3 }) { return document }
+
     return nil
   }
 }
@@ -979,7 +1020,7 @@ private extension BoundaryPixels {
   // A dark printed frame has light surface on both sides of at least three
   // perimeter strokes. A booklet has one binding; its physical outside edges
   // do not form a closed dark band surrounded by the same light sheet.
-  func hasPrintedFrame(_ rectangle: VNRectangleObservation) -> Bool {
+  func hasPrintedFrame(_ rectangle: VNRectangleObservation, requireMatchingSurfaces: Bool = false) -> Bool {
     let points=[rectangle.topLeft,rectangle.topRight,rectangle.bottomRight,rectangle.bottomLeft].map {CGPoint(x:$0.x*CGFloat(width),y:$0.y*CGFloat(height))}
     var framedSides=0
     for edge in 0..<4 {
@@ -997,7 +1038,18 @@ private extension BoundaryPixels {
           }
           guard let center=luma(0) else {continue}
           for radius in [CGFloat(3),5,8,11,14] {
-            if let inside=luma(-radius),let outside=luma(radius),min(inside,outside)-center>=16 {valley=true;break}
+            if let inside=luma(-radius),let outside=luma(radius),min(inside,outside)-center>=16 {
+              if requireMatchingSurfaces {
+                // A printed inset has the same paper surface on both flanks.
+                // A dark margin at the physical edge can instead separate white
+                // paper from a different-colored background; luma alone confuses them.
+                guard let innerColor=color(CGPoint(x:p.x+n.x*(offset-radius),y:p.y+n.y*(offset-radius))),
+                  let outerColor=color(CGPoint(x:p.x+n.x*(offset+radius),y:p.y+n.y*(offset+radius))) else {continue}
+                let delta=innerColor-outerColor
+                guard sqrt((delta*delta).sum()/3) <= 10 else {continue}
+              }
+              valley=true;break
+            }
           }
           if valley {break}
         }

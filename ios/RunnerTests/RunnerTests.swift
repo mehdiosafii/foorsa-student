@@ -544,15 +544,17 @@ extension RunnerTests {
       let cgImage = try XCTUnwrap(context.makeImage())
       let jpeg = try XCTUnwrap(UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.95))
       let jpegImage = try XCTUnwrap(CIImage(data: jpeg))
-      let profile = FoorsaScannerProfile(arguments: ["profile": ["documentKey": fixture.key]])
-      for (encoding, image) in [("uncompressed", CIImage(cgImage: cgImage)), ("UIKitJPEG", jpegImage)] {
-        // Ensure the negative is not passing merely because its content is blank or blurred.
-        let clarity = ContentClarity.score(image)
-        XCTAssertGreaterThanOrEqual(clarity.support, 24, "\(fixture.name) \(encoding)")
-        XCTAssertGreaterThanOrEqual(clarity.q50, 0.35, "\(fixture.name) \(encoding)")
-        for purpose in [ScannerDetectionPurpose.live, .still] {
-          XCTAssertNil(try ScannerRectangleDetector.detect(in: image, profile: profile, purpose: purpose),
-            "\(fixture.name) \(encoding) \(purpose): printed panel must not substitute for clipped paper")
+      for key in [fixture.key, "parent_id"] {
+        let profile = FoorsaScannerProfile(arguments: ["profile": ["documentKey": key]])
+        for (encoding, image) in [("uncompressed", CIImage(cgImage: cgImage)), ("UIKitJPEG", jpegImage)] {
+          // Ensure the negative is not passing merely because its content is blank or blurred.
+          let clarity = ContentClarity.score(image)
+          XCTAssertGreaterThanOrEqual(clarity.support, 24, "\(fixture.name) \(key) \(encoding)")
+          XCTAssertGreaterThanOrEqual(clarity.q50, 0.35, "\(fixture.name) \(key) \(encoding)")
+          for purpose in [ScannerDetectionPurpose.live, .still] {
+            XCTAssertNil(try ScannerRectangleDetector.detect(in: image, profile: profile, purpose: purpose),
+              "\(fixture.name) \(key) \(encoding) \(purpose): printed panel must not substitute for clipped paper")
+          }
         }
       }
     }
