@@ -368,21 +368,73 @@ enum ScannerRectangleDetector {
       return candidate
     }
     var recovery: VNRectangleObservation?
-    if let primary=acceptedBoundary(try detectSingleOrientation(in:image,profile:profile,purpose:purpose,measuredClarity:clarity,recovery:&recovery)) {return primary}
-    if let candidate=acceptedBoundary(recovery) {return candidate}
-    guard profile.layout == .passport else {return nil}
+    var raw: VNRectangleObservation?
+    var rawContentClear=false
+    var contentCleared:[VNRectangleObservation]=[]
+    var accepted: [VNRectangleObservation] = []
+    var documents: [(VNRectangleObservation, Float)] = []
     var rotated=image.transformed(by:CGAffineTransform(translationX:-e.minX,y:-e.minY))
-    // Finite fallback: at most four total pipelines, with every existing boundary,
-    // completeness, document-type and clarity rule retained at every orientation.
-    for turns in 1...3 {
-      rotated=rotated.transformed(by:CGAffineTransform(a:0,b:1,c:-1,d:0,tx:rotated.extent.height,ty:0))
-      recovery = nil
-      let original=try detectSingleOrientation(in:rotated,profile:profile,purpose:purpose,recovery:&recovery)
-      for candidate in [original,recovery].compactMap({$0}) {
-        let mapped=mapFromQuarterTurn(candidate,turns:turns)
-        if select([mapped],imageSize:image.extent.size,profile:profile,purpose:.still) != nil,
-          let accepted=acceptedBoundary(mapped) {return accepted}
+    for turns in 0..<(profile.layout == .passport ? 4 : 1) {
+      if turns > 0 {rotated=rotated.transformed(by:CGAffineTransform(a:0,b:1,c:-1,d:0,tx:rotated.extent.height,ty:0))}
+      recovery=nil; raw=nil; rawContentClear=false
+      let primary=try detectSingleOrientation(in:rotated,profile:profile,purpose:purpose,measuredClarity:turns == 0 ? clarity : nil,recovery:&recovery,rawDocument:&raw,rawContentClear:&rawContentClear)
+      if let raw {
+        let mapped=mapFromQuarterTurn(raw,turns:turns)
+        documents.append((mapped,raw.confidence))
+        if rawContentClear {contentCleared.append(mapped)}
       }
+      for candidate in [primary,recovery].compactMap({$0}) {
+        let mapped=mapFromQuarterTurn(candidate,turns:turns)
+        if select([mapped],imageSize:e.size,profile:profile,purpose:.still) != nil {accepted.append(mapped)}
+      }
+    }
+    guard profile.layout == .passport, let pixels=BoundaryPixels(image:image) else {return accepted.first}
+    func points(_ r:VNRectangleObservation)->[CGPoint] {[r.topLeft,r.topRight,r.bottomRight,r.bottomLeft]}
+    func area(_ r:VNRectangleObservation)->CGFloat {
+      let p=points(r)
+      return abs((0..<4).map {p[$0].x*p[($0+1)%4].y-p[($0+1)%4].x*p[$0].y}.reduce(0,+))/2
+    }
+    func agrees(_ a:VNRectangleObservation,_ b:VNRectangleObservation)->Bool {
+      let diagonal=hypot(b.boundingBox.width*e.width,b.boundingBox.height*e.height)
+      return zip(points(a),points(b)).filter {hypot(($0.x-$1.x)*e.width,($0.y-$1.y)*e.height)<=diagonal*0.03}.count>=3
+    }
+    let evidence=documents.map {pixels.curvedEvidence($0.0)}
+    func outerSupported(_ ev:BoundaryPixels.CurvedEvidence)->Bool {
+      let longest=ev.lengths.max() ?? 0
+      return (0..<4).contains {binding in
+        let outside=(0..<4).filter {$0 != binding}
+        return ev.lengths[binding]>=longest*0.9 && ev.valleys[binding]>=0.5 && outside.allSatisfy {ev.steps[$0]>=0.8} &&
+          outside.map {ev.steps[$0]}.reduce(0,+)>=2.8 &&
+          outside.allSatisfy {$0 == (binding+2)%4 || ev.valleys[$0]<0.5}
+      }
+    }
+    var confirmed:[VNRectangleObservation]=[]
+    // Confidence alone changes slightly with lossless re-encoding. A lower
+    // confidence proposal still needs the high-confidence agreeing orientation
+    // and physical perimeter evidence before it can become a crop.
+    for i in documents.indices where documents[i].1>=0.85 && outerSupported(evidence[i]) {
+      let sibling=documents.indices.contains {j in
+        j != i && documents[j].1>=0.95 && agrees(documents[i].0,documents[j].0) &&
+          outerSupported(evidence[j]) && (evidence[j].valleys.max() ?? 0)>=0.9
+      }
+      if sibling {confirmed.append(documents[i].0)}
+    }
+    // Preserve observed corners. Three-corner agreement associates competing
+    // proposals with the same page without synthesizing a missing corner.
+    var candidates=accepted+confirmed.filter { candidate in
+      contentCleared.contains { $0 === candidate } && select([candidate],imageSize:e.size,profile:profile,purpose:.still) != nil
+    }
+    candidates.sort {area($0)>area($1)}
+    for candidate in candidates {
+      // An independently observed matching page touching the frame makes the
+      // complete inner hypothesis unsafe. A corner may move outside one edge
+      // while shrinking net area, so polygon area cannot establish safety.
+      let clipped=confirmed.contains {other in
+        agrees(candidate,other) &&
+          select([other],imageSize:e.size,profile:profile,purpose:.still)==nil
+      }
+      if clipped {continue}
+      if let result=acceptedBoundary(candidate) {return result}
     }
     return nil
   }
@@ -449,7 +501,9 @@ enum ScannerRectangleDetector {
     profile: FoorsaScannerProfile,
     purpose: ScannerDetectionPurpose,
     measuredClarity: ClarityScores? = nil,
-    recovery: inout VNRectangleObservation?
+    recovery: inout VNRectangleObservation?,
+    rawDocument: inout VNRectangleObservation?,
+    rawContentClear: inout Bool
   ) throws -> VNRectangleObservation? {
     let extent=image.extent
     guard !extent.isInfinite, !extent.isNull,
@@ -461,6 +515,7 @@ enum ScannerRectangleDetector {
     let request = makeRequest(for: purpose)
     let segmentation = VNDetectDocumentSegmentationRequest()
     try VNImageRequestHandler(ciImage: image, orientation: .up).perform([request, segmentation])
+    rawDocument=segmentation.results?.first
     guard let document = segmentation.results?.first, document.confidence >= 0.6,
       select([document], imageSize: image.extent.size, profile: profile, purpose: .still) != nil else { return nil }
     if clarity.support < 24 {
@@ -475,6 +530,7 @@ enum ScannerRectangleDetector {
       let pageClarity=ContentClarity.score(corrected,configuration:configuration)
       guard pageClarity.support >= 24, pageClarity.q50 >= 0.35 else {return nil}
     }
+    rawContentClear=true
     let proposals = request.results ?? []
     func agreeingCorners(_ candidate: VNRectangleObservation, tolerance: CGFloat = 0.06) -> Int {
       let a = [candidate.topLeft,candidate.topRight,candidate.bottomRight,candidate.bottomLeft]
