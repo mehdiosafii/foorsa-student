@@ -851,9 +851,14 @@ enum ScannerRectangleDetector {
     }
     // A high-confidence proposal can end on a decorative inset instead of the
     // paper edge. Complete it only from localized physical edge evidence.
+    // Small interior rectangles can appear after JPEG encoding. They cannot
+    // compete as complete document boundaries, just as an empty result cannot.
+    let noCompleteRectangle = proposals.allSatisfy {
+      select([$0], imageSize:image.extent.size, profile:profile, purpose:.still) == nil
+    }
     if profile.layout != .passport && profile.layout != .card && document.confidence >= 0.98 &&
       (proposals.contains(where: { agreeingCorners($0) == 4 }) ||
-       (proposals.isEmpty && pixels.lowContrastOutline(document))) &&
+       (noCompleteRectangle && pixels.lowContrastOutline(document))) &&
       pixels.uniformOuterBand(document) && !pixels.hasPrintedFrame(document, requireMatchingSurfaces: true) &&
       !pixels.enclosingClippedSheet(around:document).veto,
       let completed = pixels.localizedCompletion(document),
