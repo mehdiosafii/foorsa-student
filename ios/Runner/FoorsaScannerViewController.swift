@@ -487,7 +487,9 @@ final class FoorsaScannerViewController: UIViewController {
     isCapturing = true
     setCaptureAnalysisPaused(true)
     captureWasAutomatic = automatic
-    if automatic { autoCaptureLocked = true }
+    // In-flight capture is already guarded by isCapturing. Lock automatic
+    // capture only after retaining a page (or rejecting a duplicate), so a
+    // rejected/aborted burst can retry after a fresh steady hold.
     captureGeneration += 1
     captureCancellation = ScannerBurstCancellationToken()
     burstRemaining = 3
@@ -574,10 +576,14 @@ final class FoorsaScannerViewController: UIViewController {
       previous: pages.last?.fingerprint,
       automatic: captureWasAutomatic
     ) {
+      autoCaptureLocked = true
+      documentMissingSince = nil
       showMessage("This looks like the same page. Turn to the next page, then capture again.")
       return
     }
     guard totalBytes + best.jpeg.count <= 24 * 1024 * 1024 else {
+      autoCaptureLocked = true
+      documentMissingSince = nil
       showMessage("These pages are over 24 MB. Review the current pages or remove one before continuing.")
       return
     }

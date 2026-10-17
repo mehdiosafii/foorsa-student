@@ -399,37 +399,56 @@ enum ScannerRectangleDetector {
       return zip(points(a),points(b)).filter {hypot(($0.x-$1.x)*e.width,($0.y-$1.y)*e.height)<=diagonal*0.03}.count>=3
     }
     let evidence=documents.map {pixels.curvedEvidence($0.0)}
-    func outerSupported(_ ev:BoundaryPixels.CurvedEvidence)->Bool {
+    func outerSupported(_ ev:BoundaryPixels.CurvedEvidence, rectangle: VNRectangleObservation, allowTexturedStep: Bool = false)->Bool {
+      let edges=allowTexturedStep ? pixels.outline(rectangle) : []
       let longest=ev.lengths.max() ?? 0
       return (0..<4).contains {binding in
         let outside=(0..<4).filter {$0 != binding}
         return ev.lengths[binding]>=longest*0.9 && ev.valleys[binding]>=0.5 && outside.allSatisfy {ev.steps[$0]>=0.8} &&
           outside.map {ev.steps[$0]}.reduce(0,+)>=2.8 &&
-          outside.allSatisfy {$0 == (binding+2)%4 || ev.valleys[$0]<0.5}
+          outside.allSatisfy { edge in
+            if edge == (binding+2)%4 || ev.valleys[edge]<0.5 {return true}
+            // Dark texture beside a genuine physical edge can also form local
+            // valleys. A continuous, directionally coherent color step across
+            // the edge distinguishes that boundary from a narrow printed line.
+            return allowTexturedStep && ev.steps[edge]>=0.95 && edges[edge].1>=12 &&
+              edges[edge].2>=8 && edges[edge].3>=0.9
+          }
       }
     }
-    var confirmed:[VNRectangleObservation]=[]
-    // Confidence alone changes slightly with lossless re-encoding. A lower
-    // confidence proposal still needs the high-confidence agreeing orientation
-    // and physical perimeter evidence before it can become a crop.
-    for i in documents.indices where documents[i].1>=0.85 && outerSupported(evidence[i]) {
-      let sibling=documents.indices.contains {j in
-        j != i && documents[j].1>=0.95 && agrees(documents[i].0,documents[j].0) &&
-          outerSupported(evidence[j]) && (evidence[j].valleys.max() ?? 0)>=0.9
+    func confirmedDocuments(allowTexturedStep: Bool)->[VNRectangleObservation] {
+      var result:[VNRectangleObservation]=[]
+      for i in documents.indices where documents[i].1>=0.85 && outerSupported(evidence[i],rectangle:documents[i].0,allowTexturedStep:allowTexturedStep) {
+        let sibling=documents.indices.contains {j in
+          j != i && documents[j].1>=0.95 && agrees(documents[i].0,documents[j].0) &&
+            outerSupported(evidence[j],rectangle:documents[j].0,allowTexturedStep:allowTexturedStep) && (evidence[j].valleys.max() ?? 0)>=0.9
+        }
+        if sibling {result.append(documents[i].0)}
       }
-      if sibling {confirmed.append(documents[i].0)}
+      return result
+    }
+    let confirmed=confirmedDocuments(allowTexturedStep:false)
+    let textureConfirmed=confirmedDocuments(allowTexturedStep:true)
+    // Extra texture evidence can recover an observed complete outer boundary.
+    // Its incomplete hypotheses veto those additional candidates, not a page
+    // already validated by the stricter original boundary evidence.
+    let textureCandidates=textureConfirmed.filter {candidate in
+      !confirmed.contains {$0 === candidate} && contentCleared.contains {$0 === candidate} &&
+        select([candidate],imageSize:e.size,profile:profile,purpose:.still) != nil
     }
     // Preserve observed corners. Three-corner agreement associates competing
     // proposals with the same page without synthesizing a missing corner.
     var candidates=accepted+confirmed.filter { candidate in
       contentCleared.contains { $0 === candidate } && select([candidate],imageSize:e.size,profile:profile,purpose:.still) != nil
     }
+    candidates += textureCandidates
     candidates.sort {area($0)>area($1)}
     for candidate in candidates {
       // An independently observed matching page touching the frame makes the
       // complete inner hypothesis unsafe. A corner may move outside one edge
       // while shrinking net area, so polygon area cannot establish safety.
-      let clipped=confirmed.contains {other in
+      let clippingEvidence=textureCandidates.contains {$0 === candidate} ? textureConfirmed : confirmed
+      let clipped=clippingEvidence.contains {other in
         agrees(candidate,other) &&
           select([other],imageSize:e.size,profile:profile,purpose:.still)==nil
       }
