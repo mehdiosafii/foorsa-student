@@ -468,3 +468,93 @@ class RunnerTests: XCTestCase {
     ))
   }
 }
+
+// Synthetic paper and printed panels exercise capture safety without customer assets.
+extension RunnerTests {
+  func testPaperDetectorRejectsAlignedAndRotatedFilledPanelsOnClippedSheets() throws {
+    struct Fixture {
+      let name: String
+      let key: String
+      let size: CGSize
+      let outer: [CGPoint]
+      let inner: [CGPoint]
+    }
+    func points(_ values: [[CGFloat]]) -> [CGPoint] {
+      values.map { CGPoint(x: $0[0], y: $0[1]) }
+    }
+    func rotated(center: CGPoint, width: CGFloat, height: CGFloat, degrees: CGFloat) -> [CGPoint] {
+      let radians = degrees * .pi / 180
+      return points([[-width / 2, -height / 2], [width / 2, -height / 2],
+                     [width / 2, height / 2], [-width / 2, height / 2]]).map { p in
+        CGPoint(x: center.x + p.x * cos(radians) - p.y * sin(radians),
+                y: center.y + p.x * sin(radians) + p.y * cos(radians))
+      }
+    }
+    let fixtures = [
+      Fixture(name: "portrait_aligned_clipped_top", key: "cv", size: CGSize(width: 1600, height: 2200),
+        outer: points([[180,-100],[1420,-60],[1360,1900],[220,1850]]),
+        inner: points([[390,180],[1210,200],[1170,1640],[420,1610]])),
+      Fixture(name: "adaptive_aligned_clipped_left", key: "highest_degree", size: CGSize(width: 2200, height: 1600),
+        outer: points([[-140,190],[1900,130],[1840,1420],[-100,1480]]),
+        inner: points([[250,380],[1650,340],[1610,1210],[280,1250]])),
+      Fixture(name: "portrait_rotated10_clipped_right", key: "cv", size: CGSize(width: 1600, height: 2200),
+        outer: points([[250,120],[1690,170],[1620,2050],[280,2000]]),
+        inner: rotated(center: CGPoint(x: 900, y: 1080), width: 760, height: 1260, degrees: 10)),
+      Fixture(name: "adaptive_rotated11_clipped_bottom", key: "highest_degree", size: CGSize(width: 2200, height: 1600),
+        outer: points([[150,260],[2050,200],[1990,1740],[190,1800]]),
+        inner: rotated(center: CGPoint(x: 1100, y: 900), width: 1320, height: 760, degrees: -11)),
+    ]
+    for fixture in fixtures {
+      let width = Int(fixture.size.width), height = Int(fixture.size.height)
+      let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height,
+        bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.setFillColor(CGColor(red: 0.47, green: 0.45, blue: 0.42, alpha: 1))
+      context.fill(CGRect(origin: .zero, size: fixture.size))
+      // Fixture coordinates are top-origin; Core Graphics drawing is bottom-origin.
+      func draw(_ corners: [CGPoint], fill: CGColor, stroke: CGColor, lineWidth: CGFloat) {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: corners[0].x, y: fixture.size.height - corners[0].y))
+        for p in corners.dropFirst() {
+          path.addLine(to: CGPoint(x: p.x, y: fixture.size.height - p.y))
+        }
+        path.closeSubpath()
+        context.addPath(path)
+        context.setFillColor(fill)
+        context.setStrokeColor(stroke)
+        context.setLineWidth(lineWidth)
+        context.drawPath(using: .fillStroke)
+      }
+      draw(fixture.outer, fill: CGColor(red: 0.965, green: 0.955, blue: 0.92, alpha: 1),
+        stroke: CGColor(red: 0.40, green: 0.38, blue: 0.34, alpha: 1), lineWidth: 8)
+      draw(fixture.inner, fill: CGColor(red: 0.035, green: 0.23, blue: 0.31, alpha: 1),
+        stroke: CGColor(red: 0.015, green: 0.08, blue: 0.11, alpha: 1), lineWidth: 16)
+      context.setStrokeColor(CGColor(red: 0.91, green: 0.83, blue: 0.48, alpha: 1))
+      context.setLineWidth(10)
+      let minX = try XCTUnwrap(fixture.inner.map(\.x).min()) + 80
+      let maxX = try XCTUnwrap(fixture.inner.map(\.x).max()) - 80
+      var y = try XCTUnwrap(fixture.inner.map(\.y).min()) + 130
+      let maxY = try XCTUnwrap(fixture.inner.map(\.y).max()) - 100
+      while y < maxY {
+        context.move(to: CGPoint(x: minX, y: fixture.size.height - y))
+        context.addLine(to: CGPoint(x: maxX, y: fixture.size.height - y))
+        context.strokePath()
+        y += 95
+      }
+      let cgImage = try XCTUnwrap(context.makeImage())
+      let jpeg = try XCTUnwrap(UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.95))
+      let jpegImage = try XCTUnwrap(CIImage(data: jpeg))
+      let profile = FoorsaScannerProfile(arguments: ["profile": ["documentKey": fixture.key]])
+      for (encoding, image) in [("uncompressed", CIImage(cgImage: cgImage)), ("UIKitJPEG", jpegImage)] {
+        // Ensure the negative is not passing merely because its content is blank or blurred.
+        let clarity = ContentClarity.score(image)
+        XCTAssertGreaterThanOrEqual(clarity.support, 24, "\(fixture.name) \(encoding)")
+        XCTAssertGreaterThanOrEqual(clarity.q50, 0.35, "\(fixture.name) \(encoding)")
+        for purpose in [ScannerDetectionPurpose.live, .still] {
+          XCTAssertNil(try ScannerRectangleDetector.detect(in: image, profile: profile, purpose: purpose),
+            "\(fixture.name) \(encoding) \(purpose): printed panel must not substitute for clipped paper")
+        }
+      }
+    }
+  }
+}

@@ -109,6 +109,145 @@ private struct BoundaryPixels {
     let edges = outline(rectangle)
     return edges.allSatisfy {$0.1 >= 2 && $0.1 <= 12} && edges.map {$0.3}.reduce(0,+)/4 >= 0.5
   }
+  func uniformOuterBand(_ rectangle: VNRectangleObservation) -> Bool {
+    let points = [rectangle.topLeft, rectangle.topRight, rectangle.bottomRight, rectangle.bottomLeft]
+      .map { CGPoint(x: $0.x * CGFloat(width), y: $0.y * CGFloat(height)) }
+    return (0..<4).allSatisfy { edge in
+      let a = points[edge], b = points[(edge + 1) % 4]
+      let length = hypot(b.x - a.x, b.y - a.y)
+      guard length > 1 else { return false }
+      let normal = CGPoint(x: -(b.y - a.y) / length, y: (b.x - a.x) / length)
+      var values: [SIMD3<Double>] = []
+      for sample in 0..<19 {
+        let t = CGFloat(sample + 1) / 20
+        let point = CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+        for distance in [CGFloat(13), 17, 21] {
+          guard let value = color(CGPoint(x: point.x + normal.x * distance,
+                                          y: point.y + normal.y * distance)) else { return false }
+          values.append(value)
+        }
+      }
+      let median = SIMD3(values.map(\.x).sorted()[values.count / 2],
+                         values.map(\.y).sorted()[values.count / 2],
+                         values.map(\.z).sorted()[values.count / 2])
+      let variation = values.map { value in
+        let delta = value - median
+        return sqrt((delta * delta).sum() / 3)
+      }.sorted()[Int(Double(values.count - 1) * 0.85)]
+      return variation <= 6
+    }
+  }
+  // Localize the paper edge when segmentation ends at a faint or decorated margin.
+  // A uniform far band only opens this bounded search. Each replacement must have
+  // continuous narrow contrast and flat pixels immediately outside its own line.
+  // Broad contrast can cross a contrasting printed margin, so it is not used as
+  // the denominator of the narrow physical-edge contrast test.
+  func localizedCompletion(_ rectangle: VNRectangleObservation) -> VNRectangleObservation? {
+    struct Match {
+      let line: Line
+      let offset: CGFloat
+      let tilt: CGFloat
+      let score: Double
+    }
+    let source = [rectangle.topLeft, rectangle.topRight, rectangle.bottomRight, rectangle.bottomLeft]
+    let points = source.map { CGPoint(x: $0.x * CGFloat(width), y: $0.y * CGFloat(height)) }
+    let center = CGPoint(x: points.map(\.x).reduce(0,+)/4, y: points.map(\.y).reduce(0,+)/4)
+    func localizedStep(a: CGPoint, b: CGPoint, n: CGPoint) -> Bool {
+      var steps: [Double] = [], exteriorChanges: [Double] = []
+      var vector = SIMD3<Double>(repeating: 0), magnitude = 0.0
+      for sample in 0..<19 {
+        let t = CGFloat(sample + 1) / 20
+        let p = CGPoint(x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t)
+        func sampleColor(_ d:CGFloat) -> SIMD3<Double>? {
+          color(CGPoint(x:p.x+n.x*d,y:p.y+n.y*d))
+        }
+        guard let inside=sampleColor(-1.5), let outside=sampleColor(1.5),
+              let far=sampleColor(5) else { return false }
+        let delta=inside-outside, outerDelta=outside-far
+        let norm=sqrt((delta*delta).sum()/3)
+        steps.append(norm); exteriorChanges.append(sqrt((outerDelta*outerDelta).sum()/3))
+        vector += delta; magnitude += norm
+      }
+      return steps.sorted()[2] >= 2 && exteriorChanges.sorted()[16] <= 3 &&
+        sqrt((vector*vector).sum()/3) / max(1,magnitude) >= 0.9
+    }
+    var lines: [Line] = []
+    var moved = 0
+    for edge in 0..<4 {
+      let a = points[edge], b = points[(edge + 1) % 4]
+      let length = hypot(b.x - a.x, b.y - a.y)
+      guard length > 30 else { return nil }
+      var normal = CGPoint(x: -(b.y - a.y) / length, y: (b.x - a.x) / length)
+      if (center.x - (a.x + b.x)/2) * normal.x + (center.y - (a.y + b.y)/2) * normal.y > 0 {
+        normal = CGPoint(x: -normal.x, y: -normal.y)
+      }
+      let originalEvidence = evidence(a: a, b: b, n: normal)
+      let original = Line(a:a,b:b,broad:originalEvidence.1,sharp:originalEvidence.2,coherence:originalEvidence.3)
+      let originalExterior = outerVariation(a:a,b:b,n:normal)
+      // Faint sheet boundaries can have small, varying RGB directions after
+      // downsampling. Preserve an observed side only with both broad and narrow
+      // contrast, coherent broad evidence, and a strictly flat exterior.
+      let supportedFaintOriginal = originalEvidence.1 >= 2 && originalEvidence.1 <= 12 &&
+        originalEvidence.2 >= 2 &&
+        (originalEvidence.3 >= 0.8 ||
+         (originalEvidence.3 >= 0.65 && originalEvidence.2 >= originalEvidence.1 * 0.65)) &&
+        originalExterior <= 3
+      if supportedFaintOriginal ||
+        (originalExterior <= min(24,max(8,originalEvidence.1*0.5)) &&
+         localizedStep(a:a,b:b,n:normal)) {
+        lines.append(original)
+        continue
+      }
+      var matches: [Match] = []
+      for offset in stride(from: CGFloat(-3), through: 12, by: 1) {
+        for tilt in stride(from: CGFloat(-4), through: 4, by: 2) {
+          guard offset - abs(tilt) >= -3, offset + abs(tilt) <= 12 else { continue }
+          let aa = CGPoint(x:a.x + normal.x * (offset-tilt), y:a.y + normal.y * (offset-tilt))
+          let bb = CGPoint(x:b.x + normal.x * (offset+tilt), y:b.y + normal.y * (offset+tilt))
+          let candidate = evidence(a:aa,b:bb,n:normal)
+          guard candidate.1 >= 2,
+                candidate.2 >= 2,
+                candidate.3 >= 0.65,
+                outerVariation(a:aa,b:bb,n:normal) <= min(24,max(8,candidate.1*0.5)),
+                localizedStep(a:aa,b:bb,n:normal) else { continue }
+          let raw = min(candidate.1, candidate.2 * 1.8) * candidate.3
+          let score = raw / (1 + Double(abs(offset)) * 0.01 + Double(abs(tilt)) * 0.01)
+          matches.append(Match(line:Line(a:aa,b:bb,broad:candidate.1,sharp:candidate.2,coherence:candidate.3),
+                               offset:offset,tilt:tilt,score:score))
+        }
+      }
+      // An unchanged side already passed explicit physical-edge evidence above.
+      // Never retain an unsupported original side when completion fails.
+      guard let best = matches.max(by: {$0.score < $1.score}), best.score >= 2.5 else { return nil }
+      // Nearby samples describe the same physical edge. A similarly strong
+      // distant line makes the completion ambiguous, so retain no boundary.
+      if matches.contains(where: {
+        (abs($0.offset-best.offset) > 4 || abs($0.tilt-best.tilt) > 6) && $0.score >= best.score * 0.87
+      }) { return nil }
+      lines.append(best.line)
+      moved += 1
+    }
+    guard moved >= 1 else { return nil }
+    func intersection(_ left:Line,_ right:Line) -> CGPoint? {
+      let dx=left.b.x-left.a.x,dy=left.b.y-left.a.y,ex=right.b.x-right.a.x,ey=right.b.y-right.a.y
+      let cross=dx*ey-dy*ex
+      guard abs(cross)>1 else {return nil}
+      let t=((right.a.x-left.a.x)*ey-(right.a.y-left.a.y)*ex)/cross
+      return CGPoint(x:(left.a.x+t*dx)/CGFloat(width),y:(left.a.y+t*dy)/CGFloat(height))
+    }
+    var corners:[CGPoint]=[]
+    for edge in 0..<4 {
+      guard let corner=intersection(lines[(edge+3)%4],lines[edge]) else {return nil}
+      corners.append(corner)
+    }
+    guard corners.allSatisfy({$0.x.isFinite && $0.y.isFinite && $0.x >= 0 && $0.x <= 1 && $0.y >= 0 && $0.y <= 1}) else{return nil}
+    for edge in 0..<4 {
+      let a=corners[edge],b=corners[(edge+1)%4],c=corners[(edge+2)%4]
+      guard (b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x) < 0 else{return nil}
+    }
+    return VNRectangleObservation(requestRevision:VNDetectRectanglesRequestRevision1,
+      topLeft:corners[0],bottomLeft:corners[3],bottomRight:corners[2],topRight:corners[1])
+  }
   func strongOutline(_ rectangle: VNRectangleObservation) -> Bool {
     let edges = outline(rectangle)
     let median = edges.map {$0.1}.sorted()[2]
@@ -388,7 +527,16 @@ enum ScannerRectangleDetector {
         if select([mapped],imageSize:e.size,profile:profile,purpose:.still) != nil {accepted.append(mapped)}
       }
     }
-    guard profile.layout == .passport, let pixels=BoundaryPixels(image:image) else {return accepted.first}
+    if profile.layout != .passport {
+      guard let candidate = accepted.first else { return nil }
+      // A strong printed panel can satisfy an early contrast/consensus path.
+      // Apply the enclosing physical-sheet veto after every page selection,
+      // including those that never needed margin completion.
+      if profile.layout != .card, let pixels = BoundaryPixels(image:image),
+        pixels.enclosingClippedSheet(around:candidate).veto { return nil }
+      return candidate
+    }
+    guard let pixels=BoundaryPixels(image:image) else {return accepted.first}
     func points(_ r:VNRectangleObservation)->[CGPoint] {[r.topLeft,r.topRight,r.bottomRight,r.bottomLeft]}
     func area(_ r:VNRectangleObservation)->CGFloat {
       let p=points(r)
@@ -667,7 +815,22 @@ enum ScannerRectangleDetector {
     }
     guard document.confidence >= 0.9 else { return nil }
     if proposals.contains(where: { agreeingCorners($0) == 4 }), let refined = pixels.refine(document),
-      select([refined], imageSize: image.extent.size, profile: profile, purpose: .still) != nil { return fused(refined) }
+      select([refined], imageSize: image.extent.size, profile: profile, purpose: .still) != nil {
+      if let result = fused(refined) { return result }
+    }
+    // A high-confidence proposal can end on a decorative inset instead of the
+    // paper edge. Complete it only from localized physical edge evidence.
+    if profile.layout != .passport && profile.layout != .card && document.confidence >= 0.98 &&
+      (proposals.contains(where: { agreeingCorners($0) == 4 }) ||
+       (proposals.isEmpty && pixels.lowContrastOutline(document))) &&
+      pixels.uniformOuterBand(document) && !pixels.hasPrintedFrame(document) &&
+      !pixels.enclosingClippedSheet(around:document).veto,
+      let completed = pixels.localizedCompletion(document),
+      pixels.safeExterior(completed), !pixels.hasPrintedFrame(completed),
+      !pixels.enclosingClippedSheet(around:completed).veto,
+      select([completed], imageSize:image.extent.size, profile:profile, purpose:.still) != nil {
+      return completed
+    }
     // With no competing rectangle, validate the segmentation perimeter itself.
     if proposals.isEmpty {
       if let refined = pixels.refine(document),
