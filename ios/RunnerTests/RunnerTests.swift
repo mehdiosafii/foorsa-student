@@ -407,6 +407,51 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(soft.fingerprint.distance(to: sharp.fingerprint), 1)
   }
 
+  func testSinglePageFlowCompletesWithBestCandidateExactlyOnce() {
+    let soft = ScannerProcessedCandidate(
+      jpeg: Data([1]), sharpness: 8, coverage: 0.95,
+      fingerprint: ScannerImageFingerprint(bits: 0)
+    )
+    let sharp = ScannerProcessedCandidate(
+      jpeg: Data([2]), sharpness: 9, coverage: 0.7,
+      fingerprint: ScannerImageFingerprint(bits: 1)
+    )
+    var flow = ScannerSinglePageCompletionFlow()
+
+    XCTAssertEqual(flow.resolve([soft, sharp]), .complete(Data([2])))
+    XCTAssertTrue(flow.isFinished)
+    XCTAssertEqual(flow.resolve([soft]), .ignored)
+    XCTAssertFalse(flow.terminate())
+  }
+
+  func testSinglePageFlowRetriesRejectedBurstThenCompletesFreshBurst() {
+    var flow = ScannerSinglePageCompletionFlow()
+    let retry = flow.resolve([])
+    guard case let .retry(message) = retry else {
+      return XCTFail("A burst with no retained candidate must remain on camera")
+    }
+    XCTAssertTrue(message.contains("try again"))
+    XCTAssertFalse(flow.isFinished)
+
+    let retained = ScannerProcessedCandidate(
+      jpeg: Data([7]), sharpness: 9, coverage: 0.8,
+      fingerprint: ScannerImageFingerprint(bits: 7)
+    )
+    XCTAssertEqual(flow.resolve([retained]), .complete(Data([7])))
+    XCTAssertTrue(flow.isFinished)
+  }
+
+  func testSinglePageFlowCancellationSuppressesLateBurstCompletion() {
+    var flow = ScannerSinglePageCompletionFlow()
+    XCTAssertTrue(flow.terminate())
+    let late = ScannerProcessedCandidate(
+      jpeg: Data([9]), sharpness: 10, coverage: 0.9,
+      fingerprint: ScannerImageFingerprint(bits: 9)
+    )
+    XCTAssertEqual(flow.resolve([late]), .ignored)
+    XCTAssertFalse(flow.terminate())
+  }
+
   func testDuplicateGuardNeverBlocksManualCapture() {
     let prior = ScannerImageFingerprint(words: [0, 0, 0, 0])
     let same = ScannerImageFingerprint(words: [0, 0, 0, 0])

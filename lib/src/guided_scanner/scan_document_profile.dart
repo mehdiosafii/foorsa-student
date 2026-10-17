@@ -190,8 +190,8 @@ class GuidedDocumentProfile {
   }
 
   String get pagesHint => switch (pages) {
-    'two_page_form' => 'After this photo, add page 2 in the scanner.',
-    'multiple' => 'Add any remaining pages in the scanner.',
+    'two_page_form' => 'After this photo, add page 2 from the review screen.',
+    'multiple' => 'Add any remaining pages from the review screen.',
     _ => '',
   };
 }
