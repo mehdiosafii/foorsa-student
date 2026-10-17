@@ -51,6 +51,7 @@ struct Options {
   var diagnostics = 0
   var smoke = false
   var requirePass = false
+  var seed: UInt64 = 0
 }
 struct Variant {
   let name: String
@@ -87,9 +88,12 @@ struct Outcome: Encodable {
   let polygonIoU: Double?
   let milliseconds: Double
   let stillMilliseconds: Double
+  let stillCornerError: Double?
+  let stillPolygonIoU: Double?
   let stillDetected: Bool
   let stillAccurate: Bool
   let unsafeStill: Bool
+  let unsafeQuality: Bool
 }
 struct Sequence: Encodable {
   let id: String
@@ -103,6 +107,7 @@ struct Report: Encodable {
   let frameSize: [Int]
   let selectedSamples: Int
   let requestedVariantsPerSample: Int
+  let perturbationSeed: UInt64
   let outcomes: [Outcome]
   let sequences: [Sequence]
   let peakRSSBytes: UInt64
@@ -142,6 +147,9 @@ private func parseOptions() -> Options {
     case "--limit": options.limit = Int(value) ?? -1
     case "--variants": options.variants = Int(value) ?? -1
     case "--split": options.split = value
+    case "--seed":
+      guard let seed = UInt64(value) else { fail("--seed must be an unsigned integer") }
+      options.seed = seed
     case "--diagnostics": options.diagnostics = Int(value) ?? -1
     default: fail("unknown argument \(flag)")
     }
@@ -212,6 +220,25 @@ private func variants() -> [Variant] {
       qualityConcern: i == 5 ? "severe_glare" : i == 6 ? "severe_blur" : nil))
   }
   return result
+}
+// A fixed seed reproduces an additional geometry sweep without changing source
+// labels or the accuracy/coverage gate. Zero preserves the original benchmark.
+private func perturbed(_ variants: [Variant], seed: UInt64) -> [Variant] {
+  guard seed != 0 else { return variants }
+  var state = seed
+  func random(_ radius: CGFloat) -> CGFloat {
+    state = state &* 6364136223846793005 &+ 1442695040888963407
+    return (CGFloat(state >> 11) / CGFloat(UInt64.max >> 11) * 2 - 1) * radius
+  }
+  return variants.map { v in
+    Variant(name: v.name, family: v.family,
+      scale: v.scale * (1 + random(0.02)), rotation: v.rotation + random(2),
+      tilt: max(0, v.tilt + random(0.005)), background: v.background,
+      blur: v.blur, contrast: v.contrast, glare: v.glare, shadow: v.shadow,
+      clutter: v.clutter, inner: v.inner,
+      offset: CGPoint(x: v.offset.x + random(15), y: v.offset.y + random(15)),
+      expected: v.expected, qualityConcern: v.qualityConcern)
+  }
 }
 private func background(_ variant: Variant) -> CIImage {
   let w = Int(frameSize.width), h = Int(frameSize.height)
@@ -412,7 +439,7 @@ private func categoryGates(_ outcomes: [Outcome], _ sequences: [Sequence], sampl
   Set(samples.map(\.category)).sorted().map { category in
     let rows = outcomes.filter { $0.category == category }
     let normal = rows.filter { $0.family == "normal" }
-    let unsafe = rows.filter { $0.unsafeAuto || $0.unsafeStill }.count
+    let unsafe = rows.filter { $0.unsafeAuto || $0.unsafeStill || $0.unsafeQuality }.count
     let unsafeReady = sequences.filter { $0.category == category && $0.unsafeReady }.count
     let normalHits = normal.filter(\.accurate).count
     let stillNormalHits = normal.filter(\.stillAccurate).count
@@ -435,7 +462,7 @@ private func markdown(_ outcomes: [Outcome], _ sequences: [Sequence], samples: [
   let overallP95 = String(format: "%.1f", percentile(outcomes.map(\.milliseconds), 0.95))
   let stillP95 = String(format: "%.1f", percentile(outcomes.map(\.stillMilliseconds), 0.95))
   let overallRSS = String(format: "%.1f", Double(peakRSS) / 1_048_576)
-  var lines = ["# Scanner framing report", "", "Generated camera frames use a 1440 × 1920 canvas; raw captures retain their EXIF-oriented dimensions. Production `ScannerRectangleDetector.detect` is called for every live and still frame. Framing accuracy requires maximum corner error ≤3% of the annotated document diagonal, polygon IoU ≥0.85, complete corners, and profile acceptance. Any eligible wrong boundary is an unsafe auto capture, including on difficult positives.", "", "Generated cases reproject real document content. Raw cases evaluate the original photo using independently annotated corners. The scanner detector has no image-quality gate: glare and blur labels describe challenges, not verified legibility. Framing PASS does not certify OCR, readability, authenticity, physical camera speed, or TestFlight acceptance. Categories absent from the manifest are untested.", "", "Samples: \(samples.count). Frames: \(outcomes.count). Peak process RSS: \(overallRSS) MiB. Live detection p50/p95: \(overallP50) / \(overallP95) ms; still p95: \(stillP95) ms.", "", "| Category | Inputs | Normal live accurate | Normal still accurate | All framing-safe live accurate | Normal hold ready | Unsafe live (all frames) | Unsafe still (all frames) | Unsafe hold ready | Quality-labeled frames | Live p95 ms | Gate |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+  var lines = ["# Scanner framing report", "", "Generated camera frames use a 1440 × 1920 canvas; raw captures retain their EXIF-oriented dimensions. Production `ScannerRectangleDetector.detect` is called for every live and still frame. Framing accuracy requires maximum corner error ≤3% of the annotated document diagonal, polygon IoU ≥0.85, complete corners, and profile acceptance. Any eligible wrong boundary is an unsafe auto capture, including on difficult positives.", "", "Generated cases reproject real document content. Raw cases evaluate the original photo using independently annotated corners. The detector rejects severe defocus using an edge-spread check; accepting a severe-blur challenge fails this gate even with accurate corners. Other quality labels describe challenges, not verified legibility. Framing PASS does not certify OCR, readability, authenticity, physical camera speed, or TestFlight acceptance. Categories absent from the manifest are untested.", "", "Samples: \(samples.count). Frames: \(outcomes.count). Peak process RSS: \(overallRSS) MiB. Live detection p50/p95: \(overallP50) / \(overallP95) ms; still p95: \(stillP95) ms.", "", "| Category | Inputs | Normal live accurate | Normal still accurate | All framing-safe live accurate | Normal hold ready | Unsafe live (all frames) | Unsafe still (all frames) | Unsafe hold ready | Unsafe quality | Quality-labeled frames | Live p95 ms | Gate |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
   for category in Set(samples.map(\.category)).sorted() {
     let rows = outcomes.filter { $0.category == category }
     let normal = rows.filter { $0.family == "normal" }
@@ -443,6 +470,7 @@ private func markdown(_ outcomes: [Outcome], _ sequences: [Sequence], samples: [
     let unsafe = rows.filter(\.unsafeAuto).count
     let unsafeStill = rows.filter(\.unsafeStill).count
     let unsafeReady = sequences.filter { $0.category == category && $0.unsafeReady }.count
+    let unsafeQuality = rows.filter(\.unsafeQuality).count
     let quality = rows.filter { $0.qualityConcern != nil }.count
     let normalHits = normal.filter(\.accurate).count
     let stillNormalHits = normal.filter(\.stillAccurate).count
@@ -452,15 +480,15 @@ private func markdown(_ outcomes: [Outcome], _ sequences: [Sequence], samples: [
     let gate = gates.first { $0.category == category }?.gate ?? "PARTIAL"
     let categoryP95 = String(format: "%.1f", percentile(rows.map(\.milliseconds), 0.95))
     let cleanCategory = category.replacingOccurrences(of: "|", with: "/")
-    lines.append("| \(cleanCategory) | \(samples.filter { $0.category == category }.count) | \(normalHits)/\(normal.count) | \(stillNormalHits)/\(normal.count) | \(allHits)/\(positives.count) | \(normalReady)/\(normal.count) | \(unsafe)/\(rows.count) | \(unsafeStill)/\(rows.count) | \(unsafeReady) | \(quality) | \(categoryP95) | \(gate) |")
+    lines.append("| \(cleanCategory) | \(samples.filter { $0.category == category }.count) | \(normalHits)/\(normal.count) | \(stillNormalHits)/\(normal.count) | \(allHits)/\(positives.count) | \(normalReady)/\(normal.count) | \(unsafe)/\(rows.count) | \(unsafeStill)/\(rows.count) | \(unsafeReady) | \(unsafeQuality) | \(quality) | \(categoryP95) | \(gate) |")
   }
   if !missingCategories.isEmpty {
     lines += ["", "Required categories missing from this run: \(missingCategories.joined(separator: ", "))."]
   }
-  let failures = outcomes.filter { ($0.expected && (!$0.accurate || !$0.stillAccurate)) || $0.unsafeAuto || $0.unsafeStill }
+  let failures = outcomes.filter { ($0.expected && (!$0.accurate || !$0.stillAccurate)) || $0.unsafeAuto || $0.unsafeStill || $0.unsafeQuality }
   let variants = Dictionary(grouping: failures, by: \.variant)
     .map { "\($0.key) \($0.value.count)" }.sorted().joined(separator: ", ")
-  lines += ["", "Framing misses or unsafe selections: \(failures.count). A no-detection difficult positive requests retake and appears in accuracy counts; only an eligible wrong crop is unsafe. Failure variants: \(variants.isEmpty ? "none" : variants). The detailed JSON and CSV contain anonymous source IDs, labels, variant names, and metrics only.", ""]
+  lines += ["", "Framing misses or unsafe selections: \(failures.count). Accepted severe-blur frames: \(outcomes.filter(\.unsafeQuality).count). A no-detection difficult positive requests retake and appears in accuracy counts; only an eligible wrong crop is unsafe. Failure variants: \(variants.isEmpty ? "none" : variants). The detailed JSON and CSV contain anonymous source IDs, labels, variant names, and metrics only.", ""]
   return lines.joined(separator: "\n")
 }
 
@@ -495,7 +523,7 @@ guard samples.allSatisfy({ sample in
     point.count == 2 && point.allSatisfy { $0.isFinite && $0 >= -0.5 && $0 <= 1.5 }
   } && polygonArea(quad.map { CGPoint(x: $0[0], y: $0[1]) }) >= 0.01
 }) else { fail("invalid capture or raw quadrilateral annotation") }
-let allVariants = Array(variants().prefix(options.variants))
+let allVariants = Array(perturbed(variants(), seed: options.seed).prefix(options.variants))
 var outcomes: [Outcome] = []
 var sequences: [Sequence] = []
 var diagnosticCount = 0
@@ -523,7 +551,7 @@ for sample in samples {
       let stillElapsed = (CFAbsoluteTimeGetCurrent() - stillStarted) * 1000
       let quad = live.map(quadrilateral)
       let stillQuad = still.map(quadrilateral)
-      let eligible = quad.map { $0.isComplete() && profile.accepts(aspectRatio: $0.estimatedAspectRatio(in: frame.imageSize)) } ?? false
+      let eligible = quad.map { $0.isComplete(minimumArea: profile.minimumCaptureArea) && profile.accepts(aspectRatio: $0.estimatedAspectRatio(in: frame.imageSize)) } ?? false
       let error = quad.flatMap { q in frame.truth.map { cornerError(q, $0, imageSize: frame.imageSize) } }
       let iou = quad.flatMap { q in frame.truth.map { polygonIoU(q, $0) } }
       let accurate = variant.expected && eligible && (error ?? .infinity) <= 0.03 && (iou ?? 0) >= 0.85
@@ -533,14 +561,17 @@ for sample in samples {
       let stillAccurate = variant.expected && stillEligible && (stillError ?? .infinity) <= 0.03 && (stillIoU ?? 0) >= 0.85
       let unsafeAuto = eligible && (!variant.expected || !accurate)
       let unsafeStill = stillEligible && (!variant.expected || !stillAccurate)
+      // Severe defocus must request a retake even when its outline is correct.
+      // Other quality labels remain descriptive until independently calibrated.
+      let unsafeQuality = variant.qualityConcern == "severe_blur" && (eligible || stillEligible)
       outcomes.append(Outcome(id: sample.id, category: sample.category, layout: sample.layout,
         split: sample.split ?? "unspecified", variant: variant.name, family: variant.family,
         imageSize: [Int(frame.imageSize.width), Int(frame.imageSize.height)], qualityConcern: variant.qualityConcern,
         expected: variant.expected, detected: live != nil, eligible: eligible, accurate: accurate,
         unsafeAuto: unsafeAuto, cornerError: error, polygonIoU: iou, milliseconds: liveElapsed,
-        stillMilliseconds: stillElapsed, stillDetected: still != nil, stillAccurate: stillAccurate, unsafeStill: unsafeStill))
+        stillMilliseconds: stillElapsed, stillCornerError: stillError, stillPolygonIoU: stillIoU, stillDetected: still != nil, stillAccurate: stillAccurate, unsafeStill: unsafeStill, unsafeQuality: unsafeQuality))
       recent[variant.name] = eligible ? quad : nil
-      if diagnosticCount < options.diagnostics && ((variant.expected && (!accurate || !stillAccurate)) || unsafeAuto || unsafeStill) {
+      if diagnosticCount < options.diagnostics && ((variant.expected && (!accurate || !stillAccurate)) || unsafeAuto || unsafeStill || unsafeQuality) {
         let dir = output.appendingPathComponent("diagnostics", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         guard !insideRepository(dir) else { fail("diagnostics directory must be outside the repository") }
@@ -556,17 +587,17 @@ for sample in samples {
   // The tracker consumes actual production-selected observations, after profile acceptance.
   let held = recent["p00"] ?? nil
   for variant in sampleVariants {
-    var heldTracker = ScannerStabilityTracker()
+    var heldTracker = ScannerStabilityTracker(minimumArea: profile.minimumCaptureArea)
     var heldReady = false
     for tick in 0..<9 {
       heldReady = heldTracker.observe(recent[variant.name] ?? nil, at: Double(tick) * 0.12).ready || heldReady
     }
     let row = outcomes.last { $0.id == sample.id && $0.variant == variant.name }
     sequences.append(Sequence(id: sample.id, category: sample.category,
-      name: "held_\(variant.name)", ready: heldReady, unsafeReady: heldReady && row?.accurate != true))
+      name: "held_\(variant.name)", ready: heldReady, unsafeReady: heldReady && (row?.accurate != true || row?.unsafeQuality == true)))
   }
   // Dropout and alternating movement must revoke or delay readiness.
-  var tracker = ScannerStabilityTracker()
+  var tracker = ScannerStabilityTracker(minimumArea: profile.minimumCaptureArea)
   for tick in 0..<9 { _ = tracker.observe(held, at: Double(tick) * 0.12) }
   let dropped = tracker.observe(nil, at: 1.10)
   sequences.append(Sequence(id: sample.id, category: sample.category, name: "dropout", ready: dropped.ready, unsafeReady: dropped.ready))
@@ -575,10 +606,14 @@ for sample in samples {
   let alternate = recent["p03"] ?? nil
   for tick in 0..<9 { motionReady = tracker.observe(tick % 2 == 0 ? held : alternate, at: Double(tick) * 0.12).ready || motionReady }
   sequences.append(Sequence(id: sample.id, category: sample.category, name: "alternating_motion", ready: motionReady, unsafeReady: motionReady))
-  print("\(sample.id): \(sampleVariants.count) frames complete")
+  let sampleRows = outcomes.suffix(sampleVariants.count)
+  let normalRows = sampleRows.filter { $0.family == "normal" }
+  let unsafeRows = sampleRows.filter { $0.unsafeAuto || $0.unsafeStill || $0.unsafeQuality }
+  print("\(sample.id): \(sampleVariants.count) frames complete; normal \(normalRows.filter { $0.accurate && $0.stillAccurate }.count)/\(normalRows.count); unsafe \(unsafeRows.count)")
+  fflush(stdout)
 }
-let report = Report(schema: 2, frameSize: [Int(frameSize.width), Int(frameSize.height)], selectedSamples: samples.count,
-                    requestedVariantsPerSample: options.variants, outcomes: outcomes, sequences: sequences, peakRSSBytes: memoryRSS())
+let report = Report(schema: 3, frameSize: [Int(frameSize.width), Int(frameSize.height)], selectedSamples: samples.count,
+                    requestedVariantsPerSample: options.variants, perturbationSeed: options.seed, outcomes: outcomes, sequences: sequences, peakRSSBytes: memoryRSS())
 let gates = categoryGates(outcomes, sequences, samples: samples)
 let selectedCategories = Set(samples.map(\.category))
 let missingCategories = (manifest.requiredCategories ?? []).filter { !selectedCategories.contains($0) }.sorted()
@@ -587,13 +622,14 @@ let gateReport = GateReport(pass: missingCategories.isEmpty && gates.allSatisfy 
 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 do {
   try encoder.encode(report).write(to: output.appendingPathComponent("metrics.json"), options: .atomic)
-  var csvLines = ["id,category,layout,split,variant,family,image_width,image_height,quality_concern,framing_safe,detected,eligible,accurate,unsafe_auto,corner_error,polygon_iou,live_milliseconds,still_milliseconds,still_detected,still_accurate,unsafe_still"]
+  var csvLines = ["id,category,layout,split,variant,family,image_width,image_height,quality_concern,framing_safe,detected,eligible,accurate,unsafe_auto,corner_error,polygon_iou,live_milliseconds,still_milliseconds,still_corner_error,still_polygon_iou,still_detected,still_accurate,unsafe_still,unsafe_quality"]
   for row in outcomes {
     csvLines.append([csv(row.id), csv(row.category), csv(row.layout), csv(row.split), csv(row.variant), csv(row.family),
       String(row.imageSize[0]), String(row.imageSize[1]), csv(row.qualityConcern ?? ""),
       String(row.expected), String(row.detected), String(row.eligible), String(row.accurate), String(row.unsafeAuto),
       row.cornerError.map { String($0) } ?? "", row.polygonIoU.map { String($0) } ?? "", String(row.milliseconds), String(row.stillMilliseconds),
-      String(row.stillDetected), String(row.stillAccurate), String(row.unsafeStill)].joined(separator: ","))
+      row.stillCornerError.map { String($0) } ?? "", row.stillPolygonIoU.map { String($0) } ?? "",
+      String(row.stillDetected), String(row.stillAccurate), String(row.unsafeStill), String(row.unsafeQuality)].joined(separator: ","))
   }
   try (csvLines.joined(separator: "\n") + "\n").write(to: output.appendingPathComponent("metrics.csv"), atomically: true, encoding: .utf8)
   try encoder.encode(gateReport).write(to: output.appendingPathComponent("gate.json"), options: .atomic)

@@ -29,6 +29,10 @@ struct FoorsaScannerProfile {
   let instruction: String
   let layout: Layout
 
+  // A card contains far less text than a full paper page and can be legible at
+  // a smaller camera footprint. Keep corner accuracy and edge margins equal.
+  var minimumCaptureArea: CGFloat { layout == .card ? 0.12 : 0.16 }
+
   init(arguments: Any?) {
     let arguments = arguments as? [String: Any]
     let source = arguments?["profile"] as? [String: Any]
@@ -154,35 +158,52 @@ struct ScannerStabilityState: Equatable {
 }
 
 struct ScannerStabilityTracker {
+  static let maximumObservationAge: TimeInterval = 0.65
   private(set) var anchor: ScannerQuadrilateral?
   private(set) var stableSince: TimeInterval?
   private(set) var lastSeen: TimeInterval?
+  private var lastProcessingDuration: TimeInterval = 0
+  private var consecutiveObservations = 0
   let requiredDuration: TimeInterval
+  let minimumArea: CGFloat
 
-  init(requiredDuration: TimeInterval = 0.72) {
+  init(requiredDuration: TimeInterval = 0.72, minimumArea: CGFloat = 0.16) {
     self.requiredDuration = requiredDuration
+    self.minimumArea = minimumArea
   }
 
   mutating func observe(
     _ quadrilateral: ScannerQuadrilateral?,
-    at time: TimeInterval
+    at time: TimeInterval,
+    processingDuration: TimeInterval = 0
   ) -> ScannerStabilityState {
-    guard let quadrilateral, quadrilateral.isComplete() else {
+    guard time.isFinite, processingDuration.isFinite,
+          processingDuration >= 0, processingDuration <= Self.maximumObservationAge,
+          let quadrilateral, quadrilateral.isComplete(minimumArea: minimumArea) else {
       reset()
       return ScannerStabilityState(progress: 0, ready: false)
     }
-    defer { lastSeen = time }
+    // Account for time spent analyzing the previous frame, while retaining a
+    // hard ceiling so a camera interruption cannot count as a continuous hold.
+    let allowedGap = min(Self.maximumObservationAge, max(0.28, lastProcessingDuration * 1.5 + 0.12))
+    defer {
+      lastSeen = time
+      lastProcessingDuration = processingDuration
+    }
     guard let anchor, let stableSince,
           quadrilateral.maximumCornerDistance(to: anchor) <= 0.026,
           abs(quadrilateral.area - anchor.area) <= 0.035,
-          lastSeen.map({ time - $0 < 0.28 }) ?? false else {
+          lastSeen.map({ time > $0 && time - $0 < allowedGap }) ?? false else {
       self.anchor = quadrilateral
       self.stableSince = time
+      consecutiveObservations = 1
       return ScannerStabilityState(progress: 0, ready: false)
     }
     // Slowly follow hand drift while preserving a stable reference window.
     self.anchor = anchor.blended(with: quadrilateral, amount: 0.18)
-    let progress = min(1, max(0, CGFloat((time - stableSince) / requiredDuration)))
+    consecutiveObservations += 1
+    let progress = min(1, CGFloat(consecutiveObservations - 1) / 3,
+      max(0, CGFloat((time - stableSince) / requiredDuration)))
     return ScannerStabilityState(progress: progress, ready: progress >= 1)
   }
 
@@ -190,6 +211,8 @@ struct ScannerStabilityTracker {
     anchor = nil
     stableSince = nil
     lastSeen = nil
+    lastProcessingDuration = 0
+    consecutiveObservations = 0
   }
 }
 

@@ -3,6 +3,23 @@ import ImageIO
 import UIKit
 import Vision
 
+private final class ScannerBurstCancellationToken {
+  private let lock = NSLock()
+  private var cancelled = false
+
+  var isCancelled: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return cancelled
+  }
+
+  func cancel() {
+    lock.lock()
+    cancelled = true
+    lock.unlock()
+  }
+}
+
 final class FoorsaScannerViewController: UIViewController {
   typealias Completion = ([String: Any]) -> Void
 
@@ -19,8 +36,7 @@ final class FoorsaScannerViewController: UIViewController {
   private let visionQueue = DispatchQueue(label: "ma.foorsa.scanner.vision", qos: .userInitiated)
   private let processingQueue = DispatchQueue(
     label: "ma.foorsa.scanner.processing",
-    qos: .userInitiated,
-    attributes: .concurrent
+    qos: .userInitiated
   )
   private let orientationLock = NSLock()
   private let photoOutput = AVCapturePhotoOutput()
@@ -48,6 +64,7 @@ final class FoorsaScannerViewController: UIViewController {
   private var activePhotoIDs = Set<Int64>()
   private var pendingProcessingCount = 0
   private var captureGeneration = 0
+  private var captureCancellation: ScannerBurstCancellationToken?
   private var captureWasAutomatic = false
   private var lastCaptureTime: TimeInterval = 0
   private var autoCaptureLocked = false
@@ -56,12 +73,14 @@ final class FoorsaScannerViewController: UIViewController {
   private var finishing = false
   private var imageOrientation: CGImagePropertyOrientation = .right
   private var analysisActive = false
+  private var captureAnalysisPaused = false
   private var analysisEpoch: UInt = 0
   private var observers: [NSObjectProtocol] = []
 
   init(profile: FoorsaScannerProfile, completion: @escaping Completion) {
     self.profile = profile
     self.completion = completion
+    tracker = ScannerStabilityTracker(minimumArea: profile.minimumCaptureArea)
     super.init(nibName: nil, bundle: nil)
     modalPresentationStyle = .fullScreen
   }
@@ -316,6 +335,7 @@ final class FoorsaScannerViewController: UIViewController {
       object: session,
       queue: .main
     ) { [weak self] _ in
+      self?.setAnalysisActive(false)
       self?.abortCapture()
       self?.interruptionView.isHidden = false
       self?.statusLabel.text = "Camera paused"
@@ -332,6 +352,7 @@ final class FoorsaScannerViewController: UIViewController {
       queue: .main
     ) { [weak self] notification in
       guard let self else { return }
+      self.setAnalysisActive(false)
       let error = notification.userInfo?[AVCaptureSessionErrorKey] as? AVError
       if error?.code == .mediaServicesWereReset {
         self.abortCapture()
@@ -395,7 +416,7 @@ final class FoorsaScannerViewController: UIViewController {
     completion([
       "pages": pages.map { $0.data },
       "engine": "avfoundation_vision",
-      "scannerBuild": "custom-live-v2",
+      "scannerBuild": "custom-live-v3",
       "capabilities": [
         "live_quadrilateral", "stable_auto_capture", "best_of_three",
         "perspective_correction", "multi_page", "duplicate_guard", "manual_capture",
@@ -406,15 +427,17 @@ final class FoorsaScannerViewController: UIViewController {
   @objc private func shutterPressed() { beginCapture(automatic: false) }
 
   private func beginCapture(automatic: Bool) {
-    guard !isCapturing, configured, session.isRunning else { return }
+    guard !isCapturing, !finishing, configured, session.isRunning, !session.isInterrupted else { return }
     guard pages.count < 20 else {
       showMessage("You can scan up to 20 pages at once.")
       return
     }
     isCapturing = true
+    setCaptureAnalysisPaused(true)
     captureWasAutomatic = automatic
     if automatic { autoCaptureLocked = true }
     captureGeneration += 1
+    captureCancellation = ScannerBurstCancellationToken()
     burstRemaining = 3
     burstCandidates.removeAll(keepingCapacity: true)
     activePhotoIDs.removeAll(keepingCapacity: true)
@@ -465,6 +488,9 @@ final class FoorsaScannerViewController: UIViewController {
   private func abortCapture() {
     guard isCapturing else { return }
     isCapturing = false
+    captureCancellation?.cancel()
+    captureCancellation = nil
+    setCaptureAnalysisPaused(false)
     captureGeneration += 1
     activePhotoIDs.removeAll()
     pendingProcessingCount = 0
@@ -478,6 +504,9 @@ final class FoorsaScannerViewController: UIViewController {
   private func finishBurst() {
     defer {
       isCapturing = false
+      captureCancellation?.cancel()
+      captureCancellation = nil
+      setCaptureAnalysisPaused(false)
       captureWasAutomatic = false
       setCaptureControls(enabled: true)
       updateReviewButton()
@@ -485,7 +514,7 @@ final class FoorsaScannerViewController: UIViewController {
       burstCandidates.removeAll()
     }
     guard let best = ScannerCandidateSelector.best(burstCandidates) else {
-      showMessage("No complete page was found. Keep every corner visible and try again.")
+      showMessage("Could not get a sharp, complete page. Keep every corner visible, hold still, and try again.")
       return
     }
     if ScannerDuplicatePolicy.shouldReject(
@@ -645,7 +674,27 @@ final class FoorsaScannerViewController: UIViewController {
     default: .right
     }
     orientationLock.lock()
+    let changed = imageOrientation != orientationForVision
     imageOrientation = orientationForVision
+    if changed { analysisEpoch &+= 1 }
+    orientationLock.unlock()
+    if changed {
+      // A result captured before rotation belongs to the previous preview.
+      // Revoke its hold progress before another orientation can auto-capture.
+      tracker.reset()
+      latestQuadrilateral = nil
+      latestImageSize = nil
+      overlay.quadrilateral = nil
+      overlay.progress = 0
+    }
+  }
+
+  private func setCaptureAnalysisPaused(_ paused: Bool) {
+    // Keep the accepted outline visible during the burst. Prevent new preview
+    // inference while the three stills are processed one at a time.
+    orientationLock.lock()
+    captureAnalysisPaused = paused
+    analysisEpoch &+= 1
     orientationLock.unlock()
   }
 
@@ -663,15 +712,18 @@ final class FoorsaScannerViewController: UIViewController {
   }
 
   private func handleDetection(
-    _ quadrilateral: ScannerQuadrilateral?,
+    _ detectedQuadrilateral: ScannerQuadrilateral?,
     imageSize: CGSize,
     time: TimeInterval,
+    processingDuration: TimeInterval,
     epoch: UInt
   ) {
     orientationLock.lock()
-    let resultIsCurrent = analysisActive && analysisEpoch == epoch
+    let resultIsCurrent = analysisActive && !captureAnalysisPaused && analysisEpoch == epoch
     orientationLock.unlock()
     guard resultIsCurrent, !finishing else { return }
+    let quadrilateral = CACurrentMediaTime() - time <= ScannerStabilityTracker.maximumObservationAge
+      ? detectedQuadrilateral : nil
     latestQuadrilateral = quadrilateral
     latestImageSize = imageSize
     renderQuadrilateral(quadrilateral, imageSize: imageSize)
@@ -679,7 +731,8 @@ final class FoorsaScannerViewController: UIViewController {
     let shapeAccepted = quadrilateral.map {
       profile.accepts(aspectRatio: $0.estimatedAspectRatio(in: imageSize))
     } ?? false
-    let state = tracker.observe(shapeAccepted ? quadrilateral : nil, at: time)
+    let state = tracker.observe(shapeAccepted ? quadrilateral : nil, at: time,
+      processingDuration: processingDuration)
     overlay.progress = state.progress
     if quadrilateral == nil {
       if autoCaptureLocked {
@@ -690,7 +743,7 @@ final class FoorsaScannerViewController: UIViewController {
           documentMissingSince = time
         }
       }
-      statusLabel.text = "Find the full document and keep every corner visible."
+      statusLabel.text = "Keep every corner visible and hold still while the camera focuses."
       return
     }
     documentMissingSince = nil
@@ -740,11 +793,10 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
           let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
     isAnalyzing = true
     lastAnalysisTime = now
-    let request = ScannerRectangleDetector.makeRequest(for: .live)
     orientationLock.lock()
     let orientation = imageOrientation
     let epoch = analysisEpoch
-    let shouldAnalyze = analysisActive
+    let shouldAnalyze = analysisActive && !captureAnalysisPaused
     orientationLock.unlock()
     guard shouldAnalyze else {
       isAnalyzing = false
@@ -755,36 +807,28 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
       height: CVPixelBufferGetHeight(imageBuffer)
     )
     let imageSize = orientation.orientedImageSize(for: rawSize)
-    do {
-      try VNImageRequestHandler(
-        cmSampleBuffer: sampleBuffer,
-        orientation: orientation
-      ).perform([request])
-    } catch {
-      isAnalyzing = false
-      DispatchQueue.main.async { [weak self] in
-        self?.handleDetection(nil, imageSize: imageSize, time: now, epoch: epoch)
-      }
-      return
-    }
-    let observations = request.results ?? []
-    let best = ScannerRectangleDetector.select(
-      observations,
-      imageSize: imageSize,
-      profile: profile,
-      purpose: .live
-    )
-    let quadrilateral = best.map {
-      ScannerQuadrilateral(
-        topLeft: $0.topLeft,
-        topRight: $0.topRight,
-        bottomRight: $0.bottomRight,
-        bottomLeft: $0.bottomLeft
+    // Keep live and still analysis on the same pixel-aware detection path.
+    // CIImage applies the camera orientation before geometry is normalized.
+    let quadrilateral: ScannerQuadrilateral? = autoreleasepool {
+      let oriented = CIImage(cvPixelBuffer: imageBuffer).oriented(orientation)
+      let upright = oriented.transformed(by: CGAffineTransform(
+        translationX: -oriented.extent.minX, y: -oriented.extent.minY
+      ))
+      guard let best = try? ScannerRectangleDetector.detect(
+        in: upright, profile: profile, purpose: .live
+      ) else { return nil }
+      return ScannerQuadrilateral(
+        topLeft: best.topLeft,
+        topRight: best.topRight,
+        bottomRight: best.bottomRight,
+        bottomLeft: best.bottomLeft
       )
     }
     isAnalyzing = false
+    let processingDuration = CACurrentMediaTime() - now
     DispatchQueue.main.async { [weak self] in
-      self?.handleDetection(quadrilateral, imageSize: imageSize, time: now, epoch: epoch)
+      self?.handleDetection(quadrilateral, imageSize: imageSize, time: now,
+        processingDuration: processingDuration, epoch: epoch)
     }
   }
 }
@@ -801,10 +845,10 @@ extension FoorsaScannerViewController: AVCapturePhotoCaptureDelegate {
             self.isCapturing, !self.finishing else { return }
       let generation = self.captureGeneration
       let data = error == nil ? photo.fileDataRepresentation() : nil
-      if let data {
+      if let data, let cancellation = self.captureCancellation {
         self.pendingProcessingCount += 1
         self.processingQueue.async { [weak self] in
-          guard let self else { return }
+          guard let self, !cancellation.isCancelled else { return }
           let candidate = self.processor.process(photoData: data, profile: self.profile)
           DispatchQueue.main.async { [weak self] in
             guard let self, self.isCapturing,

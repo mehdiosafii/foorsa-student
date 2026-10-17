@@ -1,80 +1,90 @@
 # Real-document scanner validation — 17 October 2026
 
-**Release status: NOT READY.** The expanded suite evaluated 2,512 frames across 19 document types. All 19 types fail at least one framing safety or normal-capture requirement. Publications and supervisor acceptance letters are deferred at the user's explicit request; their absence is no longer a release blocker. No new version bump or TestFlight upload is included in this change.
+**Release status: pending physical-device validation.** Scanner fixes pass both complete macOS framing gates. The iOS Simulator returned invalid document-segmentation results, so it cannot establish native image-processing readiness. A separate on-device diagnostic app is prepared; device-provisioning access currently blocks execution. No new TestFlight build has been uploaded.
 
-## What changed
+## Changes
 
-- Native and Flutter document profiles now accept either rotation of passports, cards, and letters. Receipt slips have a separate length range. Native profiles use the canonical document key instead of trusting a conflicting layout hint.
-- Live and still detection share the production detector used by the stress harness. Still capture now applies the document profile and rejects an incomplete or wrong-shaped largest observation instead of substituting an inner rectangle.
-- The private-corpus harness scores both live outlines and saved-photo crops across normal and difficult cases. `--require-pass` exits unsuccessfully for failed or incomplete coverage. An injected regression proves that a still-only bad crop blocks the gate even when live detection is safe.
-- Optional private diagnostics draw expected edges in green, live predictions in cyan, and still predictions in pink. Customer pixels, identifiers, source links, and credentials are not in this repository or hosted CI.
+- Live preview and saved photos use the same document detector and profile rules. Rectangle and document-segmentation results are checked against pixel evidence at every edge; fusion must preserve a supported perimeter.
+- Sparse pages receive a second sharpness check inside the detected page. Severe defocus, clipped pages, and unsupported inner borders request a retake. Small identity cards use a suitable capture-area threshold.
+- The live outline stays visible during the three-shot burst. Still processing is serial, obsolete queued jobs are canceled, and native preview temporaries are released each frame. The clearest accepted image is selected; this is not multi-frame pixel fusion.
+- Automatic capture supports slower analysis with a bounded observation gap and at least four consecutive valid observations. Movement, missing frames, stale results, rotation, and camera interruptions revoke readiness.
+- The portal retains corrected fields and exact pages across expired-review recovery and uncertain submission retries. A signed replay can acknowledge only the identical previously committed submission; it cannot authorize a new expired write.
 
-## Corpus and independence
+## Corpus and scope
 
-The corpus contains 57 source files: 51 CRM files from 43 customers, plus six connected Drive PDFs containing study plans and research proposals. It yields 61 document-content page crops and nine original photo/scanner images. Eight transformations of each original image yield 72 raw inputs; these transformations are not independent documents. The complete run is 61 × 40 generated frames + 72 raw frames = 2,512.
+The private corpus contains 57 source files: 51 CRM files from 43 customers and six connected Drive PDFs. It yields 61 document-content page crops and nine original captures. The test manifest contains 133 inputs: 61 generated sources and 72 annotated raw-photo variants. Each complete sweep evaluates 61 × 40 + 72 = **2,512 frames** across **19 document types**.
 
-CRM tuning and held-out groups contain 16 and 27 customers, respectively, with no customer overlap. Drive PDFs are a separate external-validation group; their identities were not cross-matched against CRM customers, so they are not claimed as an independent customer holdout. CV and previous-Chinese-university examples each have one source and no independent held-out example. Data collection was read-only; customer records were not changed.
+Publications and supervisor acceptance letters are deferred at the user's explicit request. CV and previous-Chinese-university examples each have only one source; this remains sparse coverage.
 
-Generated frames use known projected corners on real document content. Original photos have independent manual boundary/safety annotations: three complete positives and six clipped/invalid negatives. This is a framing test, not a learned document model or proof of OCR correctness.
+CRM samples were originally divided between 16 tuning customers and 27 customer-disjoint held-out customers. Failures from the larger corpus were subsequently used to fix the detector. The final results therefore describe expanded regression coverage, not an unseen-customer accuracy estimate. Drive PDFs form a separate external-source group, but customer independence was not established. The second geometry seed uses the same source documents; raw variants repeat unchanged. Counts must not be interpreted as independent documents or customers.
 
-## Test conditions and criteria
+Customer data collection was read-only. Source files, rendered scenes, manual annotations, diagnostic overlays, identifiers, and detailed metrics remain in private local directories outside Git and hosted CI. CRM submission validation used a dedicated fictional QA applicant.
 
-Each page crop receives 40 deterministic cases: eight normal scenes, rotation and perspective, low contrast, texture, shadows, glare, blur, competing rectangles and inner borders, plus clipped edges, a partial corner, a tiny document and an absent-document scene. Severe blur and glare are separate quality challenges; a correct frame does not certify readable text.
+## Fixed criteria
 
-A correct boundary must be complete, accepted by its document profile, within 3% maximum corner error relative to the document diagonal, and have polygon overlap (IoU) of at least 0.85. Any eligible incorrect live or still boundary fails the gate, including difficult positives. A missed difficult positive counts as a retake; a normal-case miss fails. Each generated source must include all eight normal and six framing-negative cases. Held, dropped and alternating observations exercise the production live stability tracker. These are simulated observations, not physical camera motion.
+Each generated source receives eight normal scenes plus rotation, perspective, lighting, texture, shadows, glare, blur, background clutter, inner borders, clipping, tiny-document, and absent-document cases. Raw captures use manual boundary and safety annotations independently of the detector.
 
-## Results by type
+An accepted boundary must be complete, match its document profile, have maximum corner error at most **3%** of the true diagonal, and have polygon overlap (IoU) at least **0.85**. Every normal frame must pass live detection, still detection, and held-capture readiness. Any accepted incorrect boundary or accepted severe-blur frame fails release, including difficult positives. A difficult scene that safely requests a retake is reported separately and does not fail the normal-capture gate. Missing, alternating, and stale observations must not authorize capture.
 
-“Incorrect” means an eligible crop failed the boundary criteria or accepted an invalid/clipped scene. Live and still counts can overlap. Normal columns count accurate frames out of eight per page crop; the frame count includes all generated and raw variants.
+These thresholds, source labels, projected truth, and coverage requirements were not relaxed to obtain a pass. Seed `20261017` changes scale, rotation, tilt, and placement while regenerating the corresponding truth.
 
-| Document type | Frames | Normal live | Normal still | Incorrect live | Incorrect still | Result |
-|---|---:|---:|---:|---:|---:|---|
-| Admissions | 120 | 24/24 | 24/24 | 4 | 6 | FAIL |
-| Authorizations | 120 | 24/24 | 24/24 | 3 | 3 | FAIL |
-| Birth certificate | 120 | 24/24 | 24/24 | 3 | 4 | FAIL |
-| Contract | 240 | 48/48 | 48/48 | 8 | 12 | FAIL |
-| CSCA | 120 | 24/24 | 24/24 | 5 | 9 | FAIL |
-| CV | 40 | 8/8 | 8/8 | 2 | 2 | FAIL |
-| Highest degree | 120 | 24/24 | 24/24 | 4 | 4 | FAIL |
-| Passport | 120 | 12/16 | 12/16 | 13 | 14 | FAIL |
-| Last-year degree | 128 | 24/24 | 24/24 | 6 | 6 | FAIL |
-| Last-year transcript | 120 | 24/24 | 24/24 | 3 | 2 | FAIL |
-| Parent ID | 136 | 20/24 | 22/24 | 4 | 4 | FAIL |
-| Previous Chinese university | 40 | 8/8 | 8/8 | 2 | 3 | FAIL |
-| Receipts | 88 | 14/16 | 14/16 | 10 | 10 | FAIL |
-| Recommendation letter | 120 | 23/24 | 23/24 | 10 | 11 | FAIL |
-| Research proposal | 240 | 48/48 | 48/48 | 8 | 8 | FAIL |
-| Study plan | 240 | 48/48 | 48/48 | 6 | 8 | FAIL |
-| Transcript | 120 | 24/24 | 24/24 | 4 | 4 | FAIL |
-| University notices | 160 | 32/32 | 32/32 | 4 | 5 | FAIL |
-| Visa documents | 120 | 23/24 | 24/24 | 4 | 5 | FAIL |
+## Complete-sweep results
 
-Across normal frames, live detection is accurate on **476/488 (97.5%)** and still detection on **479/488 (98.2%)**. Across all 2,512 frames there are **103 incorrect eligible live selections and 120 incorrect eligible still selections**, spanning 121 distinct frames. The customer-disjoint held-out group alone contains 56 incorrect live and 64 incorrect still selections. A high normal-case percentage therefore does not establish release readiness.
+Both seed 0 and seed 20261017 passed all 19 categories: **488/488 normal frames accurate in both paths and held-ready per sweep**, with **zero unsafe live, still, held, or severe-blur acceptances**. All 61 severe-blur challenges were rejected in each run. This is **5,024 frame evaluations**, not 5,024 distinct documents.
 
-Severe blur, clipped top edges, and printed inner rectangles remain the main failure patterns. Some normal misses are distance/area guard rejections, not incorrect edge localization. The test deliberately treats those as failed normal usability cases.
+| Document type | Frames per sweep | Normal baseline, both paths | Normal varied framing, both paths | Unsafe, either sweep | Gate |
+|---|---:|---:|---:|---:|---|
+| Admissions | 120 | 24/24 | 24/24 | 0 | PASS |
+| Authorizations | 120 | 24/24 | 24/24 | 0 | PASS |
+| Birth certificate | 120 | 24/24 | 24/24 | 0 | PASS |
+| Contract | 240 | 48/48 | 48/48 | 0 | PASS |
+| CSCA | 120 | 24/24 | 24/24 | 0 | PASS |
+| CV | 40 | 8/8 | 8/8 | 0 | PASS |
+| Highest degree | 120 | 24/24 | 24/24 | 0 | PASS |
+| Passport | 120 | 16/16 | 16/16 | 0 | PASS |
+| Last year degree | 128 | 24/24 | 24/24 | 0 | PASS |
+| Last year transcript | 120 | 24/24 | 24/24 | 0 | PASS |
+| Parent ID | 136 | 24/24 | 24/24 | 0 | PASS |
+| Previous Chinese university | 40 | 8/8 | 8/8 | 0 | PASS |
+| Receipts | 88 | 16/16 | 16/16 | 0 | PASS |
+| Recommendation letter | 120 | 24/24 | 24/24 | 0 | PASS |
+| Research proposal | 240 | 48/48 | 48/48 | 0 | PASS |
+| Study plan | 240 | 48/48 | 48/48 | 0 | PASS |
+| Transcript | 120 | 24/24 | 24/24 | 0 | PASS |
+| Universities notices | 160 | 32/32 | 32/32 | 0 | PASS |
+| Visa documents | 120 | 24/24 | 24/24 | 0 | PASS |
 
-Tuning-only alternatives using document segmentation, detector agreement, and edge contrast/sharpness did not meet both safety and usability targets. The strictest edge experiment eliminated tuning-set incorrect selections but reduced accurate normal frames from 179/184 to 153/184 and added substantial computation. It was not integrated. No parameters were tuned against the final held-out results.
+The baseline accurately captures **1,835/2,098 framing-positive scenes**; the varied-framing run captures **1,831/2,098**. The remaining 263 and 267 difficult scenes request retakes, including the severe-blur challenges that are deliberately framing-positive but quality-negative. Two difficult rotated raw captures became retakes as a result of the stronger edge check. Normal captures remained fully passing.
 
-## Verification and release limits
+## App and integration verification
 
-- Full Flutter suite: **40 tests passed**; analyzer reported no issues.
-- iPhone 13 Pro Max simulator, iOS 27: **9 native tests passed**, including rotated shape rules and rejection of clipped/wrong-shaped outer rectangles without inner fallback.
-- Still-only release-gate regression: passed, with expected exit status 1 from the injected unsafe crop.
-- Final corpus: completed; `--require-pass` returned **1**, as expected for the failing quality gate. Raw-photo line overlays were also generated and visually checked privately.
-- Independent code reviews found the final detector ordering and still-path gating fixes consistent with their regression tests.
+- Flutter: **40 tests passed**, analyzer clean.
+- Native source: iOS 15 target typecheck passed.
+- Release-gate regressions: an injected unsafe still crop and a severe-blur frame with correct corners both block release.
+- Slower-cadence regression: 300 ms and 550 ms observations can finish a continuous hold; too few observations, missing frames, excessive gaps, and stale analysis cannot.
+- iOS 27 Simulator: **15/16 native tests passed**. The synthetic pixel-detector test failed because document segmentation returned a false bottom strip. A diagnostic across all 19 document types showed the same rejection while rectangle detection remained correct. Switching between CIImage and CGImage input, and forcing CPU processing, did not resolve it. Apple warns that [Vision results in Simulator can be inaccurate](https://developer.apple.com/documentation/vision/vnimagerequesthandler/init%28cmsamplebuffer%3Aorientation%3Aoptions%3A%29-335k4).
+- Physical-device validation: a separate diagnostic app compiled successfully with the exact production detector, geometry, clarity, and image-processor sources. The prepared suite has **832 frames**, including all 19 types and 72 annotated raw-photo variants, plus **152 saved-JPEG crop checks**. Signing/provisioning access is required before execution; no on-device pass or timing result is claimed.
+- Portal: **376 tests passed**, frontend/server typechecks, production build, and bundle budgets passed. Production QA verified corrected fields, exactly one document after identical retry, completed OCR review state, and Drive mirroring. PR #1123 is merged and deployed.
+- Independent review findings on cancellation, analysis cadence, and camera interruption were fixed before the final native build.
 
-The full-corpus timing run overlapped simulator work and briefly paused; its desktop timings and process memory are diagnostic only and are not iPhone performance claims. Simulation does not verify physical autofocus, live smoothness, glare recovery, multi-shot OCR quality, or the complete CRM submission flow. Those remain necessary after the framing failures are fixed. The current camera selects the strongest burst image; these results do not establish multi-frame image fusion.
+## Limits and beta delivery
 
-Before another TestFlight delivery, resolve the remaining inner-boundary/blur/clipping failures, rerun the full private corpus including customer-disjoint cases, strengthen sparse category coverage, and verify capture → corrected extracted fields → CRM on a physical iPhone. Existing CI builds and tests the app without customer files; its green status does not replace the private-corpus release gate. The generated still-only regression was run locally. A separate harness workflow proposal is retained locally because the current GitHub connection cannot write workflow files.
+Generated boundaries are known projected page-image borders on real document content. They do not prove that every original physical-paper edge was visible in the source image. Original photos are tested separately. Framing accuracy does not establish text legibility, OCR correctness, or authenticity; users review and correct extracted fields before submission.
+
+Desktop and iOS Simulator timings are diagnostics, not physical-iPhone performance measurements. Physical autofocus, moving outlines, glare recovery, hand motion, thermal behavior, and complete capture-to-submit usability still need on-phone acceptance through TestFlight. The scanner selects the best of three shots and does not fuse pixels across photographs.
+
+Planned beta: **1.2.18 (39)**. Release upload remains gated on physical-device execution and the unchanged crop/quality criteria. The current available TestFlight build remains **1.2.18 (38)** as verified on 17 October 2026.
 
 ## Reproduction
 
-On a Mac with Xcode, set `PRIVATE_SCANNER_CORPUS` to the approved private corpus directory, then run:
+With the approved private corpus outside the checkout:
 
 ```sh
 tools/scanner_stress/test_gate.sh
 tools/scanner_stress/run.sh --manifest "$PRIVATE_SCANNER_CORPUS/release-manifest.json" \
-  --output "$PRIVATE_SCANNER_CORPUS/new-results" --variants 40 --require-pass
+  --output "$PRIVATE_SCANNER_RESULTS/baseline" --variants 40 --require-pass
+tools/scanner_stress/run.sh --manifest "$PRIVATE_SCANNER_CORPUS/release-manifest.json" \
+  --output "$PRIVATE_SCANNER_RESULTS/varied" --variants 40 --seed 20261017 --require-pass
 ```
 
-The private manifest for future runs requires the 19 in-scope categories. The completed run originally listed the two unavailable categories as missing; the user's subsequent deferral is recorded separately and does not change any frame result or the failing release decision.
+The private iOS harness is deliberately excluded from the application repository and release package. Public synthetic native tests remain in `RunnerTests`.

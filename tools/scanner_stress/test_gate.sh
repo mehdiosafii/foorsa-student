@@ -17,10 +17,15 @@ pixels = b''.join(b'\x00' + b'\x88\x88\x88' * 8 for _ in range(8))
 png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 8, 8, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b'')
 (root / 'fixture.png').write_bytes(png)
 (root / 'manifest.json').write_text(json.dumps({
-    'requiredCategories': ['synthetic_negative'],
+    'requiredCategories': ['synthetic_negative', 'synthetic_blur'],
     'samples': [{'id': 'still_only_negative', 'category': 'synthetic_negative',
                  'documentKey': 'drive_files', 'layout': 'adaptive',
-                 'path': str(root / 'fixture.png'), 'capture': 'raw', 'framingSafe': False}]
+                 'path': str(root / 'fixture.png'), 'capture': 'raw', 'framingSafe': False},
+                {'id': 'blur_correct_outline', 'category': 'synthetic_blur',
+                 'documentKey': 'drive_files', 'layout': 'adaptive',
+                 'path': str(root / 'fixture.png'), 'capture': 'raw', 'framingSafe': True,
+                 'qualityConcern': 'severe_blur',
+                 'rawQuad': [[0.2,0.2],[0.8,0.2],[0.8,0.8],[0.2,0.8]]}]
 }))
 PY
 
@@ -48,10 +53,13 @@ import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 outcomes = json.loads((root / 'metrics.json').read_text())['outcomes']
 gate = json.loads((root / 'gate.json').read_text())
-assert len(outcomes) == 1
+assert len(outcomes) == 2
 assert not outcomes[0]['unsafeAuto']
 assert outcomes[0]['unsafeStill']
 assert not gate['pass']
-assert gate['categories'] == [{'category': 'synthetic_negative', 'gate': 'FAIL'}]
-print('PASS: an unsafe still crop blocks release even when live detection is safe.')
+assert outcomes[1]['stillAccurate']
+assert not outcomes[1]['unsafeStill']
+assert outcomes[1]['unsafeQuality']
+assert all(row['gate'] == 'FAIL' for row in gate['categories'])
+print('PASS: both an unsafe still crop and severe blur with correct corners block release.')
 PY

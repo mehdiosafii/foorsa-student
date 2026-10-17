@@ -5,6 +5,109 @@ import XCTest
 @testable import Runner
 
 class RunnerTests: XCTestCase {
+  func testPixelDetectorAndStillProcessorCaptureCompletePageAndRejectDefocus() throws {
+    let bounds = CGRect(x: 0, y: 0, width: 1440, height: 1920)
+    let background = CIImage(color: CIColor(red: 0.22, green: 0.26, blue: 0.31)).cropped(to: bounds)
+    let paperBounds = CGRect(x: 200, y: 220, width: 1040, height: 1480)
+    var image = CIImage(color: CIColor(red: 0.97, green: 0.95, blue: 0.86))
+      .cropped(to: paperBounds).composited(over: background)
+    for row in 0..<20 {
+      let mark = CIImage(color: CIColor(red: 0.1, green: 0.15, blue: 0.2))
+        .cropped(to: CGRect(x: 300, y: 350 + row * 60, width: row % 3 == 0 ? 700 : 800, height: 12))
+      image = mark.composited(over: image)
+    }
+    let profile = FoorsaScannerProfile(arguments: ["profile": ["documentKey": "transcript"]])
+    for purpose in [ScannerDetectionPurpose.live, .still] {
+      let detected = try XCTUnwrap(ScannerRectangleDetector.detect(in: image, profile: profile, purpose: purpose))
+      XCTAssertEqual(detected.boundingBox.minX, 200.0 / 1440, accuracy: 0.025)
+      XCTAssertEqual(detected.boundingBox.minY, 220.0 / 1920, accuracy: 0.025)
+      XCTAssertEqual(detected.boundingBox.maxX, 1240.0 / 1440, accuracy: 0.025)
+      XCTAssertEqual(detected.boundingBox.maxY, 1700.0 / 1920, accuracy: 0.025)
+      let blurred = image.clampedToExtent().applyingFilter("CIGaussianBlur",
+        parameters: [kCIInputRadiusKey: 24]).cropped(to: bounds)
+      XCTAssertNil(try ScannerRectangleDetector.detect(in: blurred, profile: profile, purpose: purpose))
+    }
+    let cg = try XCTUnwrap(CIContext().createCGImage(image, from: bounds))
+    let jpeg = try XCTUnwrap(UIImage(cgImage: cg).jpegData(compressionQuality: 0.95))
+    let processed = try XCTUnwrap(ScannerImageProcessor().process(photoData: jpeg, profile: profile))
+    XCTAssertFalse(processed.jpeg.isEmpty)
+    XCTAssertGreaterThan(processed.coverage, 0.5)
+  }
+
+  func testContentClarityRejectsSevereBlurAndEmptyFrames() {
+    let bounds = CGRect(x: 0, y: 0, width: 1440, height: 1920)
+    var page = CIImage(color: CIColor(red: 0.95, green: 0.95, blue: 0.95)).cropped(to: bounds)
+    for row in 0..<20 {
+      let line = CIImage(color: CIColor(red: 0.1, green: 0.1, blue: 0.1))
+        .cropped(to: CGRect(x: 300, y: 400 + row * 50, width: 700, height: 12))
+      page = line.composited(over: page)
+    }
+    let sharp = ContentClarity.score(page)
+    let blurred = ContentClarity.score(page.clampedToExtent()
+      .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 24])
+      .cropped(to: bounds))
+    XCTAssertGreaterThanOrEqual(sharp.support, 24)
+    XCTAssertGreaterThan(sharp.q50, 0.7)
+    XCTAssertLessThan(blurred.q50, 0.35)
+    XCTAssertEqual(ContentClarity.score(CIImage(color: .white).cropped(to: bounds)).support, 0)
+  }
+
+  func testContentClarityNormalizesImageOriginAndRejectsInvalidInputs() {
+    let bounds = CGRect(x: 0, y: 0, width: 1440, height: 1920)
+    let paper = CIImage(color: .white).cropped(to: bounds)
+    let mark = CIImage(color: .black).cropped(to: CGRect(x: 400, y: 500, width: 500, height: 600))
+    let image = mark.composited(over: paper)
+    let shifted = image.transformed(by: CGAffineTransform(translationX: 100, y: -200))
+    XCTAssertEqual(ContentClarity.score(image).q50, ContentClarity.score(shifted).q50, accuracy: 0.001)
+    XCTAssertEqual(ContentClarity.score(CIImage.empty()).support, 0)
+    XCTAssertEqual(ContentClarity.score(CIImage(color: .white)).support, 0)
+    XCTAssertEqual(ContentClarity.score(image,
+      configuration: .init(longestSide: .infinity, maximumSelectedEdges: 4096)).support, 0)
+  }
+
+  func testClaritySmallInsetsAndInvalidDetectorExtentsAreSafe() throws {
+    let bounds = CGRect(x: 0, y: 0, width: 32, height: 32)
+    let page = CIImage(color: .white).cropped(to: bounds)
+    let mark = CIImage(color: .black).cropped(to: CGRect(x: 8, y: 8, width: 16, height: 8))
+    var configuration = ContentClarity.Configuration()
+    configuration.longestSide = 64
+    configuration.horizontalInset = 0.02
+    configuration.verticalInset = 0.02
+    XCTAssertGreaterThan(ContentClarity.score(mark.composited(over: page),
+      configuration: configuration).support, 0)
+    configuration.horizontalInset = .nan
+    XCTAssertEqual(ContentClarity.score(page, configuration: configuration).support, 0)
+    let profile = FoorsaScannerProfile(arguments: ["profile": ["documentKey": "transcript"]])
+    for purpose in [ScannerDetectionPurpose.live, .still] {
+      XCTAssertNil(try ScannerRectangleDetector.detect(in: CIImage.empty(), profile: profile, purpose: purpose))
+      XCTAssertNil(try ScannerRectangleDetector.detect(in: CIImage(color: .white), profile: profile, purpose: purpose))
+      XCTAssertNil(try ScannerRectangleDetector.detect(in: page.cropped(to: CGRect(x: 0, y: 0, width: 8, height: 8)),
+        profile: profile, purpose: purpose))
+    }
+  }
+
+  func testCardCoverageAcceptsReadableSmallCardButNotDistantCard() {
+    let card = FoorsaScannerProfile(arguments: ["profile": ["documentKey": "parent_id"]])
+    let paper = FoorsaScannerProfile(arguments: ["profile": ["documentKey": "transcript"]])
+    let framedCard = ScannerQuadrilateral(
+      topLeft: CGPoint(x: 0.2, y: 0.625), topRight: CGPoint(x: 0.8, y: 0.625),
+      bottomRight: CGPoint(x: 0.8, y: 0.375), bottomLeft: CGPoint(x: 0.2, y: 0.375)
+    )
+    var cardTracker = ScannerStabilityTracker(minimumArea: card.minimumCaptureArea)
+    var paperTracker = ScannerStabilityTracker(minimumArea: paper.minimumCaptureArea)
+    for tick in 0..<8 {
+      _ = cardTracker.observe(framedCard, at: Double(tick) * 0.12)
+      _ = paperTracker.observe(framedCard, at: Double(tick) * 0.12)
+    }
+    XCTAssertTrue(cardTracker.observe(framedCard, at: 0.96).ready)
+    XCTAssertFalse(paperTracker.observe(framedCard, at: 0.96).ready)
+    let distant = ScannerQuadrilateral(
+      topLeft: CGPoint(x: 0.4, y: 0.6), topRight: CGPoint(x: 0.6, y: 0.6),
+      bottomRight: CGPoint(x: 0.6, y: 0.4), bottomLeft: CGPoint(x: 0.4, y: 0.4)
+    )
+    XCTAssertFalse(cardTracker.observe(distant, at: 1.08).ready)
+  }
+
   func testStillCaptureDoesNotReplaceWrongShapeWithInnerRectangle() {
     let outer = VNRectangleObservation(boundingBox: CGRect(x: 0.05, y: 0.35, width: 0.90, height: 0.30))
     let inner = VNRectangleObservation(boundingBox: CGRect(x: 0.25, y: 0.35, width: 0.48, height: 0.30))
@@ -163,6 +266,36 @@ class RunnerTests: XCTestCase {
       bottomLeft: CGPoint(x: 0.2, y: 0.1)
     )
     XCTAssertEqual(tracker.observe(moved, at: 0.8).progress, 0)
+  }
+
+  func testSlowAnalysisCanFinishHoldWithoutAcceptingTooFewObservations() {
+    var tracker = ScannerStabilityTracker()
+    for time in [0.0, 0.30, 0.60] {
+      XCTAssertFalse(tracker.observe(page, at: time, processingDuration: 0.29).ready)
+    }
+    XCTAssertTrue(tracker.observe(page, at: 0.90, processingDuration: 0.29).ready)
+
+    tracker.reset()
+    for time in [0.0, 0.55, 1.10] {
+      XCTAssertFalse(tracker.observe(page, at: time, processingDuration: 0.54).ready)
+    }
+    XCTAssertTrue(tracker.observe(page, at: 1.65, processingDuration: 0.54).ready)
+    XCTAssertFalse(tracker.observe(page, at: 2.35, processingDuration: 0.54).ready)
+  }
+
+  func testSlowAnalysisResetsForMissingStaleOrNonMonotonicObservations() {
+    var tracker = ScannerStabilityTracker()
+    for time in [0.0, 0.30, 0.60, 0.90] {
+      _ = tracker.observe(page, at: time, processingDuration: 0.29)
+    }
+    XCTAssertEqual(tracker.observe(nil, at: 1.20, processingDuration: 0.29).progress, 0)
+    XCTAssertFalse(tracker.observe(page, at: 1.50, processingDuration: 0.29).ready)
+    XCTAssertEqual(tracker.observe(page, at: 1.80, processingDuration: 0.70).progress, 0)
+    XCTAssertNil(tracker.anchor)
+    _ = tracker.observe(page, at: 2.10, processingDuration: 0.29)
+    XCTAssertEqual(tracker.observe(page, at: 2.0, processingDuration: 0.29).progress, 0)
+    XCTAssertEqual(tracker.observe(page, at: .nan, processingDuration: 0.29).progress, 0)
+    XCTAssertNil(tracker.anchor)
   }
 
   func testCandidateSelectionPrefersSharperCompleteFrame() {
