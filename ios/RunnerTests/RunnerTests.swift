@@ -120,6 +120,35 @@ class RunnerTests: XCTestCase {
     XCTAssertNil(ScannerRectangleDetector.select([inner, clipped], imageSize: size, profile: passport, purpose: .still))
   }
 
+  func testQuarterTurnMappingPreservesAsymmetricPageCorners() {
+    // Explicit independently rotated coordinates catch swapped corner names,
+    // mirrored axes, and half-turn mistakes on a skewed, non-square page.
+    let original: [CGPoint] = [
+      CGPoint(x: 0.13, y: 0.83), CGPoint(x: 0.87, y: 0.91),
+      CGPoint(x: 0.79, y: 0.16), CGPoint(x: 0.08, y: 0.23),
+    ]
+    let orientations: [[CGPoint]] = [
+      original,
+      [CGPoint(x: 0.09, y: 0.87), CGPoint(x: 0.84, y: 0.79),
+       CGPoint(x: 0.77, y: 0.08), CGPoint(x: 0.17, y: 0.13)],
+      [CGPoint(x: 0.21, y: 0.84), CGPoint(x: 0.92, y: 0.77),
+       CGPoint(x: 0.87, y: 0.17), CGPoint(x: 0.13, y: 0.09)],
+      [CGPoint(x: 0.23, y: 0.92), CGPoint(x: 0.83, y: 0.87),
+       CGPoint(x: 0.91, y: 0.13), CGPoint(x: 0.16, y: 0.21)],
+    ]
+    for (turns, corners) in orientations.enumerated() {
+      let rotated = VNRectangleObservation(requestRevision: VNDetectRectanglesRequestRevision1,
+        topLeft: corners[0], bottomLeft: corners[3],
+        bottomRight: corners[2], topRight: corners[1])
+      let mapped = ScannerRectangleDetector.mapFromQuarterTurn(rotated, turns: turns)
+      let actual = [mapped.topLeft, mapped.topRight, mapped.bottomRight, mapped.bottomLeft]
+      for (expected, point) in zip(original, actual) {
+        XCTAssertEqual(point.x, expected.x, accuracy: 0.000001)
+        XCTAssertEqual(point.y, expected.y, accuracy: 0.000001)
+      }
+    }
+  }
+
   private let page = ScannerQuadrilateral(
     topLeft: CGPoint(x: 0.1, y: 0.9),
     topRight: CGPoint(x: 0.9, y: 0.9),
@@ -199,6 +228,73 @@ class RunnerTests: XCTestCase {
     )
     XCTAssertEqual(topLeft.x, landscapeRect.minX, accuracy: 0.001)
     XCTAssertEqual(topLeft.y, landscapeRect.minY, accuracy: 0.001)
+  }
+
+  func testCameraAwareGuideMeetsCaptureAreaAcrossPhonesAndCameraFormats() {
+    // Available bounds mirror the real controls, including notch/home-indicator
+    // insets, thumbnails, and the separate landscape control column.
+    let phones: [(CGSize, CGFloat, CGFloat, CGFloat)] = [
+      (CGSize(width: 320, height: 568), 20, 0, 0),
+      (CGSize(width: 375, height: 667), 20, 0, 0),
+      (CGSize(width: 390, height: 844), 47, 34, 47),
+      (CGSize(width: 440, height: 956), 62, 34, 62),
+    ]
+    for (phone, top, bottom, landscapeSide) in phones {
+      for landscape in [false, true] {
+        let safe = landscape
+          ? CGRect(x: landscapeSide, y: 0, width: phone.height - landscapeSide * 2,
+              height: phone.width - (bottom > 0 ? 21 : 0))
+          : CGRect(x: 0, y: top, width: phone.width, height: phone.height - top - bottom)
+        let available = landscape
+          ? CGRect(x: safe.minX + 12, y: safe.minY + 67,
+              width: safe.width - 104, height: safe.height - 131)
+          : CGRect(x: safe.minX + 12, y: safe.minY + 125,
+              width: safe.width - 24, height: safe.height - 315)
+        for cameraRatio: CGFloat in [4.0 / 3.0, 16.0 / 9.0] {
+          let camera = landscape ? CGSize(width: 1920, height: 1920 / cameraRatio)
+            : CGSize(width: 1920 / cameraRatio, height: 1920)
+          for (key, ratio): (String, CGFloat) in [
+            ("identity", 1.42), ("parent_id", 1.585), ("transcript", 0.71),
+          ] {
+            let profile = FoorsaScannerProfile(arguments: ["profile": ["documentKey": key]])
+            let geometry = ScannerPreviewGeometry(imageSize: camera,
+              availableRect: available, guideAspectRatio: ratio)
+            let preview = geometry.previewRect
+            let guide = geometry.guideRect
+            XCTAssertGreaterThan(preview.width, 100)
+            XCTAssertGreaterThan(preview.height, 100)
+            XCTAssertTrue(available.insetBy(dx: -0.001, dy: -0.001).contains(preview))
+            XCTAssertTrue(preview.contains(guide))
+            XCTAssertEqual(preview.width / preview.height, camera.width / camera.height, accuracy: 0.001)
+            // A page slightly smaller than the drawn guide must still auto-capture.
+            let page = guide.insetBy(dx: guide.width * 0.05, dy: guide.height * 0.05)
+            func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+              CGPoint(x: (x - preview.minX) / preview.width,
+                y: 1 - (y - preview.minY) / preview.height)
+            }
+            let quad = ScannerQuadrilateral(topLeft: point(page.minX, page.minY),
+              topRight: point(page.maxX, page.minY), bottomRight: point(page.maxX, page.maxY),
+              bottomLeft: point(page.minX, page.maxY))
+            XCTAssertTrue(quad.isComplete(minimumArea: profile.minimumCaptureArea))
+            XCTAssertEqual(quad.estimatedAspectRatio(in: camera), ratio, accuracy: 0.001)
+            let mapped = ScannerAspectFillMapper.layerPoint(fromVisionPoint: quad.topLeft,
+              imageSize: camera, in: preview)
+            XCTAssertEqual(mapped.x, page.minX, accuracy: 0.001)
+            XCTAssertEqual(mapped.y, page.minY, accuracy: 0.001)
+            var tracker = ScannerStabilityTracker(minimumArea: profile.minimumCaptureArea)
+            for tick in 0...7 { _ = tracker.observe(quad, at: Double(tick) * 0.12) }
+            XCTAssertTrue(tracker.observe(quad, at: 0.96).ready)
+          }
+        }
+      }
+    }
+  }
+
+  func testCameraAwareGuideRejectsInvalidViewport() {
+    let geometry = ScannerPreviewGeometry(imageSize: CGSize(width: 1440, height: 1920),
+      availableRect: .zero, guideAspectRatio: 1.42)
+    XCTAssertEqual(geometry.previewRect, .zero)
+    XCTAssertEqual(geometry.guideRect, .zero)
   }
 
   func testPassportAcceptsDataPageAndOpenSpread() {

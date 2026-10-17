@@ -41,6 +41,7 @@ struct Sample: Decodable {
 struct Manifest: Decodable {
   let samples: [Sample]
   let requiredCategories: [String]?
+  let requiredRawPositives: [String]?
 }
 struct Options {
   var manifest: URL?
@@ -119,6 +120,7 @@ struct CategoryGate: Encodable {
 struct GateReport: Encodable {
   let pass: Bool
   let missingCategories: [String]
+  let failedRequiredRawPositives: [String]
   let categories: [CategoryGate]
 }
 struct Rendered {
@@ -457,7 +459,7 @@ private func categoryGates(_ outcomes: [Outcome], _ sequences: [Sequence], sampl
   }
 }
 private func markdown(_ outcomes: [Outcome], _ sequences: [Sequence], samples: [Sample], peakRSS: UInt64,
-                      gates: [CategoryGate], missingCategories: [String]) -> String {
+                      gates: [CategoryGate], missingCategories: [String], failedRequiredRawPositives: [String]) -> String {
   let overallP50 = String(format: "%.1f", percentile(outcomes.map(\.milliseconds), 0.5))
   let overallP95 = String(format: "%.1f", percentile(outcomes.map(\.milliseconds), 0.95))
   let stillP95 = String(format: "%.1f", percentile(outcomes.map(\.stillMilliseconds), 0.95))
@@ -485,6 +487,9 @@ private func markdown(_ outcomes: [Outcome], _ sequences: [Sequence], samples: [
   if !missingCategories.isEmpty {
     lines += ["", "Required categories missing from this run: \(missingCategories.joined(separator: ", "))."]
   }
+  if !failedRequiredRawPositives.isEmpty {
+    lines += ["", "Required raw positives missing or failing: \(failedRequiredRawPositives.joined(separator: ", "))."]
+  }
   let failures = outcomes.filter { ($0.expected && (!$0.accurate || !$0.stillAccurate)) || $0.unsafeAuto || $0.unsafeStill || $0.unsafeQuality }
   let variants = Dictionary(grouping: failures, by: \.variant)
     .map { "\($0.key) \($0.value.count)" }.sorted().joined(separator: ", ")
@@ -501,7 +506,8 @@ let manifest: Manifest
 if options.smoke {
   manifest = Manifest(samples: [Sample(id: "synthetic", category: "synthetic_smoke", layout: "portrait",
                                        documentKey: nil, path: "", split: "smoke", capture: nil,
-                                       rawQuad: nil, framingSafe: nil, qualityConcern: nil)], requiredCategories: nil)
+                                       rawQuad: nil, framingSafe: nil, qualityConcern: nil)], requiredCategories: nil,
+                     requiredRawPositives: nil)
 } else {
   guard !insideRepository(options.manifest!) else {
     fail("manifest must be outside the repository")
@@ -511,6 +517,14 @@ if options.smoke {
   manifest = decoded
 }
 let samples = Array(manifest.samples.filter { options.split == nil || $0.split == options.split }.prefix(options.limit))
+let requiredRawIDs = manifest.requiredRawPositives ?? []
+guard Set(requiredRawIDs).count == requiredRawIDs.count else { fail("requiredRawPositives IDs must be unique") }
+let manifestSamplesByID = Dictionary(manifest.samples.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+guard requiredRawIDs.allSatisfy({ id in
+  guard manifest.samples.filter({ $0.id == id }).count == 1,
+        let sample = manifestSamplesByID[id] else { return false }
+  return sample.capture == "raw" && sample.framingSafe == true && sample.rawQuad != nil && sample.qualityConcern != "severe_blur"
+}) else { fail("requiredRawPositives must name raw samples marked framingSafe with rawQuad and no severe_blur") }
 guard !samples.isEmpty else { fail("no samples selected") }
 guard Set(samples.map(\.id)).count == samples.count else { fail("sample IDs must be unique") }
 guard samples.allSatisfy({ FoorsaScannerProfile.Layout(rawValue: $0.layout) != nil }) else { fail("manifest has an unsupported layout") }
@@ -617,8 +631,17 @@ let report = Report(schema: 3, frameSize: [Int(frameSize.width), Int(frameSize.h
 let gates = categoryGates(outcomes, sequences, samples: samples)
 let selectedCategories = Set(samples.map(\.category))
 let missingCategories = (manifest.requiredCategories ?? []).filter { !selectedCategories.contains($0) }.sorted()
-let gateReport = GateReport(pass: missingCategories.isEmpty && gates.allSatisfy { $0.gate == "PASS" },
-                            missingCategories: missingCategories, categories: gates)
+let failedRequiredRawPositives = requiredRawIDs.filter { id in
+  let rows = outcomes.filter { $0.id == id }
+  let ready = sequences.filter { $0.id == id && $0.name == "held_raw_capture" }
+  guard rows.count == 1, let row = rows.first,
+        ready.count == 1, let hold = ready.first else { return true }
+  return !row.accurate || !row.stillAccurate || !row.detected || !row.stillDetected ||
+    row.unsafeAuto || row.unsafeStill || row.unsafeQuality || !hold.ready || hold.unsafeReady
+}.sorted()
+let gateReport = GateReport(pass: missingCategories.isEmpty && failedRequiredRawPositives.isEmpty && gates.allSatisfy { $0.gate == "PASS" },
+                            missingCategories: missingCategories, failedRequiredRawPositives: failedRequiredRawPositives,
+                            categories: gates)
 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 do {
   try encoder.encode(report).write(to: output.appendingPathComponent("metrics.json"), options: .atomic)
@@ -634,7 +657,8 @@ do {
   try (csvLines.joined(separator: "\n") + "\n").write(to: output.appendingPathComponent("metrics.csv"), atomically: true, encoding: .utf8)
   try encoder.encode(gateReport).write(to: output.appendingPathComponent("gate.json"), options: .atomic)
   try markdown(outcomes, sequences, samples: samples, peakRSS: report.peakRSSBytes,
-               gates: gates, missingCategories: missingCategories)
+               gates: gates, missingCategories: missingCategories,
+               failedRequiredRawPositives: failedRequiredRawPositives)
     .write(to: output.appendingPathComponent("report.md"), atomically: true, encoding: .utf8)
 } catch { fail("could not write report") }
 print("Report: \(output.appendingPathComponent("report.md").path)")

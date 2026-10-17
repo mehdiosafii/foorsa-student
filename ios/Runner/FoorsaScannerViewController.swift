@@ -76,6 +76,9 @@ final class FoorsaScannerViewController: UIViewController {
   private var captureAnalysisPaused = false
   private var analysisEpoch: UInt = 0
   private var observers: [NSObjectProtocol] = []
+  private var portraitConstraints: [NSLayoutConstraint] = []
+  private var landscapeConstraints: [NSLayoutConstraint] = []
+  private var usesLandscapeControls = false
 
   init(profile: FoorsaScannerProfile, completion: @escaping Completion) {
     self.profile = profile
@@ -111,11 +114,44 @@ final class FoorsaScannerViewController: UIViewController {
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
-    previewLayer.frame = view.bounds
     overlay.frame = view.bounds
     interruptionView.frame = view.bounds
     updateVideoOrientation()
+    updatePreviewGeometry()
     renderQuadrilateral(latestQuadrilateral, imageSize: latestImageSize)
+  }
+
+  override func viewWillLayoutSubviews() {
+    super.viewWillLayoutSubviews()
+    let landscape = view.bounds.width > view.bounds.height
+    if landscape != usesLandscapeControls {
+      NSLayoutConstraint.deactivate(usesLandscapeControls ? landscapeConstraints : portraitConstraints)
+      usesLandscapeControls = landscape
+      NSLayoutConstraint.activate(landscape ? landscapeConstraints : portraitConstraints)
+    }
+  }
+
+  private func updatePreviewGeometry() {
+    let safe = view.safeAreaLayoutGuide.layoutFrame
+    let available: CGRect
+    if usesLandscapeControls {
+      available = CGRect(x: safe.minX + 12, y: safe.minY + 67,
+        width: max(0, shutterButton.frame.minX - 24 - safe.minX),
+        height: max(0, statusLabel.frame.minY - 12 - safe.minY - 67))
+    } else {
+      available = CGRect(x: safe.minX + 12, y: statusLabel.frame.maxY + 12,
+        width: max(0, safe.width - 24),
+        height: max(0, thumbnailScroll.frame.minY - 12 - statusLabel.frame.maxY - 12))
+    }
+    let fallbackSize = usesLandscapeControls
+      ? CGSize(width: 4, height: 3) : CGSize(width: 3, height: 4)
+    let geometry = ScannerPreviewGeometry(imageSize: latestImageSize ?? fallbackSize,
+      availableRect: available, guideAspectRatio: overlay.guideAspectRatio)
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    previewLayer.frame = geometry.previewRect
+    CATransaction.commit()
+    overlay.guideRect = geometry.guideRect
   }
 
   deinit {
@@ -229,38 +265,54 @@ final class FoorsaScannerViewController: UIViewController {
     interruptionView.contentView.addSubview(resume)
     view.addSubview(interruptionView)
 
+    portraitConstraints = [
+      statusLabel.topAnchor.constraint(equalTo: chrome.bottomAnchor, constant: 14),
+      statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      statusLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 0.88),
+      statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
+      shutterButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      shutterButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18),
+      torchButton.centerYAnchor.constraint(equalTo: shutterButton.centerYAnchor),
+      torchButton.leadingAnchor.constraint(equalTo: shutterButton.trailingAnchor, constant: 38),
+      thumbnailScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+      thumbnailScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+      thumbnailScroll.bottomAnchor.constraint(equalTo: shutterButton.topAnchor, constant: -14),
+      thumbnailScroll.heightAnchor.constraint(equalToConstant: 78),
+    ]
+    landscapeConstraints = [
+      statusLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+      statusLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+      statusLabel.trailingAnchor.constraint(equalTo: shutterButton.leadingAnchor, constant: -12),
+      shutterButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+      shutterButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+      torchButton.centerXAnchor.constraint(equalTo: shutterButton.centerXAnchor),
+      torchButton.topAnchor.constraint(equalTo: thumbnailScroll.bottomAnchor, constant: 8),
+      thumbnailScroll.topAnchor.constraint(equalTo: chrome.bottomAnchor, constant: 8),
+      thumbnailScroll.centerXAnchor.constraint(equalTo: shutterButton.centerXAnchor),
+      thumbnailScroll.widthAnchor.constraint(equalToConstant: 78),
+      thumbnailScroll.heightAnchor.constraint(equalToConstant: 78),
+    ]
+    NSLayoutConstraint.activate(portraitConstraints)
     NSLayoutConstraint.activate([
       chrome.topAnchor.constraint(equalTo: view.topAnchor),
       chrome.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       chrome.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       chrome.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 55),
-      cancel.leadingAnchor.constraint(equalTo: chrome.leadingAnchor, constant: 14),
+      cancel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 14),
       cancel.bottomAnchor.constraint(equalTo: chrome.bottomAnchor, constant: -10),
       cancel.widthAnchor.constraint(greaterThanOrEqualToConstant: 58),
       cancel.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-      reviewButton.trailingAnchor.constraint(equalTo: chrome.trailingAnchor, constant: -12),
+      reviewButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
       reviewButton.centerYAnchor.constraint(equalTo: cancel.centerYAnchor),
       reviewButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
       titleLabel.leadingAnchor.constraint(equalTo: cancel.trailingAnchor, constant: 6),
       titleLabel.trailingAnchor.constraint(equalTo: reviewButton.leadingAnchor, constant: -6),
       titleLabel.centerYAnchor.constraint(equalTo: cancel.centerYAnchor),
-      statusLabel.topAnchor.constraint(equalTo: chrome.bottomAnchor, constant: 14),
-      statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-      statusLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 0.88),
-      statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
       statusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-      shutterButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-      shutterButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18),
       shutterButton.widthAnchor.constraint(equalToConstant: 68),
       shutterButton.heightAnchor.constraint(equalToConstant: 68),
-      torchButton.centerYAnchor.constraint(equalTo: shutterButton.centerYAnchor),
-      torchButton.leadingAnchor.constraint(equalTo: shutterButton.trailingAnchor, constant: 38),
       torchButton.widthAnchor.constraint(equalToConstant: 48),
       torchButton.heightAnchor.constraint(equalToConstant: 48),
-      thumbnailScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-      thumbnailScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-      thumbnailScroll.bottomAnchor.constraint(equalTo: shutterButton.topAnchor, constant: -14),
-      thumbnailScroll.heightAnchor.constraint(equalToConstant: 78),
       thumbnails.leadingAnchor.constraint(equalTo: thumbnailScroll.contentLayoutGuide.leadingAnchor),
       thumbnails.trailingAnchor.constraint(equalTo: thumbnailScroll.contentLayoutGuide.trailingAnchor),
       thumbnails.topAnchor.constraint(equalTo: thumbnailScroll.contentLayoutGuide.topAnchor),
@@ -435,7 +487,9 @@ final class FoorsaScannerViewController: UIViewController {
     isCapturing = true
     setCaptureAnalysisPaused(true)
     captureWasAutomatic = automatic
-    if automatic { autoCaptureLocked = true }
+    // In-flight capture is already guarded by isCapturing. Lock automatic
+    // capture only after retaining a page (or rejecting a duplicate), so a
+    // rejected/aborted burst can retry after a fresh steady hold.
     captureGeneration += 1
     captureCancellation = ScannerBurstCancellationToken()
     burstRemaining = 3
@@ -522,10 +576,14 @@ final class FoorsaScannerViewController: UIViewController {
       previous: pages.last?.fingerprint,
       automatic: captureWasAutomatic
     ) {
+      autoCaptureLocked = true
+      documentMissingSince = nil
       showMessage("This looks like the same page. Turn to the next page, then capture again.")
       return
     }
     guard totalBytes + best.jpeg.count <= 24 * 1024 * 1024 else {
+      autoCaptureLocked = true
+      documentMissingSince = nil
       showMessage("These pages are over 24 MB. Review the current pages or remove one before continuing.")
       return
     }
@@ -726,6 +784,7 @@ final class FoorsaScannerViewController: UIViewController {
       ? detectedQuadrilateral : nil
     latestQuadrilateral = quadrilateral
     latestImageSize = imageSize
+    updatePreviewGeometry()
     renderQuadrilateral(quadrilateral, imageSize: imageSize)
     guard !isCapturing else { return }
     let shapeAccepted = quadrilateral.map {
@@ -770,7 +829,7 @@ final class FoorsaScannerViewController: UIViewController {
       ScannerAspectFillMapper.layerPoint(
         fromVisionPoint: point,
         imageSize: imageSize,
-        in: previewLayer.bounds
+        in: previewLayer.frame
       )
     }
     overlay.quadrilateral = [
@@ -873,7 +932,8 @@ private final class ScannerOverlayView: UIView {
   private let outline = CAShapeLayer()
   var quadrilateral: [CGPoint]? { didSet { updateOutline(animated: true) } }
   var progress: CGFloat = 0 { didSet { updateOutline(animated: false) } }
-  var guideAspectRatio: CGFloat = 0.71 { didSet { updateOutline(animated: false) } }
+  var guideAspectRatio: CGFloat = 0.71
+  var guideRect: CGRect = .zero { didSet { updateOutline(animated: false) } }
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -899,12 +959,7 @@ private final class ScannerOverlayView: UIView {
       quadrilateral.dropFirst().forEach(path.addLine)
       path.close()
     } else {
-      let maximumWidth = bounds.width * 0.82
-      let maximumHeight = bounds.height * 0.55
-      let width = min(maximumWidth, maximumHeight * guideAspectRatio)
-      let height = width / guideAspectRatio
-      path = UIBezierPath(rect: CGRect(x: bounds.midX - width / 2,
-        y: bounds.midY - height / 2, width: width, height: height))
+      path = UIBezierPath(rect: guideRect)
     }
     let previous = outline.presentation()?.path ?? outline.path
     CATransaction.begin()
