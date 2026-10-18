@@ -55,6 +55,7 @@ class GuidedDocumentProfile {
     required this.layout,
     required this.zones,
     required this.pages,
+    this.outputMode,
   });
 
   final String documentKey;
@@ -63,6 +64,7 @@ class GuidedDocumentProfile {
   final GuidedScanLayout layout;
   final List<String> zones;
   final String pages;
+  final String? outputMode;
 
   /// Small, non-sensitive hints for the native camera. Native code still
   /// validates every value and falls back to a general page guide.
@@ -72,6 +74,7 @@ class GuidedDocumentProfile {
     'instruction': instruction,
     'layout': layout.name,
     'pages': pages,
+    if (outputMode == 'imagegen') 'outputMode': 'imagegen',
   };
 
   bool get acceptsLandscape => true;
@@ -138,6 +141,7 @@ class GuidedDocumentProfile {
       documentKey: key, title: title,
       instruction: instruction, layout: layout,
       zones: List.unmodifiable(zones), pages: pages,
+      outputMode: details?['outputMode'] == 'imagegen' ? 'imagegen' : null,
     );
   }
 
