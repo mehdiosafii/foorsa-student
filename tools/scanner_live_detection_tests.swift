@@ -87,6 +87,8 @@ struct ScannerLiveDetectionTests {
   }
 
   static func main() {
+    // Unbuffered, so every scene's result is visible even if a check fails.
+    setvbuf(stdout, nil, _IONBF, 0)
     let profile = FoorsaScannerProfile(arguments: ["profile": ["documentKey": "highest_degree", "outputMode": "imagegen"]])
     let size = CGSize(width: 1080, height: 1440)
     var random = Generator(state: 20261018)
