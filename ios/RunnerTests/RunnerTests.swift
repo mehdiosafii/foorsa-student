@@ -528,6 +528,20 @@ extension RunnerTests {
     XCTAssertTrue(resolution.candidate.correctedImage === reference)
   }
 
+  func testBurstFusionRejectsUncorrelatedHighContrastMarksOnPaper() throws {
+    let frames = try (0..<3).map {
+      try makeFusionFixture(offset: .zero, noisePhase: $0, highContrastNoise: true)
+    }
+    let candidates = frames.enumerated().map { index, image in
+      ScannerProcessedCandidate(jpeg: Data([UInt8(120 + index)]),
+        sharpness: 10 - Double(index) * 0.05, coverage: 0.8,
+        fingerprint: ScannerImageFingerprint(bits: 0), correctedImage: image)
+    }
+    let result = try XCTUnwrap(ScannerImageProcessor().resolveBurst(candidates))
+    XCTAssertEqual(result.mode, .bestFrameFallback)
+    XCTAssertEqual(result.candidate.jpeg, candidates[0].jpeg)
+  }
+
   func testBurstFusionFallsBackForMissingOrSoftFrames() throws {
     let image = try makeFusionFixture(offset: .zero, noisePhase: 0)
     let sharp = ScannerProcessedCandidate(
@@ -628,6 +642,7 @@ private extension RunnerTests {
   func makeFusionFixture(
     offset: CGPoint,
     noisePhase: Int?,
+    highContrastNoise: Bool = false,
     glare: Bool = false,
     foreignContent: Bool = false,
     rotationDegrees: CGFloat = 0
@@ -673,7 +688,10 @@ private extension RunnerTests {
     }
     context.restoreGState()
     if let phase = noisePhase {
-      context.setFillColor(CGColor(red: 0.28, green: 0.23, blue: 0.19, alpha: 1))
+      // Bounded sensor noise must not masquerade as unrelated printed marks.
+      context.setFillColor(highContrastNoise
+        ? CGColor(red: 0.28, green: 0.23, blue: 0.19, alpha: 1)
+        : CGColor(red: 0.84, green: 0.82, blue: 0.76, alpha: 1))
       for index in 0..<900 {
         let x = (index * 67 + phase * 19) % (width - 24) + 12
         let y = (index * 43 + phase * 31) % (height - 24) + 12

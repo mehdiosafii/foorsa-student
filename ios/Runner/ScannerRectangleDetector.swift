@@ -422,6 +422,60 @@ private struct BoundaryPixels {
       topLeft:corners[0],bottomLeft:corners[3],bottomRight:corners[2],topRight:corners[1])
   }
 
+  // Recover a displaced booklet crease only from a continuous observed dark
+  // seam, with three independently supported outside edges. No guessed margin.
+  func localizedBookletBoundary(_ rectangle: VNRectangleObservation, minimumOutsideSupport: Double = 0.95) -> VNRectangleObservation? {
+    let source = [rectangle.topLeft, rectangle.topRight, rectangle.bottomRight, rectangle.bottomLeft]
+    let points = source.map { CGPoint(x: $0.x * CGFloat(width), y: $0.y * CGFloat(height)) }
+    let ev = curvedEvidence(rectangle)
+    let longest = ev.lengths.max() ?? 0
+    var matches: [(rectangle: VNRectangleObservation, score: Double)] = []
+    for binding in 0..<4 where ev.lengths[binding] >= longest * 0.9 {
+      guard (0..<4).filter({ $0 != binding }).allSatisfy({ ev.steps[$0] >= minimumOutsideSupport }) else { continue }
+      let a = points[binding], b = points[(binding + 1) % 4]
+      let length = hypot(b.x-a.x, b.y-a.y)
+      let n = CGPoint(x: -(b.y-a.y)/length, y: (b.x-a.x)/length)
+      var hypotheses: [(a: CGPoint, b: CGPoint, score: Double)] = []
+      for offset in stride(from: CGFloat(-2), through: 12, by: 0.5) {
+        for tilt in stride(from: CGFloat(-8), through: 8, by: 0.5) {
+          // Keep the recovered seam close to the model, and never shrink it
+          // through existing page content to find a printed interior line.
+          guard offset-abs(tilt) >= 0, offset+abs(tilt) <= 12 else { continue }
+          let aa = CGPoint(x:a.x+n.x*(offset-tilt), y:a.y+n.y*(offset-tilt))
+          let bb = CGPoint(x:b.x+n.x*(offset+tilt), y:b.y+n.y*(offset+tilt))
+          let support = crease(a:aa,b:bb,n:n)
+          guard support >= 8 else { continue }
+          let score = support / (1 + Double(abs(offset))*0.015 + Double(abs(tilt))*0.015)
+          hypotheses.append((aa,bb,score))
+        }
+      }
+      guard let best = hypotheses.max(by: {$0.score < $1.score}) else { continue }
+      guard !hypotheses.contains(where: {
+        max(hypot($0.a.x-best.a.x,$0.a.y-best.a.y),hypot($0.b.x-best.b.x,$0.b.y-best.b.y)) > 4 &&
+          $0.score >= best.score * 0.9
+      }) else {continue}
+      func intersect(_ a:CGPoint,_ b:CGPoint,_ c:CGPoint,_ d:CGPoint)->CGPoint? {
+        let dx=b.x-a.x,dy=b.y-a.y,ex=d.x-c.x,ey=d.y-c.y,den=dx*ey-dy*ex
+        guard abs(den)>1 else {return nil}
+        let t=((c.x-a.x)*ey-(c.y-a.y)*ex)/den
+        return CGPoint(x:a.x+t*dx,y:a.y+t*dy)
+      }
+      guard let first=intersect(best.a,best.b,points[(binding+3)%4],a),
+            let second=intersect(best.a,best.b,b,points[(binding+2)%4]) else {continue}
+      var corrected=points
+      corrected[binding]=first;corrected[(binding+1)%4]=second
+      let q=corrected.map {CGPoint(x:$0.x/CGFloat(width),y:$0.y/CGFloat(height))}
+      let candidate=VNRectangleObservation(requestRevision:VNDetectRectanglesRequestRevision1,
+        topLeft:q[0],bottomLeft:q[3],bottomRight:q[2],topRight:q[1])
+      let quad=ScannerQuadrilateral(topLeft:q[0],topRight:q[1],bottomRight:q[2],bottomLeft:q[3])
+      guard quad.isComplete(minimumArea:0.12), curvedEvidence(candidate).valleys[binding]>=0.9 else {continue}
+      matches.append((candidate,best.score))
+    }
+    let ranked=matches.sorted {$0.score > $1.score}
+    guard let best=ranked.first, ranked.count == 1 || ranked[1].score < best.score * 0.85 else {return nil}
+    return best.rectangle
+  }
+
   struct CurvedEvidence {
     let steps: [Double]
     let valleys: [Double]
@@ -524,8 +578,9 @@ enum ScannerRectangleDetector {
     guard clarity.support < 24 || clarity.q50 >= 0.35 else {return nil}
     var remainingContentRequests=4
     func acceptedBoundary(_ candidate: VNRectangleObservation?) -> VNRectangleObservation? {
-      guard let candidate else {return nil}
+      guard var candidate else {return nil}
       if profile.layout == .passport, let pixels=BoundaryPixels(image:image) {
+        if let localized = pixels.localizedBookletBoundary(candidate, minimumOutsideSupport: 0.8) {candidate = localized}
         if pixels.enclosingClippedSheet(around:candidate).veto {return nil}
         if pixels.hasPrintedFrame(candidate) && !hasPassportContent(in:image,rectangle:candidate,remainingRequests:&remainingContentRequests) {return nil}
       }
@@ -535,23 +590,42 @@ enum ScannerRectangleDetector {
     var raw: VNRectangleObservation?
     var rawContentClear=false
     var contentCleared:[VNRectangleObservation]=[]
+    var roiCandidates:[VNRectangleObservation]=[]
     var accepted: [VNRectangleObservation] = []
     var documents: [(VNRectangleObservation, Float)] = []
-    var rotated=image.transformed(by:CGAffineTransform(translationX:-e.minX,y:-e.minY))
-    for turns in 0..<(profile.layout == .passport ? 4 : 1) {
-      if turns > 0 {rotated=rotated.transformed(by:CGAffineTransform(a:0,b:1,c:-1,d:0,tx:rotated.extent.height,ty:0))}
-      recovery=nil; raw=nil; rawContentClear=false
-      let primary=try detectSingleOrientation(in:rotated,profile:profile,purpose:purpose,measuredClarity:turns == 0 ? clarity : nil,recovery:&recovery,rawDocument:&raw,rawContentClear:&rawContentClear)
-      if let raw {
-        let mapped=mapFromQuarterTurn(raw,turns:turns)
-        documents.append((mapped,raw.confidence))
-        if rawContentClear {contentCleared.append(mapped)}
+    func collect(in source: CIImage, region: CGRect) throws {
+      var rotated=source.transformed(by:CGAffineTransform(translationX:-source.extent.minX,y:-source.extent.minY))
+      func mapped(_ rectangle: VNRectangleObservation, turns: Int) -> VNRectangleObservation {
+        let upright=mapFromQuarterTurn(rectangle,turns:turns)
+        if region == CGRect(x:0,y:0,width:1,height:1) { return upright }
+        func point(_ p:CGPoint)->CGPoint { CGPoint(x:region.minX+p.x*region.width,y:region.minY+p.y*region.height) }
+        return VNRectangleObservation(requestRevision:VNDetectRectanglesRequestRevision1,
+          topLeft:point(upright.topLeft),bottomLeft:point(upright.bottomLeft),
+          bottomRight:point(upright.bottomRight),topRight:point(upright.topRight))
       }
-      for candidate in [primary,recovery].compactMap({$0}) {
-        let mapped=mapFromQuarterTurn(candidate,turns:turns)
-        if select([mapped],imageSize:e.size,profile:profile,purpose:.still) != nil {accepted.append(mapped)}
+      for turns in 0..<(profile.layout == .passport ? 4 : 1) {
+        if turns > 0 {rotated=rotated.transformed(by:CGAffineTransform(a:0,b:1,c:-1,d:0,tx:rotated.extent.height,ty:0))}
+        recovery=nil; raw=nil; rawContentClear=false
+        let primary=try detectSingleOrientation(in:rotated,profile:profile,purpose:purpose,
+          measuredClarity:turns == 0 && region == CGRect(x:0,y:0,width:1,height:1) ? clarity : nil,
+          recovery:&recovery,rawDocument:&raw,rawContentClear:&rawContentClear)
+        if let raw, region == CGRect(x:0,y:0,width:1,height:1) || rawContentClear {
+          let observation=mapped(raw,turns:turns)
+          documents.append((observation,raw.confidence))
+          if rawContentClear {contentCleared.append(observation)}
+          if region != CGRect(x:0,y:0,width:1,height:1) {roiCandidates.append(observation)}
+        }
+        for candidate in [primary,recovery].compactMap({$0}) {
+          let observation=mapped(candidate,turns:turns)
+          if select([observation],imageSize:e.size,profile:profile,purpose:.still) != nil,
+            region == CGRect(x:0,y:0,width:1,height:1) || rawContentClear {
+            accepted.append(observation)
+            if region != CGRect(x:0,y:0,width:1,height:1) {roiCandidates.append(observation)}
+          }
+        }
       }
     }
+    try collect(in:image,region:CGRect(x:0,y:0,width:1,height:1))
     if profile.layout != .passport {
       guard let candidate = accepted.first else { return nil }
       // A strong printed panel can satisfy an early contrast/consensus path.
@@ -571,6 +645,7 @@ enum ScannerRectangleDetector {
       let diagonal=hypot(b.boundingBox.width*e.width,b.boundingBox.height*e.height)
       return zip(points(a),points(b)).filter {hypot(($0.x-$1.x)*e.width,($0.y-$1.y)*e.height)<=diagonal*0.03}.count>=3
     }
+    func chooseCandidate(roiOnly: Bool = false, bindingEdge: Int = 0) -> VNRectangleObservation? {
     let evidence=documents.map {pixels.curvedEvidence($0.0)}
     func outerSupported(_ ev:BoundaryPixels.CurvedEvidence, rectangle: VNRectangleObservation, allowTexturedStep: Bool = false)->Bool {
       let edges=allowTexturedStep ? pixels.outline(rectangle) : []
@@ -615,6 +690,7 @@ enum ScannerRectangleDetector {
       contentCleared.contains { $0 === candidate } && select([candidate],imageSize:e.size,profile:profile,purpose:.still) != nil
     }
     candidates += textureCandidates
+    if roiOnly {candidates = candidates.filter { candidate in roiCandidates.contains {$0 === candidate} }}
     candidates.sort {area($0)>area($1)}
     for candidate in candidates {
       // An independently observed matching page touching the frame makes the
@@ -626,7 +702,42 @@ enum ScannerRectangleDetector {
           select([other],imageSize:e.size,profile:profile,purpose:.still)==nil
       }
       if clipped {continue}
+      if roiOnly {
+        let physicalEdges=pixels.outline(candidate)
+        if !(0..<4).filter({$0 != bindingEdge}).allSatisfy({physicalEdges[$0].1 >= 12 && physicalEdges[$0].3 >= 0.9}) {continue}
+      }
       if let result=acceptedBoundary(candidate) {return result}
+    }
+      return nil
+    }
+    if let result=chooseCandidate() {return result}
+    guard profile.layout == .passport else { return nil }
+    // An open booklet's facing page can dominate segmentation. Ask for a second
+    // observed proposal in a bounded region while retaining all full-frame
+    // evidence and applying the same full-image crop and clipping checks.
+    // Only locally clear ROI proposals with coherent physical outside edges may
+    // be selected; ROI evidence cannot validate a rejected full-frame candidate.
+    let originalAccepted = accepted, originalDocuments = documents
+    let originalContent = contentCleared
+    var regions: [CGRect] = []
+    for side in (e.height >= e.width ? [0, 2, 1, 3] : [1, 3, 0, 2]) {
+      for span in [CGFloat(0.8), 0.7] {
+        switch side {
+        case 0: regions.append(CGRect(x:0,y:0,width:1,height:span))
+        case 1: regions.append(CGRect(x:0,y:0,width:span,height:1))
+        case 2: regions.append(CGRect(x:0,y:1-span,width:1,height:span))
+        default: regions.append(CGRect(x:1-span,y:0,width:span,height:1))
+        }
+      }
+    }
+    for region in regions {
+      accepted = originalAccepted; documents = originalDocuments
+      contentCleared = originalContent; roiCandidates = []
+      let crop=CGRect(x:e.minX+e.width*region.minX,y:e.minY+e.height*region.minY,
+        width:e.width*region.width,height:e.height*region.height)
+      try collect(in:image.cropped(to:crop),region:region)
+      let bindingEdge = region.width < 1 ? (region.minX == 0 ? 1 : 3) : (region.minY == 0 ? 0 : 2)
+      if let result=chooseCandidate(roiOnly:true, bindingEdge:bindingEdge) {return result}
     }
     return nil
   }
@@ -774,6 +885,13 @@ enum ScannerRectangleDetector {
           break
         }
       }
+    }
+    if profile.layout == .passport && document.confidence >= 0.95,
+      (proposals.allSatisfy({select([$0],imageSize:image.extent.size,profile:profile,purpose:.still)==nil}) ||
+       proposals.contains(where: {agreeingCorners($0,tolerance:0.03) >= 3})),
+      let completed = pixels.localizedBookletBoundary(document),
+      select([completed],imageSize:image.extent.size,profile:profile,purpose:.still) != nil {
+      recovery = completed
     }
     // Independent exterior support preserves complete low-contrast pages when
     // rectangle detection favors a divider or joins nearby clutter.

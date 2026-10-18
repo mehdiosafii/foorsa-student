@@ -5,9 +5,9 @@ import Foundation
 struct ScannerFusionStress {
   static func main() throws {
     let arguments = CommandLine.arguments
-    guard arguments.count == 6 else {
+    guard (6...8).contains(arguments.count) else {
       FileHandle.standardError.write(Data(
-        "usage: scanner-fusion-stress <document-key> <output.jpg|-> <frame1> <frame2> <frame3>\n".utf8
+        "usage: scanner-fusion-stress <document-key> <output.jpg|-> <frame1> <frame2> <frame3> [frame4] [frame5]\n".utf8
       ))
       Foundation.exit(64)
     }
@@ -16,14 +16,14 @@ struct ScannerFusionStress {
     ])
     let processor = ScannerImageProcessor()
     let started = CFAbsoluteTimeGetCurrent()
-    let candidates = try arguments[3...5].map { path -> ScannerProcessedCandidate in
+    let candidates = try arguments.dropFirst(3).map { path -> ScannerProcessedCandidate in
       let data = try Data(contentsOf: URL(fileURLWithPath: path))
       guard let candidate = processor.process(photoData: data, profile: profile) else {
         throw StressError.rejected(path)
       }
       return candidate
     }
-    guard let resolution = processor.resolveBurst(candidates) else {
+    guard let resolution = processor.resolveBurst(candidates, profile: profile) else {
       throw StressError.noResolution
     }
     if arguments[2] != "-" {
@@ -33,7 +33,7 @@ struct ScannerFusionStress {
       )
     }
     let image = resolution.candidate.correctedImage
-    let report: [String: Any] = [
+    var report: [String: Any] = [
       "mode": resolution.mode.rawValue,
       "framesConsidered": resolution.framesConsidered,
       "framesUsed": resolution.framesUsed,
@@ -45,6 +45,14 @@ struct ScannerFusionStress {
       "sharpness": resolution.candidate.sharpness,
       "milliseconds": (CFAbsoluteTimeGetCurrent() - started) * 1_000,
     ]
+    if let lighting = resolution.lighting {
+      report["lighting"] = [
+        "shadowCorrectionApplied": lighting.shadowCorrectionApplied,
+        "glarePixelsReplacedFraction": lighting.glarePixelsReplacedFraction,
+        "unresolvedGlareFraction": lighting.unresolvedGlareFraction,
+        "needsDifferentAngle": lighting.needsDifferentAngle,
+      ]
+    }
     let json = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
     FileHandle.standardOutput.write(json)
     FileHandle.standardOutput.write(Data("\n".utf8))
