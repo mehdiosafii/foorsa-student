@@ -90,20 +90,40 @@ struct ScannerLiveDetectionTests {
     let profile = FoorsaScannerProfile(arguments: ["profile": ["documentKey": "highest_degree", "outputMode": "imagegen"]])
     let size = CGSize(width: 1080, height: 1440)
     var random = Generator(state: 20261018)
-    var newFound = 0, strictFound = 0, positives = 0, falseReady = 0
-    for index in 0..<24 {
+    func page(index: Int, oversize: Bool) -> [CGPoint] {
       let landscape = index % 2 == 1
       let cx = random.range(0.42, 0.58), cy = random.range(0.42, 0.58)
-      let halfW = landscape ? random.range(0.36, 0.44) : random.range(0.30, 0.36)
-      let halfH = landscape ? halfW * 0.71 * Double(size.width / size.height) : halfW * 1.41 * Double(size.width / size.height)
+      var halfW = landscape ? random.range(0.34, 0.42) : random.range(0.28, 0.34)
+      if oversize { halfW *= 1.45 }
       let angle = random.range(-0.18, 0.18), skew = random.range(-0.05, 0.05)
-      func corner(_ sx: Double, _ sy: Double) -> CGPoint {
-        let x = sx * halfW * (1 + (sy > 0 ? skew : -skew)), y = sy * halfH
-        let ax = x * Double(size.width), ay = y * Double(size.height)
-        let rx = ax * cos(angle) - ay * sin(angle), ry = ax * sin(angle) + ay * cos(angle)
-        return CGPoint(x: cx + rx / Double(size.width), y: cy + ry / Double(size.height))
+      let aspect = Double(size.width / size.height)
+      func corners(_ halfW: Double) -> [CGPoint] {
+        let halfH = landscape ? halfW * 0.71 * aspect : halfW * 1.41 * aspect
+        func corner(_ sx: Double, _ sy: Double) -> CGPoint {
+          let x = sx * halfW * (1 + (sy > 0 ? skew : -skew)), y = sy * halfH
+          let ax = x * Double(size.width), ay = y * Double(size.height)
+          let rx = ax * cos(angle) - ay * sin(angle), ry = ax * sin(angle) + ay * cos(angle)
+          return CGPoint(x: cx + rx / Double(size.width), y: cy + ry / Double(size.height))
+        }
+        return [corner(-1, 1), corner(1, 1), corner(1, -1), corner(-1, -1)]
       }
-      let truth = [corner(-1, 1), corner(1, 1), corner(1, -1), corner(-1, -1)]
+      var truth = corners(halfW)
+      // Larger-than-view scenes push at least one corner out of the frame.
+      while oversize, truth.allSatisfy({ $0.x > 0.005 && $0.x < 0.995 && $0.y > 0.005 && $0.y < 0.995 }) {
+        halfW *= 1.08
+        truth = corners(halfW)
+      }
+      // In-frame scenes keep every corner well inside the view.
+      while !oversize, !truth.allSatisfy({ $0.x > 0.05 && $0.x < 0.95 && $0.y > 0.05 && $0.y < 0.95 }) {
+        halfW *= 0.94
+        truth = corners(halfW)
+      }
+      return truth
+    }
+    var found = 0, strictFound = 0, wrongReady = 0, inFrame = 0, clippedReady = 0, falseReady = 0
+    for index in 0..<24 {
+      let oversize = index >= 20
+      let truth = page(index: index, oversize: oversize)
       let image = CIImage(cgImage: scene(width: Int(size.width), height: Int(size.height), page: truth,
         seed: UInt64(1000 + index), hand: index % 3 == 0))
       let live = ScannerRectangleDetector.detectLive(in: image, profile: profile)
@@ -111,13 +131,16 @@ struct ScannerLiveDetectionTests {
         .map(ScannerQuadrilateral.init)
       let liveError = error(live.quadrilateral, truth, size: size)
       let strictError = error(strict, truth, size: size)
-      let liveOK = live.framing == .ready && liveError <= 0.04
-      let strictOK = strictError <= 0.04
-      positives += 1
-      if liveOK { newFound += 1 }
-      if strictOK { strictFound += 1 }
-      print(String(format: "page %02d %@%@ live=%@ err=%.3f strict err=%.3f", index,
-        landscape ? "landscape" : "portrait", index % 3 == 0 ? "+hand" : "",
+      if oversize {
+        if live.framing == .ready { clippedReady += 1 }
+      } else {
+        inFrame += 1
+        if live.framing == .ready && liveError <= 0.04 { found += 1 }
+        if live.framing == .ready && liveError > 0.04 { wrongReady += 1 }
+        if strictError <= 0.04 { strictFound += 1 }
+      }
+      print(String(format: "page %02d %@%@%@ live=%@ err=%.3f strict err=%.3f", index,
+        index % 2 == 1 ? "landscape" : "portrait", index % 3 == 0 ? "+hand" : "", oversize ? " (larger than the view)" : "",
         live.framing.rawValue, liveError, strictError))
     }
     for index in 0..<12 {
@@ -127,9 +150,12 @@ struct ScannerLiveDetectionTests {
       if live.framing == .ready { falseReady += 1 }
       print("clutter \(index) live=\(live.framing.rawValue)")
     }
-    print("SUMMARY new=\(newFound)/\(positives) strict=\(strictFound)/\(positives) falseReady=\(falseReady)/12")
+    print("SUMMARY in-frame ready+accurate new=\(found)/\(inFrame) strict=\(strictFound)/\(inFrame) wrongReady=\(wrongReady) clippedReady=\(clippedReady)/4 falseReady=\(falseReady)/12")
     precondition(falseReady == 0, "a scene without a page must never be ready to capture")
-    precondition(newFound >= strictFound, "live detection must find at least the pages the strict cascade found")
-    print("PASS: synthetic hand-held pages and page-free clutter")
+    precondition(clippedReady == 0, "a page larger than the view must ask to move back")
+    precondition(found >= strictFound, "live detection must find at least the pages the strict cascade found")
+    precondition(found * 4 >= inFrame * 3, "most hand-held pages over clutter must be found")
+    precondition(wrongReady <= 2, "a wrong outline is rarely ready")
+    print("PASS: synthetic hand-held pages, clipped pages and page-free clutter")
   }
 }
