@@ -28,28 +28,41 @@ struct ScannerImagegenProcessingTests {
     let quad = ScannerQuadrilateral(topLeft: CGPoint(x: 0.1, y: 0.9),
       topRight: CGPoint(x: 0.9, y: 0.9), bottomRight: CGPoint(x: 0.9, y: 0.1),
       bottomLeft: CGPoint(x: 0.1, y: 0.1))
-    // The same source fails strict boundary detection; only the explicit mode
-    // may use the stable shutter-time live outline to produce an OCR preview.
-    guard case .failure(.documentBoundaryNotFound) = processor.processCapture(
-      photoData: source, profile: ordinary, liveQuadrilateral: quad, liveImageSize: bounds.size)
-      else { fatalError("ordinary mode must preserve strict boundary policy") }
-    let result = try processor.processCapture(photoData: source, profile: imagegen,
-      liveQuadrilateral: quad, liveImageSize: bounds.size).get()
-    precondition(!result.jpeg.isEmpty && result.correctedImage != nil)
-    precondition(result.correctedImage!.width < 900 && result.correctedImage!.height < 1200)
-    guard case .failure(.documentBoundaryNotFound) = processor.processCapture(
-      photoData: source, profile: imagegen) else { fatalError("missing live geometry must not fabricate a crop") }
+    // custom-live-v11: strict detection finds no boundary on this source, so
+    // both capture modes crop from the live outline the student saw when the
+    // shutter fired.
+    var result: ScannerProcessedCandidate?
+    for profile in [ordinary, imagegen] {
+      let crop = try processor.processCapture(photoData: source, profile: profile,
+        liveQuadrilateral: quad, liveImageSize: bounds.size).get()
+      precondition(!crop.jpeg.isEmpty && crop.correctedImage != nil)
+      precondition(crop.correctedImage!.width < 900 && crop.correctedImage!.height < 1200)
+      if profile.usesImagegen { result = crop }
+    }
+    // Automatic capture without live geometry never fabricates a crop.
+    for profile in [ordinary, imagegen] {
+      guard case .failure(.documentBoundaryNotFound) = processor.processCapture(
+        photoData: source, profile: profile) else { fatalError("missing live geometry must not fabricate a crop") }
+    }
+    // A photo taken by hand keeps a real page or, failing that, the whole frame.
+    let manual = try processor.processCapture(photoData: source, profile: imagegen, allowFullFrame: true).get()
+    precondition(manual.correctedImage != nil && !manual.jpeg.isEmpty)
     let blank = jpeg(CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: bounds))
-    guard case .failure(.photoTooSoft) = processor.processCapture(photoData: blank,
-      profile: imagegen, liveQuadrilateral: quad, liveImageSize: bounds.size)
-      else { fatalError("empty content must not be a usable fallback view") }
     let blur = jpeg(page.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 10]).cropped(to: bounds))
-    guard case .failure(.photoTooSoft) = processor.processCapture(photoData: blur,
-      profile: imagegen, liveQuadrilateral: quad, liveImageSize: bounds.size)
-      else { fatalError("severe blur must not bypass the clarity gate") }
+    for profile in [ordinary, imagegen] {
+      guard case .failure(.photoTooSoft) = processor.processCapture(photoData: blank,
+        profile: profile, liveQuadrilateral: quad, liveImageSize: bounds.size)
+        else { fatalError("empty content must not be a usable view") }
+      guard case .failure(.photoTooSoft) = processor.processCapture(photoData: blur,
+        profile: profile, liveQuadrilateral: quad, liveImageSize: bounds.size)
+        else { fatalError("severe blur must not bypass the clarity gate") }
+      guard case .failure(.photoTooSoft) = processor.processCapture(photoData: blank,
+        profile: profile, allowFullFrame: true)
+        else { fatalError("a blank photo taken by hand is still rejected") }
+    }
     var pool = ScannerOriginalPhotoPool()
     precondition(pool.append(source) && pool.photos[0] == source)
-    precondition(pool.photos[0] != result.jpeg)
-    print("PASS: real source crop fallback, default strict boundary gating, missing-geometry rejection, empty/blur rejection, original versus preview separation")
+    precondition(pool.photos[0] != result!.jpeg)
+    print("PASS: live-outline crop in both modes, missing-geometry rejection, manual whole-frame photo, empty/blur rejection in both modes, original versus preview separation")
   }
 }

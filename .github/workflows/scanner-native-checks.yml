@@ -1,0 +1,60 @@
+# Compiles and runs the native scanner tests on macOS, where Vision and Core
+# Image exist, and type-checks the scanner sources against the iOS 15 SDK.
+# Physical-iPhone acceptance (camera, focus, real light) remains separate.
+name: Native scanner checks
+
+on:
+  pull_request:
+    paths:
+      - 'ios/Runner/Scanner*.swift'
+      - 'ios/Runner/FoorsaScannerViewController.swift'
+      - 'tools/scanner_*.swift'
+      - '.github/workflows/scanner-native-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      - name: Capture logic (no camera)
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/scanner-tests"; mkdir -p "$out"
+          for test in scanner_live_framing_tests scanner_adaptive_capture_tests \
+                      scanner_imagegen_capture_tests scanner_lighting_capture_tests; do
+            xcrun swiftc -O ios/Runner/ScannerGeometry.swift "tools/$test.swift" -o "$out/$test"
+            "$out/$test"
+          done
+
+      - name: Vision and image processing
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/scanner-tests"; mkdir -p "$out"
+          sources=(ios/Runner/ScannerGeometry.swift ios/Runner/ScannerRectangleDetector.swift
+                   ios/Runner/ScannerContentClarity.swift ios/Runner/ScannerImageProcessor.swift)
+          for test in scanner_view_quality_tests scanner_imagegen_processing_tests \
+                      scanner_lighting_processing_tests scanner_live_detection_tests; do
+            xcrun swiftc -O "${sources[@]}" "tools/$test.swift" -o "$out/$test"
+            "$out/$test"
+          done
+
+      - name: Type-check the scanner for iOS 15
+        run: |
+          set -euo pipefail
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          xcrun --sdk iphonesimulator swiftc -typecheck -sdk "$sdk" -target arm64-apple-ios15.0-simulator \
+            ios/Runner/ScannerGeometry.swift ios/Runner/ScannerRectangleDetector.swift \
+            ios/Runner/ScannerContentClarity.swift ios/Runner/ScannerImageProcessor.swift \
+            ios/Runner/FoorsaScannerViewController.swift

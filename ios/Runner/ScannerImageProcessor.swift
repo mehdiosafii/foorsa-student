@@ -173,9 +173,16 @@ final class ScannerImageProcessor {
 
   // Keep capture failures distinct from lighting/fusion failures. A missing
   // boundary does not establish that the user's light is the problem.
+  //
+  // custom-live-v11 uses one policy for every capture mode: severe blur is
+  // rejected before and after cropping; the crop is the strict boundary, else
+  // the document model on this photo anchored to the live outline, else the
+  // live outline the student saw when the shutter fired. Only a photo taken
+  // by hand without any outline may keep the whole frame.
   func processCapture(photoData: Data, profile: FoorsaScannerProfile,
                       liveQuadrilateral: ScannerQuadrilateral? = nil,
-                      liveImageSize: CGSize? = nil)
+                      liveImageSize: CGSize? = nil,
+                      allowFullFrame: Bool = false)
     -> Result<ScannerProcessedCandidate, PhotoProcessingFailure> {
     autoreleasepool {
       guard let source = CIImage(data: photoData, options: [.applyOrientationProperty: true]) else {
@@ -185,12 +192,12 @@ final class ScannerImageProcessor {
         translationX: -source.extent.origin.x,
         y: -source.extent.origin.y
       ))
-      if profile.usesImagegen {
-        let clarity = ContentClarity.score(upright)
-        guard clarity.support < 24 || clarity.q50 >= 0.35 else { return .failure(.photoTooSoft) }
-      }
+      let sourceClarity = ContentClarity.score(upright)
+      guard sourceClarity.support < 24 || sourceClarity.q50 >= 0.35 else { return .failure(.photoTooSoft) }
+      // One Vision pass serves both the strict cascade and the model fallback.
+      let vision = ScannerVisionFrameCache()
       let observation = try? ScannerRectangleDetector.detect(
-        in: upright, profile: profile, purpose: .still
+        in: upright, profile: profile, purpose: .still, cache: vision
       )
       let extent = upright.extent
       let detected = observation.map { ScannerQuadrilateral(
@@ -200,11 +207,21 @@ final class ScannerImageProcessor {
       // Live geometry belongs to the actual shutter event. The .photo session
       // shares its centered sensor field with the still; account for any aspect
       // crop before projecting its normalized corners into source pixels.
-      let fallback = profile.usesImagegen ? liveQuadrilateral.flatMap { quad in
+      let projected = liveQuadrilateral.flatMap { quad in
         liveImageSize.flatMap { ScannerLivePhotoCrop.map(quad, liveSize: $0,
           photoSize: extent.size, minimumArea: profile.minimumCaptureArea) }
-      } : nil
-      guard let quad = detected ?? fallback else { return .failure(.documentBoundaryNotFound) }
+      }
+      // The strict cascade rejects most hand-held pages (it needs a plain
+      // background at every edge). The document model on the photo itself is
+      // more precise than the projected live outline, and must agree with it.
+      let model = detected == nil
+        ? ScannerRectangleDetector.stillDocumentModel(in: upright, profile: profile, near: projected,
+          allowUnanchored: allowFullFrame, cache: vision) : nil
+      // Only a photo taken by hand without any outline keeps the whole frame.
+      let wholeFrame = allowFullFrame ? ScannerQuadrilateral.fullFrame : nil
+      guard let quad = detected ?? model ?? projected ?? wholeFrame else {
+        return .failure(.documentBoundaryNotFound)
+      }
       func vector(_ point: CGPoint) -> CIVector {
         CIVector(x: extent.minX + point.x * extent.width,
                  y: extent.minY + point.y * extent.height)
@@ -227,7 +244,7 @@ final class ScannerImageProcessor {
         width: (quad.points.map(\.x).max()! - quad.points.map(\.x).min()!) * extent.width,
         height: (quad.points.map(\.y).max()! - quad.points.map(\.y).min()!) * extent.height
       ).insetBy(dx: -extent.width * 0.015, dy: -extent.height * 0.015).intersection(extent)
-      let sourceCrop = profile.usesImagegen ? upright.cropped(to: fallbackBounds) : nil
+      let sourceCrop: CIImage? = upright.cropped(to: fallbackBounds)
       guard let corrected = perspective ?? sourceCrop else { return .failure(.perspectiveCorrectionFailed) }
       let bounded = resized(corrected, maximumEdge: 2600)
       let rendered = context.createCGImage(bounded, from: bounded.extent)
@@ -236,17 +253,15 @@ final class ScannerImageProcessor {
         return context.createCGImage(boundedCrop, from: boundedCrop.extent)
       } : nil
       guard let cgImage = rendered ?? fallbackRendered else { return .failure(.renderFailed) }
-      if profile.usesImagegen {
-        let image = CIImage(cgImage: cgImage)
-        var clarity = ContentClarity.score(image)
-        if clarity.support < 24 {
-          var configuration = ContentClarity.Configuration()
-          configuration.horizontalInset = 0.08
-          configuration.verticalInset = 0.08
-          clarity = ContentClarity.score(image, configuration: configuration)
-        }
-        guard clarity.support >= 24, clarity.q50 >= 0.35 else { return .failure(.photoTooSoft) }
+      let image = CIImage(cgImage: cgImage)
+      var clarity = ContentClarity.score(image)
+      if clarity.support < 24 {
+        var configuration = ContentClarity.Configuration()
+        configuration.horizontalInset = 0.08
+        configuration.verticalInset = 0.08
+        clarity = ContentClarity.score(image, configuration: configuration)
       }
+      guard clarity.support >= 24, clarity.q50 >= 0.35 else { return .failure(.photoTooSoft) }
       guard let jpeg = encode(cgImage) else { return .failure(.encodingFailed) }
       guard let fingerprint = fingerprint(for: cgImage) else { return .failure(.fingerprintFailed) }
       return .success(ScannerProcessedCandidate(
