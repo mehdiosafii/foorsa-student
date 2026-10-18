@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreImage
 import Foundation
+import Vision
 
 // macOS (Vision) check for custom-live-v11 live detection on synthetic scenes:
 // a page held over a busy background, sometimes with a hand across one edge,
@@ -86,6 +87,58 @@ struct ScannerLiveDetectionTests {
     }.max() ?? .infinity
   }
 
+  /// Corners in TL, TR, BR, BL order (normalized, y up), whatever order a
+  /// detector reported them in.
+  static func ordered(_ points: [CGPoint]) -> ScannerQuadrilateral {
+    let cx = points.map(\.x).reduce(0, +) / 4, cy = points.map(\.y).reduce(0, +) / 4
+    let around = points.sorted { atan2($0.y - cy, $0.x - cx) > atan2($1.y - cy, $1.x - cx) }
+    let start = around.indices.max { around[$0].y - around[$0].x < around[$1].y - around[$1].x }!
+    let p = (0..<4).map { around[(start + $0) % 4] }
+    return ScannerQuadrilateral(topLeft: p[0], topRight: p[1], bottomRight: p[2], bottomLeft: p[3])
+  }
+
+  /// The frame turned a quarter turn counter-clockwise, origin at zero.
+  static func quarterTurn(_ image: CIImage) -> CIImage {
+    let e = image.extent
+    let t = CGAffineTransform(translationX: -e.minX, y: -e.minY)
+      .concatenating(CGAffineTransform(rotationAngle: .pi / 2))
+      .concatenating(CGAffineTransform(translationX: e.height, y: 0))
+    return image.transformed(by: t).cropped(to: CGRect(x: 0, y: 0, width: e.height, height: e.width))
+  }
+
+  static func describe(_ label: String, _ quad: ScannerQuadrilateral?, confidence: Float,
+                       truth: [CGPoint]?, size: CGSize, profile: FoorsaScannerProfile) {
+    guard let quad else { print("    \(label) none"); return }
+    let framing = ScannerLiveFramingPolicy.classify(quad, imageSize: size, profile: profile, isClear: true)
+    let corners = quad.points.map { String(format: "(%.3f,%.3f)", $0.x, $0.y) }.joined(separator: " ")
+    let err = truth.map { error(ordered(quad.points), $0, size: size) } ?? .nan
+    print(String(format: "    %@ conf=%.2f framing=%@ err=%.3f %@", label, confidence,
+      framing.rawValue, err, corners))
+  }
+
+  /// What each Vision pass saw: the document model upright and turned a
+  /// quarter, and every rectangle proposal.
+  static func diagnose(_ image: CIImage, truth: [CGPoint]?, size: CGSize, profile: FoorsaScannerProfile) {
+    let segmentation = VNDetectDocumentSegmentationRequest()
+    let rectangles = ScannerRectangleDetector.makeRequest(for: .live)
+    try? VNImageRequestHandler(ciImage: image, orientation: .up).perform([segmentation, rectangles])
+    if let document = segmentation.results?.first {
+      describe("model  ", ordered(ScannerQuadrilateral(document).points), confidence: document.confidence,
+        truth: truth, size: size, profile: profile)
+    } else { print("    model   none") }
+    let turned = VNDetectDocumentSegmentationRequest()
+    try? VNImageRequestHandler(ciImage: quarterTurn(image), orientation: .up).perform([turned])
+    if let document = turned.results?.first {
+      // (u', v') in the turned frame is (v', 1 - u') here.
+      let back = ScannerQuadrilateral(document).points.map { CGPoint(x: $0.y, y: 1 - $0.x) }
+      describe("turned ", ordered(back), confidence: document.confidence, truth: truth, size: size, profile: profile)
+    } else { print("    turned  none") }
+    for (index, proposal) in (rectangles.results ?? []).enumerated() {
+      describe("rect\(index)  ", ordered(ScannerQuadrilateral(proposal).points), confidence: proposal.confidence,
+        truth: truth, size: size, profile: profile)
+    }
+  }
+
   static func main() {
     // Unbuffered, so every scene's result is visible even if a check fails.
     setvbuf(stdout, nil, _IONBF, 0)
@@ -144,6 +197,7 @@ struct ScannerLiveDetectionTests {
       print(String(format: "page %02d %@%@%@ live=%@ err=%.3f strict err=%.3f", index,
         index % 2 == 1 ? "landscape" : "portrait", index % 3 == 0 ? "+hand" : "", oversize ? " (larger than the view)" : "",
         live.framing.rawValue, liveError, strictError))
+      diagnose(image, truth: truth, size: size, profile: profile)
     }
     for index in 0..<12 {
       let image = CIImage(cgImage: scene(width: Int(size.width), height: Int(size.height), page: nil,
@@ -151,6 +205,7 @@ struct ScannerLiveDetectionTests {
       let live = ScannerRectangleDetector.detectLive(in: image, profile: profile)
       if live.framing == .ready { falseReady += 1 }
       print("clutter \(index) live=\(live.framing.rawValue)")
+      diagnose(image, truth: nil, size: size, profile: profile)
     }
     print("SUMMARY in-frame ready+accurate new=\(found)/\(inFrame) strict=\(strictFound)/\(inFrame) wrongReady=\(wrongReady) clippedReady=\(clippedReady)/4 falseReady=\(falseReady)/12")
     precondition(falseReady == 0, "a scene without a page must never be ready to capture")
