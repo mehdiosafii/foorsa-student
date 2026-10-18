@@ -509,8 +509,9 @@ struct ScannerLightingAngleGuide {
 
 // Adaptive capture policy for documents whose useful reflection-free views are
 // not known in advance. The controller asks the processor whether each still
-// adds useful evidence; this policy only bounds the capture session and keeps
-// the next view distinct from the most recently accepted one.
+// adds useful evidence; this policy bounds the capture session. Local fusion
+// needs perspective changes; asynchronous ImageGen needs clear source photos
+// and must not make a stable, readable page wait for a particular phone tilt.
 struct ScannerAdaptiveCaptureGuide {
   static let maximumAttempts = 8
   static let maximumCandidates = 6
@@ -541,6 +542,7 @@ struct ScannerAdaptiveCaptureGuide {
 
   private let imageSize: CGSize
   private let requiresNovelViews: Bool
+  private let requiresPerspectiveChange: Bool
   private var rejectedViews: [ScannerQuadrilateral] = []
   private let minimumArea: CGFloat
   private let startedAt: TimeInterval
@@ -548,9 +550,11 @@ struct ScannerAdaptiveCaptureGuide {
   private var tracker: ScannerStabilityTracker
 
   init(anchor: ScannerQuadrilateral, imageSize: CGSize, minimumArea: CGFloat,
-       at time: TimeInterval, requiresNovelViews: Bool = false) {
+       at time: TimeInterval, requiresNovelViews: Bool = false,
+       requiresPerspectiveChange: Bool = true) {
     acceptedViews = [anchor]
     self.requiresNovelViews = requiresNovelViews
+    self.requiresPerspectiveChange = requiresPerspectiveChange
     self.imageSize = imageSize
     self.minimumArea = minimumArea
     startedAt = time.isFinite ? time : 0
@@ -581,7 +585,7 @@ struct ScannerAdaptiveCaptureGuide {
     }
     guard let view, view.isComplete(minimumArea: minimumArea),
           let previous = mostRecentCapturedView,
-          Self.isDifferentAngle(view, from: previous, imageSize: imageSize),
+          !requiresPerspectiveChange || Self.isDifferentAngle(view, from: previous, imageSize: imageSize),
           !requiresNovelViews || acceptedViews.allSatisfy({
             Self.isDifferentAngle(view, from: $0, imageSize: imageSize)
           }),

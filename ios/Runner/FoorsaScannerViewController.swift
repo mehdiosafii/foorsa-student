@@ -472,10 +472,11 @@ final class FoorsaScannerViewController: UIViewController {
     photosTaken = 0
     lightingAngleGuide = latestQuadrilateral.flatMap { anchor in
       latestImageSize.map {
-        ScannerAdaptiveCaptureGuide(anchor: anchor, imageSize: $0, minimumArea: profile.minimumCaptureArea, at: CACurrentMediaTime(), requiresNovelViews: profile.usesImagegen)
+        ScannerAdaptiveCaptureGuide(anchor: anchor, imageSize: $0, minimumArea: profile.minimumCaptureArea,
+          at: CACurrentMediaTime(), requiresPerspectiveChange: !profile.usesImagegen)
       }
     }
-    nextViewDetail = "Tilt the phone slightly to reveal more detail. Keep the page flat."
+    nextViewDetail = nextCaptureInstruction
     originalPhotos.reset()
     capturedGeometry.removeAll()
     burstCandidates.removeAll(keepingCapacity: true)
@@ -735,7 +736,7 @@ final class FoorsaScannerViewController: UIViewController {
       UINotificationFeedbackGenerator().notificationOccurred(.success)
       completion([
         "pages": [page], "originals": originals, "processing": "imagegen",
-        "engine": "avfoundation_vision", "scannerBuild": "custom-live-v9",
+        "engine": "avfoundation_vision", "scannerBuild": "custom-live-v10",
         "capabilities": ["live_quadrilateral", "stable_auto_capture",
           "adaptive_multi_view_capture", "perspective_correction", "automatic_single_page",
           "bounded_adaptive_capture", "visual_capture_guide", "original_camera_jpegs",
@@ -872,6 +873,12 @@ final class FoorsaScannerViewController: UIViewController {
     }
   }
 
+  private var nextCaptureInstruction: String {
+    profile.usesImagegen
+      ? "Keep the whole page visible and hold still for another clear photo."
+      : "Tilt the phone slightly to reveal more detail. Keep the page flat."
+  }
+
   private var lightingAngleInstruction: String { nextViewDetail }
 
   private func showPlacementGuide() {
@@ -882,7 +889,7 @@ final class FoorsaScannerViewController: UIViewController {
   }
 
   private func showAngleGuide(holding: Bool = false, missingPage: Bool = false) {
-    guidanceView.show(title: holding ? "Hold still" : "Tilt slightly",
+    guidanceView.show(title: holding || profile.usesImagegen ? "Hold still" : "Tilt slightly",
       detail: missingPage ? "Bring all four corners back into view."
         : holding ? "Capturing the clear detail automatically."
         : nextViewDetail,
@@ -894,7 +901,9 @@ final class FoorsaScannerViewController: UIViewController {
     lightingRetryAnchor = latestQuadrilateral ?? lightingAngleGuide?.mostRecentCapturedView ?? tracker.anchor
     lightingRetryMissingSince = nil
     retryTitle = title
-    retryDetail = detail ?? "Keep the page flat and all four corners visible. Tilt slightly, then hold still."
+    retryDetail = detail ?? (profile.usesImagegen
+      ? "Reframe the page, keep all four corners visible, and hold still."
+      : "Keep the page flat and all four corners visible. Tilt slightly, then hold still.")
     abortCapture()
     // Require a deliberate reframe after exhausted/expired guidance; an unchanged
     // shiny page must not automatically restart another forced sequence.
@@ -1061,7 +1070,10 @@ final class FoorsaScannerViewController: UIViewController {
       overlay.progress = 0
       if let quadrilateral {
         lightingRetryMissingSince = nil
-        if ScannerLightingAngleGuide.isDifferentAngle(quadrilateral, from: retryAnchor, imageSize: imageSize) {
+        let reframed = profile.usesImagegen
+          ? quadrilateral.maximumCornerDistance(to: retryAnchor) >= 0.035
+          : ScannerLightingAngleGuide.isDifferentAngle(quadrilateral, from: retryAnchor, imageSize: imageSize)
+        if reframed {
           lightingRetryAnchor = nil
         }
       } else {
@@ -1301,7 +1313,7 @@ extension FoorsaScannerViewController: AVCapturePhotoCaptureDelegate {
             let acceptedGuided = self.lightingAngleGuide?.resolveCapture(accepted: useful) ?? false
             if let candidate, useful, !wasGuided || acceptedGuided {
               self.burstCandidates = ScannerImageProcessor.retainingUsefulViews(self.burstCandidates + [candidate])
-              self.nextViewDetail = "Tilt the phone slightly to reveal more detail. Keep the page flat."
+              self.nextViewDetail = self.nextCaptureInstruction
             } else {
               self.nextViewDetail = candidate == nil
                 ? "Keep every corner visible, then hold still. Earlier clear photos are saved."

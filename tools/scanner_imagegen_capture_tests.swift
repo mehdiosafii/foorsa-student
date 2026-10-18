@@ -41,6 +41,59 @@ struct ScannerImagegenCaptureTests {
     precondition(timeout.observe(left, at: 19) == .expired)
     precondition(!timeout.beginWaiting(at: 60))
 
+    // Real-iPhone regression: the page stayed clear and stable for 18 seconds,
+    // but perspective novelty timed out and discarded the first usable photo.
+    // ImageGen must request its next source photo after a fresh stable hold,
+    // including when the user does not tilt. It still waits for a per-still
+    // quality decision before accepting that source photo.
+    var source = ScannerAdaptiveCaptureGuide(anchor: flat, imageSize: size,
+      minimumArea: 0.16, at: 0, requiresPerspectiveChange: false)
+    precondition(source.beginWaiting(at: 1))
+    precondition(source.observe(flat, at: 1.1) == .hold(0))
+    precondition(source.observe(flat, at: 1.3) != .capture)
+    precondition(source.observe(flat, at: 1.5) != .capture)
+    precondition(source.observe(flat, at: 1.7) != .capture)
+    precondition(source.observe(flat, at: 1.9) == .capture)
+    precondition(source.acceptedAdditionalViews == 0)
+    precondition(!source.resolveCapture(accepted: false))
+    precondition(source.beginWaiting(at: 2))
+    precondition(capture(&source, view: flat, start: 2.1) == .capture)
+    precondition(source.resolveCapture(accepted: true))
+    precondition(source.acceptedViews == [flat, flat])
+    precondition(source.acceptedAdditionalViews == 1)
+    source.cancel()
+    precondition(source.observe(flat, at: 4) == .inactive)
+
+    // Same-angle permission is not permission for timed, stale, missing,
+    // clipped, or moving-page capture. Each failure resets the fresh hold.
+    var unsafe = ScannerAdaptiveCaptureGuide(anchor: flat, imageSize: size,
+      minimumArea: 0.16, at: 0, requiresPerspectiveChange: false)
+    precondition(unsafe.beginWaiting(at: 1))
+    precondition(unsafe.observe(nil, at: 1.1) == .move)
+    precondition(unsafe.observe(flat, at: 1.3, processingDuration: 0.7) == .hold(0))
+    precondition(unsafe.observe(flat, at: 1.5) == .hold(0))
+    precondition(unsafe.observe(left, at: 1.7) == .hold(0))
+    precondition(unsafe.observe(right, at: 1.9) == .hold(0))
+    let clipped = ScannerQuadrilateral(topLeft: CGPoint(x: 0.22, y: 1.02),
+      topRight: CGPoint(x: 0.78, y: 1.02), bottomRight: flat.bottomRight,
+      bottomLeft: flat.bottomLeft)
+    precondition(unsafe.observe(clipped, at: 2.1) == .move)
+    precondition(unsafe.observe(flat, at: 3) == .hold(0))
+    precondition(unsafe.attemptsTaken == 1)
+    precondition(unsafe.observe(flat, at: 19) == .expired)
+    precondition(!unsafe.beginWaiting(at: 60))
+
+    var boundedSource = ScannerAdaptiveCaptureGuide(anchor: flat, imageSize: size,
+      minimumArea: 0.16, at: 0, requiresPerspectiveChange: false)
+    for index in 0..<ScannerAdaptiveCaptureGuide.maximumAttempts - 1 {
+      let start = 1 + Double(index) * 2
+      precondition(boundedSource.beginWaiting(at: start))
+      precondition(capture(&boundedSource, view: flat, start: start + 0.1) == .capture)
+      precondition(!boundedSource.resolveCapture(accepted: false))
+    }
+    precondition(!boundedSource.beginWaiting(at: 16))
+    precondition(boundedSource.attemptsTaken == ScannerAdaptiveCaptureGuide.maximumAttempts)
+
     var originals = ScannerOriginalPhotoPool()
     let original = Data([0xff, 0xd8, 1, 2, 3, 0xff, 0xd9])
     precondition(!originals.append(Data()))
@@ -74,7 +127,7 @@ struct ScannerImagegenCaptureTests {
     precondition(wideStill.topLeft.x > flat.topLeft.x)
     precondition(ScannerLivePhotoCrop.map(flat, liveSize: .zero, photoSize: size,
       minimumArea: 0.16) == nil)
-    print("PASS: explicit imagegen mode, distinct views, rejected-frame suppression, cancellation, deadlines, exact raw bytes, count/byte limits, retry reset, source crop mapping")
+    print("PASS: imagegen stable-view latency regression, fresh hold and motion gates, rejected-view retake, bounded attempts, legacy distinct views, cancellation, deadlines, exact raw bytes, count/byte limits, retry reset, source crop mapping")
   }
 
   static func capture(_ guide: inout ScannerAdaptiveCaptureGuide,
