@@ -2,15 +2,16 @@
 
 The portal opts into this mode with `profile.outputMode = 'imagegen'`. Omitting
 that exact value preserves the existing local fusion behavior. Each invocation
-captures **one physical page** from several viewpoints, not several pages.
+captures **one physical page** in multiple source photos, not several pages.
 
 The student sees the live outline and one short instruction. Capture is automatic
 and requires all corners, a steady page, settled autofocus/exposure, and the
-existing severe-blur threshold. Two distinct useful cropped views complete
+existing severe-blur threshold. Two useful cropped views complete
 capture; a relatively softer view is rejected, and a sharper later view can
 replace an earlier soft view. The mode never calls the local fusion resolver.
-Accepted and rejected viewpoints cannot be captured repeatedly in the same
-session. Eight attempts, six retained originals, the existing 18-second angle
+Each subsequent shot requires a fresh stable hold, but no particular tilt or
+perspective change. This avoids discarding a clear first shot while waiting for
+an unnecessary angle change. Eight attempts, six retained originals, an 18-second
 wait and 60-second total deadline bound the session. Failure requires deliberate
 reframing before retry. Cancellation resets the raw pool and invalidates delayed
 callbacks using the existing capture generation and cancellation token.
@@ -31,7 +32,7 @@ Native success payload:
 pages: [Data(previewJPEG)]
 originals: [Data(originalCameraJPEG), ...]
 processing: 'imagegen'
-scannerBuild: 'custom-live-v9'
+scannerBuild: 'custom-live-v10'
 ```
 
 Dart validates exactly one preview, 1–6 nonempty JPEG originals, per-file and
