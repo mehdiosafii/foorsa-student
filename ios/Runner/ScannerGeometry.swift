@@ -289,18 +289,71 @@ struct ScannerProcessedCandidate {
   let sharpness: Double
   let coverage: Double
   let fingerprint: ScannerImageFingerprint
+  // The corrected, uncompressed page is retained only until the three-shot
+  // burst resolves. Keeping it out of the bridge avoids exposing extra copies
+  // of a student's document while allowing one final, fused JPEG encode.
+  let correctedImage: CGImage?
+
+  init(
+    jpeg: Data,
+    sharpness: Double,
+    coverage: Double,
+    fingerprint: ScannerImageFingerprint,
+    correctedImage: CGImage? = nil
+  ) {
+    self.jpeg = jpeg
+    self.sharpness = sharpness
+    self.coverage = coverage
+    self.fingerprint = fingerprint
+    self.correctedImage = correctedImage
+  }
+}
+
+enum ScannerBurstResolutionMode: String, Equatable {
+  case alignedMedianFusion = "aligned_median_fusion"
+  case bestFrameFallback = "best_frame_fallback"
+}
+
+enum ScannerBurstFallbackReason: String, Equatable {
+  case incompleteBurst = "incomplete_burst"
+  case missingCorrectedImage = "missing_corrected_image"
+  case frameTooSoft = "frame_too_soft"
+  case incompatibleGeometry = "incompatible_geometry"
+  case registrationRejected = "registration_rejected"
+  case frameContentMismatch = "frame_content_mismatch"
+  case renderOrEncodeFailure = "render_or_encode_failure"
+}
+
+enum ScannerBurstAlignmentModel: String, Equatable {
+  case translation
+  case homography
+}
+
+struct ScannerBurstResolution {
+  let candidate: ScannerProcessedCandidate
+  let mode: ScannerBurstResolutionMode
+  let framesConsidered: Int
+  let framesUsed: Int
+  let fallbackReason: ScannerBurstFallbackReason?
+  let alignmentModels: [ScannerBurstAlignmentModel]
 }
 
 enum ScannerCandidateSelector {
   static func best(_ candidates: [ScannerProcessedCandidate]) -> ScannerProcessedCandidate? {
-    candidates.max {
-      if abs($0.sharpness - $1.sharpness) > 0.0001 {
-        return $0.sharpness < $1.sharpness
+    bestIndex(candidates).map { candidates[$0] }
+  }
+
+  static func bestIndex(_ candidates: [ScannerProcessedCandidate]) -> Int? {
+    candidates.indices.max {
+      let lhs = candidates[$0]
+      let rhs = candidates[$1]
+      if abs(lhs.sharpness - rhs.sharpness) > 0.0001 {
+        return lhs.sharpness < rhs.sharpness
       }
-      if abs($0.coverage - $1.coverage) > 0.0001 {
-        return $0.coverage < $1.coverage
+      if abs(lhs.coverage - rhs.coverage) > 0.0001 {
+        return lhs.coverage < rhs.coverage
       }
-      return $0.jpeg.count < $1.jpeg.count
+      return lhs.jpeg.count < rhs.jpeg.count
     }
   }
 }

@@ -469,6 +469,263 @@ class RunnerTests: XCTestCase {
   }
 }
 
+extension RunnerTests {
+  func testBurstFusionRegistersThreeFramesAndRejectsOneFrameNoise() throws {
+    let pristine = try makeFusionFixture(offset: .zero, noisePhase: nil)
+    let frames = try [
+      makeFusionFixture(offset: .zero, noisePhase: 0),
+      makeFusionFixture(offset: CGPoint(x: 2, y: -1), noisePhase: 1),
+      makeFusionFixture(offset: CGPoint(x: -2, y: 1), noisePhase: 2, glare: true),
+    ]
+    let candidates = frames.enumerated().map { index, image in
+      ScannerProcessedCandidate(
+        jpeg: Data([UInt8(10 + index)]),
+        sharpness: 10 - Double(index) * 0.05,
+        coverage: 0.8,
+        fingerprint: ScannerImageFingerprint(bits: 0),
+        correctedImage: image
+      )
+    }
+
+    let resolution = try XCTUnwrap(ScannerImageProcessor().resolveBurst(candidates))
+    XCTAssertEqual(resolution.mode, .alignedMedianFusion)
+    XCTAssertEqual(resolution.framesConsidered, 3)
+    XCTAssertEqual(resolution.framesUsed, 3)
+    XCTAssertLessThanOrEqual(resolution.candidate.jpeg.count, 2_650_000)
+    let fused = try XCTUnwrap(resolution.candidate.correctedImage)
+    XCTAssertEqual(fused.width, frames[0].width)
+    XCTAssertEqual(fused.height, frames[0].height)
+    XCTAssertLessThan(
+      try meanAbsoluteDifference(fused, pristine),
+      try meanAbsoluteDifference(frames[0], pristine) * 0.7
+    )
+    // The third frame contains a bright glare block here. The two clean
+    // captures must outvote it rather than adding translucent false content.
+    let glarePixel = try rgbPixel(fused, at: CGPoint(x: 180, y: 240))
+    XCTAssertLessThan(glarePixel.0, 245)
+    XCTAssertLessThan(glarePixel.1, 245)
+    XCTAssertLessThan(glarePixel.2, 245)
+  }
+
+  func testBurstFusionFallsBackExactlyWhenContentDoesNotAgree() throws {
+    let reference = try makeFusionFixture(offset: .zero, noisePhase: 0)
+    let similar = try makeFusionFixture(offset: CGPoint(x: 1, y: 0), noisePhase: 1)
+    let different = try makeFusionFixture(offset: .zero, noisePhase: nil, foreignContent: true)
+    let candidates = [reference, similar, different].enumerated().map { index, image in
+      ScannerProcessedCandidate(
+        jpeg: Data([UInt8(40 + index)]),
+        sharpness: 10 - Double(index) * 0.05,
+        coverage: 0.8,
+        fingerprint: ScannerImageFingerprint(bits: UInt64(index)),
+        correctedImage: image
+      )
+    }
+
+    let resolution = try XCTUnwrap(ScannerImageProcessor().resolveBurst(candidates))
+    XCTAssertEqual(resolution.mode, .bestFrameFallback)
+    XCTAssertEqual(resolution.framesUsed, 1)
+    XCTAssertEqual(resolution.candidate.jpeg, Data([40]))
+    XCTAssertTrue(resolution.candidate.correctedImage === reference)
+  }
+
+  func testBurstFusionFallsBackForMissingOrSoftFrames() throws {
+    let image = try makeFusionFixture(offset: .zero, noisePhase: 0)
+    let sharp = ScannerProcessedCandidate(
+      jpeg: Data([70]), sharpness: 10, coverage: 0.8,
+      fingerprint: ScannerImageFingerprint(bits: 0), correctedImage: image
+    )
+    let soft = ScannerProcessedCandidate(
+      jpeg: Data([71]), sharpness: 8, coverage: 0.8,
+      fingerprint: ScannerImageFingerprint(bits: 0), correctedImage: image
+    )
+    let processor = ScannerImageProcessor()
+
+    let missing = try XCTUnwrap(processor.resolveBurst([sharp, sharp]))
+    XCTAssertEqual(missing.mode, .bestFrameFallback)
+    XCTAssertEqual(missing.framesConsidered, 2)
+    let softResult = try XCTUnwrap(processor.resolveBurst([sharp, sharp, soft]))
+    XCTAssertEqual(softResult.mode, .bestFrameFallback)
+    XCTAssertEqual(softResult.candidate.jpeg, sharp.jpeg)
+  }
+
+  func testBurstFusionFallsBackForResidualRotationThatCouldDoubleText() throws {
+    let frames = try [
+      makeFusionFixture(offset: .zero, noisePhase: 0),
+      makeFusionFixture(offset: .zero, noisePhase: 1, rotationDegrees: 0.55),
+      makeFusionFixture(offset: .zero, noisePhase: 2, rotationDegrees: -0.45),
+    ]
+    let candidates = frames.enumerated().map { index, image in
+      ScannerProcessedCandidate(
+        jpeg: Data([UInt8(90 + index)]),
+        sharpness: 10 - Double(index) * 0.05,
+        coverage: 0.8,
+        fingerprint: ScannerImageFingerprint(bits: UInt64(index)),
+        correctedImage: image
+      )
+    }
+
+    let resolution = try XCTUnwrap(ScannerImageProcessor().resolveBurst(candidates))
+    XCTAssertEqual(resolution.mode, .bestFrameFallback)
+    XCTAssertEqual(resolution.fallbackReason, .registrationRejected)
+    XCTAssertEqual(resolution.candidate.jpeg, Data([90]))
+  }
+
+  func testBurstFusionRejectsLocalizedThreePixelGlyphShiftAtCaptureResolution() throws {
+    let frames = try [
+      makeHighResolutionTextFixture(localShift: 0),
+      makeHighResolutionTextFixture(localShift: 3),
+      makeHighResolutionTextFixture(localShift: 3),
+    ]
+    let candidates = frames.enumerated().map { index, image in
+      ScannerProcessedCandidate(
+        jpeg: Data([UInt8(100 + index)]),
+        sharpness: 10 - Double(index) * 0.01,
+        coverage: 0.8,
+        fingerprint: ScannerImageFingerprint(bits: UInt64(index)),
+        correctedImage: image
+      )
+    }
+
+    let resolution = try XCTUnwrap(ScannerImageProcessor().resolveBurst(candidates))
+    XCTAssertEqual(resolution.mode, .bestFrameFallback)
+    XCTAssertEqual(resolution.fallbackReason, .registrationRejected)
+    XCTAssertEqual(resolution.candidate.jpeg, Data([100]))
+  }
+}
+
+private extension RunnerTests {
+  func makeHighResolutionTextFixture(localShift: Int) throws -> CGImage {
+    let width = 1200
+    let height = 1600
+    let bytesPerRow = width * 4
+    var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+    let context = try XCTUnwrap(CGContext(
+      data: &pixels,
+      width: width,
+      height: height,
+      bitsPerComponent: 8,
+      bytesPerRow: bytesPerRow,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(CGColor(red: 0.94, green: 0.92, blue: 0.86, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context.setFillColor(CGColor(red: 0.08, green: 0.10, blue: 0.13, alpha: 1))
+    for line in 0..<70 {
+      let y = 1450 - line * 19
+      let shift = (30...33).contains(line) ? localShift : 0
+      for glyph in 0..<34 {
+        let x = 100 + glyph * 27 + shift
+        context.fill(CGRect(x: x, y: y, width: glyph.isMultiple(of: 5) ? 5 : 3, height: 11))
+        if !glyph.isMultiple(of: 3) {
+          context.fill(CGRect(x: x, y: y, width: 18, height: 2))
+        }
+      }
+    }
+    return try XCTUnwrap(context.makeImage())
+  }
+
+  func makeFusionFixture(
+    offset: CGPoint,
+    noisePhase: Int?,
+    glare: Bool = false,
+    foreignContent: Bool = false,
+    rotationDegrees: CGFloat = 0
+  ) throws -> CGImage {
+    let width = 360
+    let height = 480
+    let bytesPerRow = width * 4
+    var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+    let context = try XCTUnwrap(CGContext(
+      data: &pixels,
+      width: width,
+      height: height,
+      bitsPerComponent: 8,
+      bytesPerRow: bytesPerRow,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(CGColor(red: 0.91, green: 0.89, blue: 0.83, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context.saveGState()
+    context.translateBy(x: offset.x, y: offset.y)
+    context.translateBy(x: CGFloat(width) / 2, y: CGFloat(height) / 2)
+    context.rotate(by: rotationDegrees * .pi / 180)
+    context.translateBy(x: -CGFloat(width) / 2, y: -CGFloat(height) / 2)
+    if foreignContent {
+      context.setFillColor(CGColor(red: 0.12, green: 0.30, blue: 0.52, alpha: 1))
+      for column in 0..<8 {
+        context.fill(CGRect(x: 28 + column * 40, y: 35, width: 18, height: 410))
+      }
+    } else {
+      context.setFillColor(CGColor(red: 0.10, green: 0.12, blue: 0.16, alpha: 1))
+      context.fill(CGRect(x: 34, y: 420, width: 210, height: 18))
+      for row in 0..<15 {
+        context.fill(CGRect(
+          x: 38,
+          y: 380 - row * 22,
+          width: row.isMultiple(of: 4) ? 275 : 235,
+          height: row.isMultiple(of: 3) ? 7 : 4
+        ))
+      }
+      context.setFillColor(CGColor(red: 0.25, green: 0.42, blue: 0.65, alpha: 1))
+      context.fillEllipse(in: CGRect(x: 265, y: 395, width: 54, height: 54))
+    }
+    context.restoreGState()
+    if let phase = noisePhase {
+      context.setFillColor(CGColor(red: 0.28, green: 0.23, blue: 0.19, alpha: 1))
+      for index in 0..<900 {
+        let x = (index * 67 + phase * 19) % (width - 24) + 12
+        let y = (index * 43 + phase * 31) % (height - 24) + 12
+        context.fill(CGRect(x: x, y: y, width: 1, height: 1))
+      }
+    }
+    if glare {
+      context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+      context.fill(CGRect(x: 158, y: 218, width: 44, height: 44))
+    }
+    return try XCTUnwrap(context.makeImage())
+  }
+
+  func rgbaBytes(_ image: CGImage) throws -> [UInt8] {
+    let bytesPerRow = image.width * 4
+    var pixels = [UInt8](repeating: 0, count: image.height * bytesPerRow)
+    let context = try XCTUnwrap(CGContext(
+      data: &pixels,
+      width: image.width,
+      height: image.height,
+      bitsPerComponent: 8,
+      bytesPerRow: bytesPerRow,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    return pixels
+  }
+
+  func meanAbsoluteDifference(_ lhs: CGImage, _ rhs: CGImage) throws -> Double {
+    XCTAssertEqual(lhs.width, rhs.width)
+    XCTAssertEqual(lhs.height, rhs.height)
+    let a = try rgbaBytes(lhs)
+    let b = try rgbaBytes(rhs)
+    var total = 0.0
+    for index in stride(from: 0, to: min(a.count, b.count), by: 4) {
+      total += abs(Double(a[index]) - Double(b[index]))
+      total += abs(Double(a[index + 1]) - Double(b[index + 1]))
+      total += abs(Double(a[index + 2]) - Double(b[index + 2]))
+    }
+    return total / Double(lhs.width * lhs.height * 3)
+  }
+
+  func rgbPixel(_ image: CGImage, at point: CGPoint) throws -> (UInt8, UInt8, UInt8) {
+    let pixels = try rgbaBytes(image)
+    let x = min(max(Int(point.x), 0), image.width - 1)
+    let y = min(max(Int(point.y), 0), image.height - 1)
+    let index = (y * image.width + x) * 4
+    return (pixels[index], pixels[index + 1], pixels[index + 2])
+  }
+}
+
 // Synthetic paper and printed panels exercise capture safety without customer assets.
 extension RunnerTests {
   func testPaperDetectorRejectsAlignedAndRotatedFilledPanelsOnClippedSheets() throws {
