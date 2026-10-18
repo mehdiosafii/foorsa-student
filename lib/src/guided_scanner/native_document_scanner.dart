@@ -39,6 +39,11 @@ class NativeDocumentScanner {
                 (response!['capabilities'] as List).whereType<String>(),
               )
             : const <String>[],
+        'burstProcessing': response?['burstProcessing'] is Map
+            ? Map<String, dynamic>.unmodifiable(
+                Map<String, dynamic>.from(response!['burstProcessing'] as Map),
+              )
+            : const <String, dynamic>{},
         'files': [
           for (var i = 0; i < pages.length; i++)
             {

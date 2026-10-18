@@ -27,14 +27,30 @@ void main() {
     reply({
       'pages': [first],
       'engine': 'avfoundation_vision',
-      'scannerBuild': 'custom-live-v4',
-      'capabilities': ['live_quadrilateral', 'automatic_single_page'],
+      'scannerBuild': 'custom-live-v5',
+      'capabilities': [
+        'live_quadrilateral',
+        'automatic_single_page',
+        'aligned_three_frame_median_fusion',
+      ],
+      'burstProcessing': {
+        'mode': 'aligned_median_fusion',
+        'framesConsidered': 3,
+        'framesUsed': 3,
+        'alignmentModels': ['translation', 'homography'],
+      },
     });
     final result = await scanner.scan();
     expect(result['processed'], true);
     expect(result['engine'], 'avfoundation_vision');
-    expect(result['scannerBuild'], 'custom-live-v4');
+    expect(result['scannerBuild'], 'custom-live-v5');
     expect(result['capabilities'], contains('live_quadrilateral'));
+    expect(result['burstProcessing'], {
+      'mode': 'aligned_median_fusion',
+      'framesConsidered': 3,
+      'framesUsed': 3,
+      'alignmentModels': ['translation', 'homography'],
+    });
     final files = result['files'] as List;
     expect(files.length, 1);
     expect(files[0]['name'], 'scan-page-1.jpg');

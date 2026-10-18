@@ -489,6 +489,27 @@ final class FoorsaScannerViewController: UIViewController {
   }
 
   private func finishBurst() {
+    guard let cancellation = captureCancellation else { return }
+    let generation = captureGeneration
+    let candidates = burstCandidates
+    pendingProcessingCount = 1
+    statusLabel.text = "Aligning the clearest captures…"
+    processingQueue.async { [weak self] in
+      guard let self, !cancellation.isCancelled else { return }
+      let resolution = self.processor.resolveBurst(
+        candidates,
+        isCancelled: { cancellation.isCancelled }
+      )
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.isCapturing,
+              self.captureGeneration == generation, !self.finishing else { return }
+        self.pendingProcessingCount = 0
+        self.completeBurst(resolution)
+      }
+    }
+  }
+
+  private func completeBurst(_ resolution: ScannerBurstResolution?) {
     defer {
       isCapturing = false
       captureCancellation?.cancel()
@@ -498,22 +519,38 @@ final class FoorsaScannerViewController: UIViewController {
       tracker.reset()
       burstCandidates.removeAll()
     }
-    switch completionFlow.resolve(burstCandidates) {
+    switch completionFlow.resolve(resolution.map { [$0.candidate] } ?? []) {
     case let .retry(message):
       showMessage(message)
     case let .complete(page):
+      guard let resolution else {
+        showMessage("Could not prepare this page. Keep every corner visible and try again.")
+        return
+      }
       finishing = true
       statusLabel.text = "Page captured. Preparing details…"
       UINotificationFeedbackGenerator().notificationOccurred(.success)
       UIAccessibility.post(notification: .announcement, argument: "Page captured. Preparing details.")
+      var burstProcessing: [String: Any] = [
+        "mode": resolution.mode.rawValue,
+        "framesConsidered": resolution.framesConsidered,
+        "framesUsed": resolution.framesUsed,
+        "alignmentModels": resolution.alignmentModels.map(\.rawValue),
+      ]
+      if let fallbackReason = resolution.fallbackReason {
+        burstProcessing["fallbackReason"] = fallbackReason.rawValue
+      }
       completion([
         "pages": [page],
         "engine": "avfoundation_vision",
-        "scannerBuild": "custom-live-v4",
+        "scannerBuild": "custom-live-v5",
         "capabilities": [
-          "live_quadrilateral", "stable_auto_capture", "best_of_three",
+          "live_quadrilateral", "stable_auto_capture", "three_frame_burst",
           "perspective_correction", "automatic_single_page",
+          resolution.mode == .alignedMedianFusion
+            ? "aligned_three_frame_median_fusion" : "sharpest_frame_fallback",
         ],
+        "burstProcessing": burstProcessing,
       ])
     case .ignored:
       break
