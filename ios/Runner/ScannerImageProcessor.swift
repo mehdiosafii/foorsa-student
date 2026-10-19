@@ -942,11 +942,21 @@ final class ScannerImageProcessor {
     let edge = max(image.extent.width, image.extent.height)
     guard edge > maximumEdge else { return image }
     let scale = maximumEdge / edge
-    let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-    return scaled.transformed(by: CGAffineTransform(
-      translationX: -scaled.extent.origin.x,
-      y: -scaled.extent.origin.y
-    ))
+    let origin = image.extent.origin
+    let target = CGRect(x: 0, y: 0, width: (image.extent.width * scale).rounded(.down),
+                        height: (image.extent.height * scale).rounded(.down))
+    // Lanczos, not the default affine resample: iOS's default is a low-quality
+    // filter that aliases one-pixel strokes, guilloche and passport MRZ edges
+    // (macOS defaults to high quality, so the CI tests never saw it). The
+    // input is clamped so the filter never pulls transparent pixels into the
+    // page's border, and the result is cut back to whole pixels.
+    return image
+      .transformed(by: CGAffineTransform(translationX: -origin.x, y: -origin.y))
+      .clampedToExtent()
+      .applyingFilter("CILanczosScaleTransform", parameters: [
+        kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1.0,
+      ])
+      .cropped(to: target)
   }
 
   private func thumbnailBytes(for image: CGImage, side: Int) -> [UInt8]? {

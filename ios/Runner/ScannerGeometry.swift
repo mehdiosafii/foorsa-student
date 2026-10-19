@@ -765,12 +765,14 @@ enum ScannerLivePhotoCrop {
     let xScale = min(1, liveAspect / photoAspect)
     let yScale = min(1, photoAspect / liveAspect)
     func point(_ p: CGPoint) -> CGPoint {
-      // Slight padding protects printed detail at the detected edge.
-      CGPoint(x: min(1, max(0, 0.5 + (p.x - 0.5) * xScale * 1.02)),
-              y: min(1, max(0, 0.5 + (p.y - 0.5) * yScale * 1.02)))
+      CGPoint(x: min(1, max(0, 0.5 + (p.x - 0.5) * xScale)),
+              y: min(1, max(0, 0.5 + (p.y - 0.5) * yScale)))
     }
+    // Slight padding protects printed detail at every detected edge. It is
+    // measured from the page's own centre, so an off-centre page keeps its
+    // margin on the side nearest the middle of the frame too.
     return ScannerQuadrilateral(topLeft: point(quad.topLeft), topRight: point(quad.topRight),
-      bottomRight: point(quad.bottomRight), bottomLeft: point(quad.bottomLeft))
+      bottomRight: point(quad.bottomRight), bottomLeft: point(quad.bottomLeft)).expanded(by: 0.02)
   }
 }
 
@@ -1107,6 +1109,8 @@ enum ScannerOutlineRefinement {
     let strayModelCorners: [Int]
     /// Summed pixel distance of the agreeing corners, for ranking.
     let distance: CGFloat
+    /// Proposal corner `i` matched model corner `(i + shift) % 4`.
+    var shift: Int = 0
   }
 
   /// Corners matched under the best cyclic alignment, so the result does not
@@ -1126,7 +1130,8 @@ enum ScannerOutlineRefinement {
         if gap <= limit { agreeing += 1; distance += gap } else { stray.append(corner) }
       }
       if agreeing > best.agreeing || (agreeing == best.agreeing && agreeing > 0 && distance < best.distance) {
-        best = Agreement(agreeing: agreeing, strayModelCorners: stray.sorted(), distance: distance)
+        best = Agreement(agreeing: agreeing, strayModelCorners: stray.sorted(), distance: distance,
+          shift: shift)
       }
     }
     return best
@@ -1159,6 +1164,15 @@ enum ScannerOutlineRefinement {
       }
       best = (proposal, candidate)
     }
-    return best?.proposal
+    guard let chosen = best else { return nil }
+    // Everything after this compares corners by position (the hold tracker,
+    // the settle check, the still crop, the perspective correction), so the
+    // proposal is relabelled into the model's corner order. A detector that
+    // listed the page from another corner would otherwise reset the hold or
+    // save the page turned a quarter.
+    let points = chosen.proposal.points
+    func corner(_ index: Int) -> CGPoint { points[(index - chosen.agreement.shift + 4) % 4] }
+    return ScannerQuadrilateral(topLeft: corner(0), topRight: corner(1),
+      bottomRight: corner(2), bottomLeft: corner(3))
   }
 }

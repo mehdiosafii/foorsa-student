@@ -161,7 +161,20 @@ final class FoorsaScannerViewController: UIViewController {
     if diagnosticPreviewOnly { return }
 #endif
     observeSession()
+    warmUpVision()
     configureSession()
+  }
+
+  /// The first document-model request loads Vision's model, which used to
+  /// delay the first outline. Running one request on a blank image while the
+  /// camera session starts moves that cost off the first frame. Same serial
+  /// queue as the frames, so it never runs alongside them.
+  private func warmUpVision() {
+    visionQueue.async {
+      let blank = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))
+        .cropped(to: CGRect(x: 0, y: 0, width: 256, height: 256))
+      _ = try? ScannerVisionFrameCache.observations(in: blank, purpose: .live, cache: nil)
+    }
   }
 
   override func viewWillAppear(_ animated: Bool) {
@@ -411,6 +424,9 @@ final class FoorsaScannerViewController: UIViewController {
           }
         }
         if camera.isFocusModeSupported(.continuousAutoFocus) { camera.focusMode = .continuousAutoFocus }
+        // Pages are always close: keeping autofocus on the near range stops it
+        // hunting toward the background behind a hand-held page.
+        if camera.isAutoFocusRangeRestrictionSupported { camera.autoFocusRangeRestriction = .near }
         if camera.isExposureModeSupported(.continuousAutoExposure) { camera.exposureMode = .continuousAutoExposure }
         camera.isSubjectAreaChangeMonitoringEnabled = true
         camera.unlockForConfiguration()
@@ -1258,7 +1274,11 @@ extension FoorsaScannerViewController: AVCapturePhotoCaptureDelegate {
           // CRM. A view that cannot be kept within the limits is not counted.
           if useful, self.profile.usesImagegen, !self.originalPhotos.append(data) { useful = false }
           if useful, let candidate {
-            self.burstCandidates = ScannerImageProcessor.retainingUsefulViews(self.burstCandidates + [candidate])
+            // v11 sends the JPEG it already made; the uncompressed page (about
+            // 19 MB) is not needed once the view is judged, so it is dropped.
+            let kept = ScannerProcessedCandidate(jpeg: candidate.jpeg, sharpness: candidate.sharpness,
+              coverage: candidate.coverage, fingerprint: candidate.fingerprint)
+            self.burstCandidates = ScannerImageProcessor.retainingUsefulViews(self.burstCandidates + [kept])
           } else if case let .failure(reason) = processingResult {
             self.lastPhotoFailure = reason
             // Say what to change while the next photo is taken.

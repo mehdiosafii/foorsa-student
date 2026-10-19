@@ -234,8 +234,13 @@ struct ScannerLiveFramingTests {
       [q([(0.079, 0.674), (0.703, 0.744), (0.756, 0.421), (0.155, 0.353)])]) == nil)
     // Corner labels do not matter: the same page listed from another corner.
     let relabelled = q([(0.923, 0.688), (0.861, 0.359), (0.241, 0.417), (0.287, 0.747)])
+    let thrownModel = q([(0.285, 0.754), (0.931, 0.691), (0.868, 0.355), (0.007, 0.004)])
     precondition(ScannerOutlineRefinement.agreement(of: relabelled,
-      with: q([(0.285, 0.754), (0.931, 0.691), (0.868, 0.355), (0.007, 0.004)]), imageSize: scene).agreeing == 3)
+      with: thrownModel, imageSize: scene).agreeing == 3)
+    // ...and the refined outline comes back in the model's corner order, so
+    // the hold, the settle check and the crop never see it turned a quarter.
+    precondition(refined(thrownModel, [relabelled]) == page05,
+      "a relabelled proposal is returned in the model's corner order")
     // A printed border four percent inside the page never stands in for it.
     let sheet = q([(0.15, 0.80), (0.85, 0.80), (0.85, 0.30), (0.15, 0.30)])
     let border = sheet.expanded(by: -0.08)
