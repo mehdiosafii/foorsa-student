@@ -686,6 +686,10 @@ final class FoorsaScannerViewController: UIViewController {
       settings.isHighResolutionPhotoEnabled = true
     }
     if let camera, camera.isFlashAvailable { settings.flashMode = .off }
+    if #available(iOS 18.0, *), !ScannerShutterSound.plays(photoNumber: photosTaken),
+       photoOutput.isShutterSoundSuppressionSupported {
+      settings.isShutterSoundSuppressionEnabled = true
+    }
     activePhotoIDs.insert(settings.uniqueID)
     if let quad = latestQuadrilateral ?? anchor, let size = latestImageSize,
        quad.isComplete(minimumArea: profile.minimumCaptureArea) {

@@ -16,6 +16,11 @@ struct ScannerAdaptiveCaptureTests {
       topRight: CGPoint(x: 0.73, y: 0.76), bottomRight: CGPoint(x: 0.73, y: 0.24),
       bottomLeft: CGPoint(x: 0.19, y: 0.15))
 
+    // One shutter sound per page: the burst's later photos are silent.
+    precondition(ScannerShutterSound.plays(photoNumber: 1))
+    precondition(!ScannerShutterSound.plays(photoNumber: 2))
+    precondition(!ScannerShutterSound.plays(photoNumber: 5))
+
     precondition(ScannerAdaptiveCaptureGuide.maximumAttempts == 8)
     precondition(ScannerAdaptiveCaptureGuide.maximumCandidates == 6)
     precondition(ScannerAdaptiveCaptureGuide.minimumFramesForEvaluation == 3)

@@ -1011,6 +1011,15 @@ enum ScannerPageLightingProbe {
 /// Imagegen capture keeps taking clear photos in one hold until enough are
 /// useful, instead of asking for a fresh hold before every photo. A photo in
 /// flight counts toward the goal so the camera never over-shoots.
+/// A page is taken as a short burst: the next photo is shot while the last
+/// one is checked. The system shutter would sound on every one of them, so
+/// only a page's first photo sounds; the rest are silenced where iOS allows
+/// it (iOS 18+, and not in regions that require the sound).
+enum ScannerShutterSound {
+  /// `photoNumber` counts the photos of the current page, starting at 1.
+  static func plays(photoNumber: Int) -> Bool { photoNumber <= 1 }
+}
+
 struct ScannerImagegenCapturePolicy {
   static let requiredUsefulViews = ScannerOriginalPhotoPool.minimumUsefulViews
   static let maximumAttempts = ScannerOriginalPhotoPool.maximumCount
