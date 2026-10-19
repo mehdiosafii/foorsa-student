@@ -7,8 +7,9 @@ import Vision
 // a page held over a busy background, sometimes with a hand across one edge,
 // versus the same clutter with no page at all. Synthetic scenes are not
 // camera frames; physical-device acceptance remains separate. The test prints
-// every case and fails on any page-free scene judged ready, or when the new
-// path finds fewer pages than the strict cascade it replaces for live use.
+// every case, what Vision saw for any scene it did not get right, and fails
+// on any page-free scene judged ready, any page larger than the view judged
+// ready, or a drop in the share of hand-held pages found.
 @main
 struct ScannerLiveDetectionTests {
   struct Generator {
@@ -97,15 +98,6 @@ struct ScannerLiveDetectionTests {
     return ScannerQuadrilateral(topLeft: p[0], topRight: p[1], bottomRight: p[2], bottomLeft: p[3])
   }
 
-  /// The frame turned a quarter turn counter-clockwise, origin at zero.
-  static func quarterTurn(_ image: CIImage) -> CIImage {
-    let e = image.extent
-    let t = CGAffineTransform(translationX: -e.minX, y: -e.minY)
-      .concatenating(CGAffineTransform(rotationAngle: .pi / 2))
-      .concatenating(CGAffineTransform(translationX: e.height, y: 0))
-    return image.transformed(by: t).cropped(to: CGRect(x: 0, y: 0, width: e.height, height: e.width))
-  }
-
   static func describe(_ label: String, _ quad: ScannerQuadrilateral?, confidence: Float,
                        truth: [CGPoint]?, size: CGSize, profile: FoorsaScannerProfile) {
     guard let quad else { print("    \(label) none"); return }
@@ -116,8 +108,8 @@ struct ScannerLiveDetectionTests {
       framing.rawValue, err, corners))
   }
 
-  /// What each Vision pass saw: the document model upright and turned a
-  /// quarter, and every rectangle proposal.
+  /// What Vision saw: the document model's own outline and every rectangle
+  /// proposal, printed for scenes the live path did not get right.
   static func diagnose(_ image: CIImage, truth: [CGPoint]?, size: CGSize, profile: FoorsaScannerProfile) {
     let segmentation = VNDetectDocumentSegmentationRequest()
     let rectangles = ScannerRectangleDetector.makeRequest(for: .live)
@@ -126,13 +118,6 @@ struct ScannerLiveDetectionTests {
       describe("model  ", ordered(ScannerQuadrilateral(document).points), confidence: document.confidence,
         truth: truth, size: size, profile: profile)
     } else { print("    model   none") }
-    let turned = VNDetectDocumentSegmentationRequest()
-    try? VNImageRequestHandler(ciImage: quarterTurn(image), orientation: .up).perform([turned])
-    if let document = turned.results?.first {
-      // (u', v') in the turned frame is (v', 1 - u') here.
-      let back = ScannerQuadrilateral(document).points.map { CGPoint(x: $0.y, y: 1 - $0.x) }
-      describe("turned ", ordered(back), confidence: document.confidence, truth: truth, size: size, profile: profile)
-    } else { print("    turned  none") }
     for (index, proposal) in (rectangles.results ?? []).enumerated() {
       describe("rect\(index)  ", ordered(ScannerQuadrilateral(proposal).points), confidence: proposal.confidence,
         truth: truth, size: size, profile: profile)
@@ -184,8 +169,9 @@ struct ScannerLiveDetectionTests {
       let live = ScannerRectangleDetector.detectLive(in: image, profile: profile)
       let strict = (try? ScannerRectangleDetector.detect(in: image, profile: profile, purpose: .live))
         .map(ScannerQuadrilateral.init)
-      let liveError = error(live.quadrilateral, truth, size: size)
-      let strictError = error(strict, truth, size: size)
+      // Compared corner for corner whatever each detector called top-left.
+      let liveError = error(live.quadrilateral.map { ordered($0.points) }, truth, size: size)
+      let strictError = error(strict.map { ordered($0.points) }, truth, size: size)
       if oversize {
         if live.framing == .ready { clippedReady += 1 }
       } else {
@@ -197,7 +183,9 @@ struct ScannerLiveDetectionTests {
       print(String(format: "page %02d %@%@%@ live=%@ err=%.3f strict err=%.3f", index,
         index % 2 == 1 ? "landscape" : "portrait", index % 3 == 0 ? "+hand" : "", oversize ? " (larger than the view)" : "",
         live.framing.rawValue, liveError, strictError))
-      diagnose(image, truth: truth, size: size, profile: profile)
+      if (live.framing == .ready) == oversize || liveError > 0.04 {
+        diagnose(image, truth: truth, size: size, profile: profile)
+      }
     }
     for index in 0..<12 {
       let image = CIImage(cgImage: scene(width: Int(size.width), height: Int(size.height), page: nil,
@@ -205,14 +193,17 @@ struct ScannerLiveDetectionTests {
       let live = ScannerRectangleDetector.detectLive(in: image, profile: profile)
       if live.framing == .ready { falseReady += 1 }
       print("clutter \(index) live=\(live.framing.rawValue)")
-      diagnose(image, truth: nil, size: size, profile: profile)
+      if live.framing != .searching { diagnose(image, truth: nil, size: size, profile: profile) }
     }
     print("SUMMARY in-frame ready+accurate new=\(found)/\(inFrame) strict=\(strictFound)/\(inFrame) wrongReady=\(wrongReady) clippedReady=\(clippedReady)/4 falseReady=\(falseReady)/12")
     precondition(falseReady == 0, "a scene without a page must never be ready to capture")
     precondition(clippedReady == 0, "a page larger than the view must ask to move back")
     precondition(found >= strictFound, "live detection must find at least the pages the strict cascade found")
-    precondition(found * 4 >= inFrame * 3, "most hand-held pages over clutter must be found")
-    precondition(wrongReady <= 2, "a wrong outline is rarely ready")
+    // Vision's document model alone found 14 of 20 and readied two outlines
+    // about ten percent off; refined by agreeing rectangle proposals it is
+    // expected to find 19 of 20 with none off.
+    precondition(found * 10 >= inFrame * 9, "nearly every hand-held page over clutter must be found")
+    precondition(wrongReady <= 1, "a wrong outline is rarely ready")
     print("PASS: synthetic hand-held pages, clipped pages and page-free clutter")
   }
 }

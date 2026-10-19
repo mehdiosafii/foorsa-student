@@ -1079,3 +1079,77 @@ extension ScannerQuadrilateral {
   static let fullFrame = ScannerQuadrilateral(topLeft: CGPoint(x: 0, y: 1), topRight: CGPoint(x: 1, y: 1),
     bottomRight: CGPoint(x: 1, y: 0), bottomLeft: CGPoint(x: 0, y: 0))
 }
+
+/// A precise rectangle proposal checked against Vision's document model.
+/// The model tells a page from clutter, but over a busy background it often
+/// throws one or two corners off to the frame's edge or onto a hand; the
+/// rectangle detector traces exact edges but cannot tell paper from a cushion.
+/// A proposal that shares the model's corners takes the best of both.
+enum ScannerOutlineRefinement {
+  /// Corners agree within this share of the proposal's own diagonal, which is
+  /// tighter than the inset of a printed border inside the page.
+  static let cornerTolerance: CGFloat = 0.025
+  /// A model corner this close to the frame's edge has run off the page.
+  static let edgeMargin: CGFloat = 0.02
+
+  struct Agreement: Equatable {
+    let agreeing: Int
+    /// Model corners, by index, that matched none of the proposal's corners.
+    let strayModelCorners: [Int]
+    /// Summed pixel distance of the agreeing corners, for ranking.
+    let distance: CGFloat
+  }
+
+  /// Corners matched under the best cyclic alignment, so the result does not
+  /// depend on which corner each detector called top-left.
+  static func agreement(of proposal: ScannerQuadrilateral, with model: ScannerQuadrilateral,
+                        imageSize: CGSize) -> Agreement {
+    func pixel(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * imageSize.width, y: p.y * imageSize.height) }
+    let a = proposal.points.map(pixel), b = model.points.map(pixel)
+    let diagonal = max(hypot(a[0].x - a[2].x, a[0].y - a[2].y), hypot(a[1].x - a[3].x, a[1].y - a[3].y))
+    let limit = diagonal * cornerTolerance
+    var best = Agreement(agreeing: 0, strayModelCorners: [0, 1, 2, 3], distance: .infinity)
+    for shift in 0..<4 {
+      var agreeing = 0, distance: CGFloat = 0, stray: [Int] = []
+      for index in 0..<4 {
+        let corner = (index + shift) % 4
+        let gap = hypot(a[index].x - b[corner].x, a[index].y - b[corner].y)
+        if gap <= limit { agreeing += 1; distance += gap } else { stray.append(corner) }
+      }
+      if agreeing > best.agreeing || (agreeing == best.agreeing && agreeing > 0 && distance < best.distance) {
+        best = Agreement(agreeing: agreeing, strayModelCorners: stray.sorted(), distance: distance)
+      }
+    }
+    return best
+  }
+
+  /// Three shared corners place the page. Two are enough only when the
+  /// model's other two ran off to the frame's edge: a page inside the frame
+  /// whose model corners stay inside it (an open booklet, a two-page spread)
+  /// keeps its own outline rather than shrinking to one half.
+  static func accepts(_ agreement: Agreement, model: ScannerQuadrilateral) -> Bool {
+    if agreement.agreeing >= 3 { return true }
+    guard agreement.agreeing == 2 else { return false }
+    return agreement.strayModelCorners.allSatisfy { index in
+      let p = model.points[index]
+      return p.x <= edgeMargin || p.x >= 1 - edgeMargin || p.y <= edgeMargin || p.y >= 1 - edgeMargin
+    }
+  }
+
+  /// The proposal that sharpens `model`, if one agrees closely enough.
+  static func refine(model: ScannerQuadrilateral, proposals: [ScannerQuadrilateral],
+                     imageSize: CGSize) -> ScannerQuadrilateral? {
+    var best: (proposal: ScannerQuadrilateral, agreement: Agreement)?
+    for proposal in proposals where proposal.isPlausiblePage(in: imageSize) {
+      let candidate = agreement(of: proposal, with: model, imageSize: imageSize)
+      guard accepts(candidate, model: model) else { continue }
+      if let current = best?.agreement {
+        let more = candidate.agreeing > current.agreeing
+        let closer = candidate.agreeing == current.agreeing && candidate.distance < current.distance
+        guard more || closer else { continue }
+      }
+      best = (proposal, candidate)
+    }
+    return best?.proposal
+  }
+}

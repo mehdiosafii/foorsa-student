@@ -199,6 +199,62 @@ struct ScannerLiveFramingTests {
     replaced.photoResolved(usefulViews: 1)
     precondition(replaced.decision(at: 2) == .shootNext, "a dropped soft view asks for one more photo")
 
-    print("PASS: live framing states, plausibility, guidance copy, outline smoothing, lighting probe, miss-tolerant hold, imagegen one-hold capture policy")
+    // Outline refinement, on the corners Vision reported for synthetic
+    // hand-held scenes (macOS run of scanner_live_detection_tests): the
+    // document model threw corners to the frame edge or onto a hand while a
+    // rectangle proposal traced the page.
+    let scene = CGSize(width: 1080, height: 1440)
+    func q(_ c: [(CGFloat, CGFloat)]) -> ScannerQuadrilateral {
+      ScannerQuadrilateral(topLeft: CGPoint(x: c[0].0, y: c[0].1), topRight: CGPoint(x: c[1].0, y: c[1].1),
+        bottomRight: CGPoint(x: c[2].0, y: c[2].1), bottomLeft: CGPoint(x: c[3].0, y: c[3].1))
+    }
+    func refined(_ model: ScannerQuadrilateral, _ proposals: [ScannerQuadrilateral]) -> ScannerQuadrilateral? {
+      ScannerOutlineRefinement.refine(model: model, proposals: proposals, imageSize: scene)
+    }
+    // One corner thrown to the frame's corner: three agree.
+    let page05 = q([(0.287, 0.747), (0.923, 0.688), (0.861, 0.359), (0.241, 0.417)])
+    precondition(refined(q([(0.285, 0.754), (0.931, 0.691), (0.868, 0.355), (0.007, 0.004)]), [page05]) == page05)
+    // One corner dragged onto a hand over the edge: three agree, and the
+    // proposal wins over a model outline that was itself "ready".
+    let page06 = q([(0.231, 0.845), (0.900, 0.841), (0.865, 0.158), (0.253, 0.162)])
+    let model06 = q([(0.229, 0.852), (0.903, 0.848), (0.875, 0.152), (0.083, 0.141)])
+    precondition(ScannerLiveFramingPolicy.classify(model06, imageSize: scene, profile: diploma, isClear: true) == .ready)
+    precondition(refined(model06, [page06]) == page06)
+    // Two corners ran to the frame's edge: two agree, and the stray two are at the edge.
+    let page13 = q([(0.073, 0.764), (0.815, 0.765), (0.790, 0.388), (0.096, 0.387)])
+    let model13 = q([(0.069, 0.770), (1.000, 0.996), (1.000, 0.234), (0.090, 0.383)])
+    let clipped13 = q([(0.012, 0.896), (0.834, 0.772), (0.808, 0.373), (0.085, 0.373)])
+    precondition(refined(model13, [clipped13, page13]) == page13, "the agreeing proposal, not a clipped neighbour")
+    let page15 = q([(0.191, 0.661), (0.881, 0.722), (0.923, 0.366), (0.262, 0.307)])
+    let cushion15 = q([(0.018, 0.624), (0.419, 0.624), (0.418, 0.047), (0.016, 0.047)])
+    precondition(refined(q([(0.222, 0.996), (0.889, 0.730), (0.938, 0.359), (0.007, 0.043)]), [page15, cushion15]) == page15)
+    // Two diagonal corners agree but one stray corner is inside the frame:
+    // not enough to replace the model (page 11 stays for the next frame).
+    precondition(refined(q([(0.104, 0.996), (0.715, 0.750), (0.917, 0.188), (0.153, 0.352)]),
+      [q([(0.079, 0.674), (0.703, 0.744), (0.756, 0.421), (0.155, 0.353)])]) == nil)
+    // Corner labels do not matter: the same page listed from another corner.
+    let relabelled = q([(0.923, 0.688), (0.861, 0.359), (0.241, 0.417), (0.287, 0.747)])
+    precondition(ScannerOutlineRefinement.agreement(of: relabelled,
+      with: q([(0.285, 0.754), (0.931, 0.691), (0.868, 0.355), (0.007, 0.004)]), imageSize: scene).agreeing == 3)
+    // A printed border four percent inside the page never stands in for it.
+    let sheet = q([(0.15, 0.80), (0.85, 0.80), (0.85, 0.30), (0.15, 0.30)])
+    let border = sheet.expanded(by: -0.08)
+    precondition(ScannerOutlineRefinement.agreement(of: border, with: sheet, imageSize: scene).agreeing == 0)
+    precondition(refined(sheet, [border]) == nil)
+    // One page of an open booklet shares two corners with the whole spread,
+    // whose other corners are inside the frame: the spread keeps its outline.
+    let spread = q([(0.10, 0.70), (0.90, 0.70), (0.90, 0.35), (0.10, 0.35)])
+    let rightPage = q([(0.50, 0.70), (0.90, 0.70), (0.90, 0.35), (0.50, 0.35)])
+    precondition(ScannerOutlineRefinement.agreement(of: rightPage, with: spread, imageSize: scene).agreeing == 2)
+    precondition(refined(spread, [rightPage]) == nil)
+    // Page-free clutter whose model outline hugs the frame matches nothing.
+    precondition(refined(q([(0.007, 0.656), (0.924, 0.684), (0.993, 0.004), (0.083, 0.004)]),
+      [q([(0.148, 0.852), (0.414, 0.889), (0.432, 0.665), (0.125, 0.665)])]) == nil)
+    // A model that is already right is sharpened by the proposal tracing it.
+    let model00 = q([(0.229, 0.719), (0.792, 0.754), (0.868, 0.137), (0.285, 0.102)])
+    let page00 = q([(0.214, 0.719), (0.793, 0.754), (0.867, 0.136), (0.275, 0.101)])
+    precondition(refined(model00, [q([(0.132, 0.477), (0.304, 0.488), (0.317, 0.362), (0.147, 0.316)]), page00]) == page00)
+
+    print("PASS: live framing states, plausibility, guidance copy, outline smoothing, lighting probe, miss-tolerant hold, imagegen one-hold capture policy, outline refinement")
   }
 }

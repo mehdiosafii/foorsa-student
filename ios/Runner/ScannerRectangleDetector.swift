@@ -1282,26 +1282,22 @@ extension ScannerRectangleDetector {
     return strictObservation.framing == .ready ? strictObservation : modelObservation
   }
 
-  /// Vision's document segmentation, sharpened by a rectangle proposal only
-  /// when that proposal agrees on all four corners.
+  /// Vision's document segmentation, with its edges taken from a rectangle
+  /// proposal that shares its corners. Over a busy background the model often
+  /// gets the page right but throws one or two corners to the frame's edge or
+  /// onto a hand; in synthetic hand-held scenes the matching proposal was
+  /// within one percent of every page (see ScannerOutlineRefinement).
   static func documentModelQuadrilateral(in image: CIImage, cache: ScannerVisionFrameCache,
                                          purpose: ScannerDetectionPurpose = .live) -> ScannerQuadrilateral? {
     guard let vision = try? ScannerVisionFrameCache.observations(in: image, purpose: purpose, cache: cache),
           let document = vision.document, document.confidence >= 0.6 else { return nil }
     let size = image.extent.size
     let model = ScannerQuadrilateral(document)
-    guard model.isPlausiblePage(in: size) else { return nil }
-    let diagonal = hypot(document.boundingBox.width * size.width, document.boundingBox.height * size.height)
-    func agrees(_ proposal: VNRectangleObservation) -> Bool {
-      zip(ScannerQuadrilateral(proposal).points, model.points).allSatisfy {
-        hypot(($0.x - $1.x) * size.width, ($0.y - $1.y) * size.height) <= diagonal * 0.03
-      }
+    if let refined = ScannerOutlineRefinement.refine(model: model,
+         proposals: vision.proposals.map { ScannerQuadrilateral($0) }, imageSize: size) {
+      return refined
     }
-    if let sharper = vision.proposals.filter(agrees).max(by: { $0.confidence < $1.confidence }) {
-      let quadrilateral = ScannerQuadrilateral(sharper)
-      if quadrilateral.isPlausiblePage(in: size) { return quadrilateral }
-    }
-    return model
+    return model.isPlausiblePage(in: size) ? model : nil
   }
 
   /// Still fallback when the strict cascade rejects a hand-held page: the
