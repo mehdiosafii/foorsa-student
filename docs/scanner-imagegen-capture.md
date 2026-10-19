@@ -33,8 +33,16 @@ invocation captures **one physical page**.
 
 `ScannerRectangleDetector.detectLive` classifies each frame with
 `ScannerLiveFramingPolicy` (`searching`, `ready`, `tooSmall`, `clipped`,
-`wrongShape`, `blurry`). The document model's outline is sharpened by a
-rectangle proposal only when it agrees on all four corners. When the model
+`wrongShape`, `blurry`). The document model tells the page from the clutter,
+but over a busy background it often throws one or two corners to the frame's
+edge or onto a hand, while the rectangle detector traces the page's real edges
+without knowing paper from a cushion. So the outline is a rectangle proposal
+that shares the model's corners (`ScannerOutlineRefinement`): three corners
+within 2.5% of the page's diagonal, or two when the model's other two ran off
+to the frame's edge. On synthetic hand-held scenes the model alone found 14 of
+20 pages and readied two outlines about ten percent off; a printed border
+inside the page, one page of an open booklet whose other corners stay in view,
+and clutter rectangles keep the model's own outline. When the model
 does not see a complete page, the strict pixel-evidence cascade still runs on
 the same Vision pass, but an inner printed panel never stands in for a page
 the model sees cut off. Passports keep the booklet-aware cascade first; a
