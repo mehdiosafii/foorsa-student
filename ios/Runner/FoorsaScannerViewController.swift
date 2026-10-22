@@ -79,25 +79,36 @@ final class FoorsaScannerViewController: UIViewController {
   private let torchButton = UIButton(type: .system)
   private let interruptionView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
   private var tracker = ScannerStabilityTracker()
+  private var shotTracker = ScannerStabilityTracker()
+  private var smoother = ScannerOutlineSmoother()
   private var completionFlow = ScannerSinglePageCompletionFlow()
   private var lastAnalysisTime: TimeInterval = 0
   private var latestQuadrilateral: ScannerQuadrilateral?
   private var latestImageSize: CGSize?
   private var latestDetectionTime: TimeInterval = 0
+  private var liveLighting: ScannerLiveLighting = .good
+  private var readySince: TimeInterval?
+  private var lastEvidenceTime: TimeInterval = 0
+  private var lastEvidenceQuadrilateral: ScannerQuadrilateral?
+  private var analysisStartedAt: TimeInterval = 0
+  private var shutterIdleSince: TimeInterval = 0
   private var isAnalyzing = false
   private var isCapturing = false
+  private var manualCapture = false
+  private var capturePolicy: ScannerImagegenCapturePolicy?
+  private var lightingAtFirstShot: ScannerLiveLighting = .good
+  private var awaitingSteadyShot = false
+  private var awaitingMovedShot: TimeInterval?
+  private var lastShotQuadrilateral: ScannerQuadrilateral?
+  private var lastPhotoFailure: ScannerImageProcessor.PhotoProcessingFailure?
   private var burstRemaining = 0
   private var photosTaken = 0
   private var burstCandidates: [ScannerProcessedCandidate] = []
   private var activePhotoIDs = Set<Int64>()
   private var originalPhotos = ScannerOriginalPhotoPool()
   private var capturedGeometry: [Int64: (quad: ScannerQuadrilateral, size: CGSize)] = [:]
-  private var pendingProcessingCount = 0
   private var captureGeneration = 0
   private var captureCancellation: ScannerBurstCancellationToken?
-  private var lightingAngleGuide: ScannerAdaptiveCaptureGuide?
-  private var nextViewDetail = "Tilt the phone slightly to reveal more detail. Keep the page flat."
-  private var capturePhase = 0
   private var captureSettleEpoch = 0
   private var captureSettling = false
   private var captureSettlePolicy = ScannerCaptureSettlePolicy()
@@ -105,9 +116,13 @@ final class FoorsaScannerViewController: UIViewController {
   private var captureSettleCameraType: String?
   private var lightingRetryAnchor: ScannerQuadrilateral?
   private var lightingRetryMissingSince: TimeInterval?
+  private var lightingRetrySince: TimeInterval?
   private static let captureRetryMessage = "Reframe the page"
+  private static let manualShutterDelay: TimeInterval = 7
+  private static let lightingGrace: TimeInterval = 1.5
+  private static let angleRequestLimit: TimeInterval = 4
   private var retryTitle = captureRetryMessage
-  private var retryDetail = "Keep the page flat and all four corners visible. Tilt slightly, then hold still."
+  private var retryDetail = "Reframe the page, keep all four corners visible, and hold still."
   private var lastCaptureTime: TimeInterval = 0
   private var configured = false
   private var finishing = false
@@ -119,11 +134,17 @@ final class FoorsaScannerViewController: UIViewController {
   private var portraitConstraints: [NSLayoutConstraint] = []
   private var landscapeConstraints: [NSLayoutConstraint] = []
   private var usesLandscapeControls = false
+  private let shutterButton = UIButton(type: .custom)
 
   init(profile: FoorsaScannerProfile, completion: @escaping Completion) {
     self.profile = profile
     self.completion = completion
-    tracker = ScannerStabilityTracker(minimumArea: profile.minimumCaptureArea)
+    // The first hold tolerates one missed preview frame; later photos in the
+    // same capture need only a short steady moment.
+    tracker = ScannerStabilityTracker(requiredDuration: 0.6, minimumArea: profile.minimumCaptureArea,
+      requiredObservations: 4, toleratedMisses: 1)
+    shotTracker = ScannerStabilityTracker(requiredDuration: 0.25, minimumArea: profile.minimumCaptureArea,
+      requiredObservations: 2, toleratedMisses: 1)
     super.init(nibName: nil, bundle: nil)
     modalPresentationStyle = .fullScreen
   }
@@ -140,7 +161,20 @@ final class FoorsaScannerViewController: UIViewController {
     if diagnosticPreviewOnly { return }
 #endif
     observeSession()
+    warmUpVision()
     configureSession()
+  }
+
+  /// The first document-model request loads Vision's model, which used to
+  /// delay the first outline. Running one request on a blank image while the
+  /// camera session starts moves that cost off the first frame. Same serial
+  /// queue as the frames, so it never runs alongside them.
+  private func warmUpVision() {
+    visionQueue.async {
+      let blank = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))
+        .cropped(to: CGRect(x: 0, y: 0, width: 256, height: 256))
+      _ = try? ScannerVisionFrameCache.observations(in: blank, purpose: .live, cache: nil)
+    }
   }
 
   override func viewWillAppear(_ animated: Bool) {
@@ -162,7 +196,7 @@ final class FoorsaScannerViewController: UIViewController {
     interruptionView.frame = view.bounds
     updateVideoOrientation()
     updatePreviewGeometry()
-    renderQuadrilateral(latestQuadrilateral, imageSize: latestImageSize)
+    renderQuadrilateral(smoother.current, imageSize: latestImageSize)
   }
 
   override func viewWillLayoutSubviews() {
@@ -190,8 +224,13 @@ final class FoorsaScannerViewController: UIViewController {
     }
     let fallbackSize = usesLandscapeControls
       ? CGSize(width: 4, height: 3) : CGSize(width: 3, height: 4)
-    let geometry = ScannerPreviewGeometry(imageSize: latestImageSize ?? fallbackSize,
-      availableRect: available, guideAspectRatio: overlay.guideAspectRatio)
+    let imageSize = latestImageSize ?? fallbackSize
+    // A paper of unknown orientation gets corner marks shaped like the camera
+    // view: a portrait page guide made students turn landscape diplomas.
+    let guideAspect = profile.layout == .adaptive && imageSize.height > 0
+      ? imageSize.width / imageSize.height : overlay.guideAspectRatio
+    let geometry = ScannerPreviewGeometry(imageSize: imageSize,
+      availableRect: available, guideAspectRatio: guideAspect)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     previewLayer.frame = geometry.previewRect
@@ -258,6 +297,19 @@ final class FoorsaScannerViewController: UIViewController {
     torchButton.accessibilityLabel = "Turn torch on"
     view.addSubview(torchButton)
 
+    shutterButton.translatesAutoresizingMaskIntoConstraints = false
+    shutterButton.isHidden = true
+    shutterButton.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+    shutterButton.layer.cornerRadius = 32
+    shutterButton.layer.borderWidth = 4
+    shutterButton.layer.borderColor = UIColor.black.withAlphaComponent(0.35).cgColor
+    shutterButton.setImage(UIImage(systemName: "camera.fill"), for: .normal)
+    shutterButton.tintColor = .black
+    shutterButton.accessibilityLabel = "Take the photo"
+    shutterButton.accessibilityHint = "Takes the photo now if automatic capture has not started"
+    shutterButton.addTarget(self, action: #selector(shutterPressed), for: .touchUpInside)
+    view.addSubview(shutterButton)
+
     interruptionView.isHidden = true
     interruptionView.translatesAutoresizingMaskIntoConstraints = false
     let resume = UIButton(type: .system)
@@ -275,8 +327,12 @@ final class FoorsaScannerViewController: UIViewController {
       guidanceView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 20),
       guidanceView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20),
       guidanceView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18),
+      shutterButton.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+      shutterButton.bottomAnchor.constraint(equalTo: guidanceView.topAnchor, constant: -14),
     ]
     landscapeConstraints = [
+      shutterButton.trailingAnchor.constraint(equalTo: guidanceView.leadingAnchor, constant: -16),
+      shutterButton.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
       guidanceView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
       guidanceView.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor, multiplier: 0.34),
       guidanceView.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor, constant: 20),
@@ -300,6 +356,8 @@ final class FoorsaScannerViewController: UIViewController {
       torchButton.centerYAnchor.constraint(equalTo: cancel.centerYAnchor),
       torchButton.widthAnchor.constraint(equalToConstant: 48),
       torchButton.heightAnchor.constraint(equalToConstant: 48),
+      shutterButton.widthAnchor.constraint(equalToConstant: 64),
+      shutterButton.heightAnchor.constraint(equalToConstant: 64),
       interruptionView.topAnchor.constraint(equalTo: view.topAnchor),
       interruptionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       interruptionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -366,6 +424,9 @@ final class FoorsaScannerViewController: UIViewController {
           }
         }
         if camera.isFocusModeSupported(.continuousAutoFocus) { camera.focusMode = .continuousAutoFocus }
+        // Pages are always close: keeping autofocus on the near range stops it
+        // hunting toward the background behind a hand-held page.
+        if camera.isAutoFocusRangeRestrictionSupported { camera.autoFocusRangeRestriction = .near }
         if camera.isExposureModeSupported(.continuousAutoExposure) { camera.exposureMode = .continuousAutoExposure }
         camera.isSubjectAreaChangeMonitoringEnabled = true
         camera.unlockForConfiguration()
@@ -459,74 +520,88 @@ final class FoorsaScannerViewController: UIViewController {
     completion(["cancelled": true])
   }
 
-  private func beginCapture() {
+  // MARK: Capture (custom-live-v11)
+  //
+  // One hold, a few photos. Once the page is ready and steady the camera
+  // settles focus and exposure and takes a photo; the next photo is taken as
+  // soon as the previous one is delivered, while that one is still checked.
+  // Two useful photos finish the page. There is no tilt sequence and no fixed
+  // number of angles: a second angle is requested only after shadow or glare.
+
+  private func beginCapture(manual: Bool = false) {
     guard !isCapturing, !finishing, configured, session.isRunning, !session.isInterrupted else { return }
 #if SCANNER_DIAGNOSTICS
-    diagnosticEvent?(["event": "capture_started"])
+    diagnosticEvent?(["event": "capture_started", "manual": manual])
 #endif
+    let now = CACurrentMediaTime()
     isCapturing = true
-    setCaptureAnalysisPaused(true)
+    manualCapture = manual
     captureGeneration += 1
     captureCancellation = ScannerBurstCancellationToken()
-    burstRemaining = 1
+    capturePolicy = ScannerImagegenCapturePolicy(startedAt: now)
+    lightingAtFirstShot = manual ? .good : liveLighting
+    awaitingSteadyShot = false
+    awaitingMovedShot = nil
+    lastShotQuadrilateral = nil
+    lastPhotoFailure = nil
+    burstRemaining = 0
     photosTaken = 0
-    lightingAngleGuide = latestQuadrilateral.flatMap { anchor in
-      latestImageSize.map {
-        ScannerAdaptiveCaptureGuide(anchor: anchor, imageSize: $0, minimumArea: profile.minimumCaptureArea,
-          at: CACurrentMediaTime(), requiresPerspectiveChange: !profile.usesImagegen)
-      }
-    }
-    nextViewDetail = nextCaptureInstruction
     originalPhotos.reset()
     capturedGeometry.removeAll()
     burstCandidates.removeAll(keepingCapacity: true)
     activePhotoIDs.removeAll(keepingCapacity: true)
-    pendingProcessingCount = 0
     tracker.reset()
-    lastCaptureTime = CACurrentMediaTime()
+    shotTracker.reset()
+    readySince = nil
+    lightingRetryAnchor = nil
+    lastCaptureTime = now
     setCaptureControls(enabled: false)
-    guidanceView.show(title: "Hold still", detail: "Capturing clear detail automatically.",
-      stage: 0, accepted: 0, holding: true)
+    updateShutterVisibility(at: now)
+    guidanceView.show(ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: profile.layout), holding: true)
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-    captureNextCandidate()
-    armCaptureTimeout(seconds: 20, waitingForAngle: false)
     let generation = captureGeneration
-    DispatchQueue.main.asyncAfter(deadline: .now() + ScannerAdaptiveCaptureGuide.totalCaptureDuration) { [weak self] in
+    DispatchQueue.main.asyncAfter(deadline: .now() + ScannerImagegenCapturePolicy.totalDuration + 8) { [weak self] in
       guard let self, self.isCapturing, self.captureGeneration == generation else { return }
-      self.retryLightingCapture(detail: "Not enough clear views were captured. Keep the page flat, reframe, and try again.")
+      self.retryCapture(title: "Try again", detail: "The camera took too long. Keep the page in view and hold still.")
     }
+    advanceCapture()
   }
 
-  private func armCaptureTimeout(seconds: TimeInterval, waitingForAngle: Bool,
-                                 failureMessage: String = "The camera took too long. Keep the document visible and try again.") {
-    capturePhase += 1
-    let phase = capturePhase
-    let generation = captureGeneration
-    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-      guard let self, self.isCapturing, self.captureGeneration == generation,
-            self.capturePhase == phase else { return }
-      if waitingForAngle {
-        self.retryLightingCapture()
-      } else {
-        self.abortCapture()
-        self.showMessage(failureMessage)
+  /// The single decision point after every capture event.
+  private func advanceCapture() {
+    guard isCapturing, !finishing, let policy = capturePolicy else { return }
+    switch policy.decision(at: CACurrentMediaTime()) {
+    case .complete:
+      completeCapture()
+    case .giveUp:
+      retryCapture(title: "Try again", detail: lastPhotoFailure == .documentBoundaryNotFound
+        ? "The page edges weren’t clear. Fit the whole page in view and hold still."
+        : burstCandidates.isEmpty
+          ? "The photos weren’t sharp. Hold the phone steady with the whole page in view."
+          : "Hold still a moment longer for one more clear photo.")
+    case .waitForResults:
+      break
+    case .shootNext:
+      guard !captureSettling, burstRemaining == 0, activePhotoIDs.isEmpty,
+            !awaitingSteadyShot, awaitingMovedShot == nil else { return }
+      // A second angle helps only when the first view had shadow or glare:
+      // moving the phone moves both, so later views show what was hidden.
+      if !manualCapture, policy.attempts == 1,
+         lightingAtFirstShot == .shadow || lightingAtFirstShot == .glare {
+        awaitingMovedShot = CACurrentMediaTime()
+        shotTracker.reset()
+        setCaptureAnalysisPaused(false)
+        guidanceView.show(title: "Tilt the phone slightly",
+          detail: lightingAtFirstShot == .glare
+            ? "Move the reflection off the page, then hold still."
+            : "Move the shadow off the page, then hold still.",
+          compact: "Tilt slightly.", holding: false)
+        UIAccessibility.post(notification: .announcement, argument: "Tilt the phone slightly, then hold still.")
+        return
       }
+      burstRemaining = 1
+      beginCaptureSettling()
     }
-  }
-
-  private func captureNextCandidate() {
-    guard !finishing, isCapturing else { return }
-    guard !captureSettling else { return }
-    guard burstRemaining > 0 else {
-      finishBurstIfReady()
-      return
-    }
-    guard photosTaken < ScannerAdaptiveCaptureGuide.maximumAttempts,
-          !profile.usesImagegen || !originalPhotos.isFull else {
-      retryLightingCapture()
-      return
-    }
-    beginCaptureSettling()
   }
 
   private func beginCaptureSettling() {
@@ -538,12 +613,10 @@ final class FoorsaScannerViewController: UIViewController {
     captureSettlePolicy.begin(at: CACurrentMediaTime())
     captureSettleAnchor = latestQuadrilateral
     captureSettleCameraType = nil
-    // Keep checking the page while focus settles. The old accepted outline
-    // cannot authorize a photo after the user moves to another angle.
+    // Keep checking the page while focus settles: an outline accepted before
+    // the student moved cannot authorize this photo.
     setCaptureAnalysisPaused(false)
-    guidanceView.show(title: "Hold still", detail: "Focusing and balancing light…",
-      stage: min(2, burstCandidates.count),
-      accepted: burstCandidates.count, holding: true)
+    guidanceView.show(ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: profile.layout), holding: true)
 #if SCANNER_DIAGNOSTICS
     diagnosticEvent?(cameraDiagnosticFields(event: "capture_settle_started", elapsed: 0))
 #endif
@@ -554,15 +627,13 @@ final class FoorsaScannerViewController: UIViewController {
     guard captureSettling, isCapturing, !finishing,
           captureSettleEpoch == epoch, captureGeneration == generation else { return }
     let now = CACurrentMediaTime()
-    if lightingAngleGuide?.hasExpired(at: now) == true {
-      retryLightingCapture()
-      return
-    }
     let camera = (session.inputs.first as? AVCaptureDeviceInput)?.device
-    let documentIsStable = latestQuadrilateral.flatMap { current in
+    if captureSettleAnchor == nil { captureSettleAnchor = latestQuadrilateral }
+    // A photo the student asked for by hand only waits for the lens.
+    let documentIsStable = manualCapture || (latestQuadrilateral.flatMap { current in
       captureSettleAnchor.map { current.maximumCornerDistance(to: $0) <= 0.018 }
     } == true && latestDetectionTime >= (captureSettlePolicy.startedAt ?? now)
-      && now - latestDetectionTime <= ScannerStabilityTracker.maximumObservationAge
+      && now - latestDetectionTime <= ScannerStabilityTracker.maximumObservationAge)
     let activeCamera = camera?.activePrimaryConstituent ?? camera
     let cameraType = activeCamera?.deviceType.rawValue
     let cameraIsStable = cameraType != nil && captureSettleCameraType == cameraType
@@ -576,53 +647,33 @@ final class FoorsaScannerViewController: UIViewController {
     )
     switch observation {
     case .ready:
-      let settleElapsed = captureSettlePolicy.startedAt.map { now - $0 } ?? 0
-      captureSettling = false
-      captureSettlePolicy.cancel()
-      captureSettleAnchor = nil
-      setCaptureAnalysisPaused(true)
-      guard burstRemaining > 0 else { return }
-      // Only count a photo once the still has actually been handed to AVFoundation.
-      burstRemaining -= 1
-      photosTaken += 1
-      let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
-      settings.photoQualityPrioritization = .quality
-      if #available(iOS 16.0, *) {
-        settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
-      } else {
-        settings.isHighResolutionPhotoEnabled = true
-      }
-      if let camera, camera.isFlashAvailable { settings.flashMode = .off }
-      activePhotoIDs.insert(settings.uniqueID)
-      if profile.usesImagegen, let quad = latestQuadrilateral, let size = latestImageSize,
-         quad.isComplete(minimumArea: profile.minimumCaptureArea) {
-        capturedGeometry[settings.uniqueID] = (quad, size)
-      }
 #if SCANNER_DIAGNOSTICS
       diagnosticEvent?(cameraDiagnosticFields(event: "capture_triggered",
-        elapsed: settleElapsed))
+        elapsed: captureSettlePolicy.startedAt.map { now - $0 } ?? 0))
 #endif
-      photoOutput.capturePhoto(with: settings, delegate: self)
+      takePhoto(camera: camera)
     case .expired:
-      captureSettling = false
-      captureSettlePolicy.cancel()
 #if SCANNER_DIAGNOSTICS
       var expiry = cameraDiagnosticFields(event: "capture_settle_expired", elapsed: ScannerCaptureSettlePolicy.maximumWait)
       expiry["documentIsStable"] = documentIsStable
       diagnosticEvent?(expiry)
 #endif
-      let detail = documentIsStable
-        ? "The camera is still focusing. Hold this angle and try again."
-        : "The page moved while the camera was settling. Keep all four corners visible and hold still."
-      if lightingAngleGuide?.pendingCaptureView != nil {
-        lightingAngleGuide?.resolveCapture(accepted: false)
-        burstRemaining = 0
-        nextViewDetail = detail
-        beginNextAngle()
-      } else {
-        abortCapture()
-        showMessage(detail)
+      if manualCapture {
+        // A tap means now: take the photo even if the lens is still moving.
+        takePhoto(camera: camera)
+        return
       }
+      captureSettling = false
+      captureSettlePolicy.cancel()
+      captureSettleAnchor = nil
+      burstRemaining = 0
+      // Wait for the page to be steady again instead of abandoning the hold.
+      awaitingSteadyShot = true
+      shotTracker.reset()
+      overlay.progress = 0
+      guidanceView.show(title: "Hold still", detail: documentIsStable
+        ? "The camera is still focusing. Keep this position."
+        : "Keep the whole page in view and hold the phone steady.", compact: "Hold still.", holding: false)
     case .waiting:
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
         self?.pollCaptureSettling(epoch: epoch, generation: generation)
@@ -630,6 +681,38 @@ final class FoorsaScannerViewController: UIViewController {
     case .inactive:
       captureSettling = false
     }
+  }
+
+  private func takePhoto(camera: AVCaptureDevice?) {
+    let anchor = captureSettleAnchor
+    captureSettling = false
+    captureSettlePolicy.cancel()
+    captureSettleAnchor = nil
+    setCaptureAnalysisPaused(true)
+    guard burstRemaining > 0 else { return }
+    // Only count a photo once the still has actually been handed to AVFoundation.
+    burstRemaining -= 1
+    photosTaken += 1
+    capturePolicy?.photoRequested()
+    let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+    settings.photoQualityPrioritization = .quality
+    if #available(iOS 16.0, *) {
+      settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
+    } else {
+      settings.isHighResolutionPhotoEnabled = true
+    }
+    if let camera, camera.isFlashAvailable { settings.flashMode = .off }
+    if #available(iOS 18.0, *), !ScannerShutterSound.plays(photoNumber: photosTaken),
+       photoOutput.isShutterSoundSuppressionSupported {
+      settings.isShutterSoundSuppressionEnabled = true
+    }
+    activePhotoIDs.insert(settings.uniqueID)
+    if let quad = latestQuadrilateral ?? anchor, let size = latestImageSize,
+       quad.isComplete(minimumArea: profile.minimumCaptureArea) {
+      capturedGeometry[settings.uniqueID] = (quad, size)
+      lastShotQuadrilateral = quad
+    }
+    photoOutput.capturePhoto(with: settings, delegate: self)
   }
 
 #if SCANNER_DIAGNOSTICS
@@ -650,62 +733,20 @@ final class FoorsaScannerViewController: UIViewController {
   }
 #endif
 
-  private func finishBurstIfReady() {
-    guard isCapturing, lightingAngleGuide?.isWaiting != true, burstRemaining == 0,
-          activePhotoIDs.isEmpty, pendingProcessingCount == 0 else { return }
-    if profile.usesImagegen {
-      if originalPhotos.canComplete(usefulViews: burstCandidates.count) {
-        completeImagegenCapture()
-      } else if !originalPhotos.photos.isEmpty && !originalPhotos.isFull {
-        beginNextAngle()
-      } else {
-        retryLightingCapture(title: "Try again",
-          detail: "Keep the whole page visible and hold still for clear photos.")
-      }
-      return
-    }
-    guard !burstCandidates.isEmpty else {
-      retryLightingCapture(title: "Try again",
-        detail: "The camera couldn’t save a clear photo. Keep the whole page visible and reframe.")
-      return
-    }
-    guard burstCandidates.count >= ScannerAdaptiveCaptureGuide.minimumFramesForEvaluation else {
-      beginNextAngle()
-      return
-    }
-    finishBurst()
-  }
-
-  private func beginNextAngle() {
-    guard !profile.usesImagegen || !originalPhotos.isFull else {
-      retryLightingCapture(detail: "More clear detail is needed. Reframe the page and hold still.")
-      return
-    }
-    guard lightingAngleGuide?.beginWaiting(at: CACurrentMediaTime()) == true else {
-      retryLightingCapture()
-      return
-    }
-    tracker.reset()
-    overlay.progress = 0
-    setCaptureAnalysisPaused(false)
-    showAngleGuide()
-    UIAccessibility.post(notification: .announcement, argument: lightingAngleInstruction)
-    armCaptureTimeout(seconds: ScannerAdaptiveCaptureGuide.waitDuration, waitingForAngle: true)
-  }
-
   private func abortCapture() {
     guard isCapturing else { return }
 #if SCANNER_DIAGNOSTICS
     diagnosticEvent?(["event": "capture_aborted", "candidates": burstCandidates.count])
 #endif
     isCapturing = false
+    manualCapture = false
     captureSettling = false
     captureSettleEpoch &+= 1
     captureSettlePolicy.cancel()
     captureSettleAnchor = nil
-    capturePhase += 1
-    lightingAngleGuide?.cancel()
-    lightingAngleGuide = nil
+    capturePolicy = nil
+    awaitingSteadyShot = false
+    awaitingMovedShot = nil
     captureCancellation?.cancel()
     captureCancellation = nil
     setCaptureAnalysisPaused(false)
@@ -713,236 +754,99 @@ final class FoorsaScannerViewController: UIViewController {
     activePhotoIDs.removeAll()
     capturedGeometry.removeAll()
     originalPhotos.reset()
-    pendingProcessingCount = 0
     burstRemaining = 0
     burstCandidates.removeAll()
     tracker.reset()
+    shotTracker.reset()
+    readySince = nil
     setCaptureControls(enabled: true)
+    shutterIdleSince = CACurrentMediaTime()
+    updateShutterVisibility(at: shutterIdleSince)
   }
 
-  private func completeImagegenCapture() {
-    guard profile.usesImagegen, isCapturing, !finishing,
-          lightingAngleGuide?.hasExpired(at: CACurrentMediaTime()) == false,
-          originalPhotos.canComplete(usefulViews: burstCandidates.count) else { return }
+  private func completeCapture() {
+    let imagegen = profile.usesImagegen
+    guard isCapturing, !finishing,
+          !imagegen || originalPhotos.canComplete(usefulViews: burstCandidates.count) else { return }
     let originals = originalPhotos.photos
     let count = burstCandidates.count
     let attempts = photosTaken
+    let manual = manualCapture
     switch completionFlow.resolve(burstCandidates) {
     case let .complete(page):
       finishing = true
       abortCapture()
-      guidanceView.show(title: "Photos ready", detail: "Preparing your fields for review.",
-        stage: 2, accepted: count, holding: false)
+      guidanceView.show(title: "Photos ready", detail: "Preparing your document…", compact: "Ready.", holding: false)
       UINotificationFeedbackGenerator().notificationOccurred(.success)
-      completion([
-        "pages": [page], "originals": originals, "processing": "imagegen",
-        "engine": "avfoundation_vision", "scannerBuild": "custom-live-v10",
-        "capabilities": ["live_quadrilateral", "stable_auto_capture",
-          "adaptive_multi_view_capture", "perspective_correction", "automatic_single_page",
-          "bounded_adaptive_capture", "visual_capture_guide", "original_camera_jpegs",
-          "source_photo_ocr_preview", "async_crm_enhancement"],
-        "burstProcessing": ["mode": "imagegen", "photosTaken": attempts,
-          "retainedUsefulViews": count, "originalPhotos": originals.count,
-          "framesUsed": 1],
-      ])
-    case let .retry(message): retryLightingCapture(detail: message)
-    case .ignored: break
-    }
-  }
-
-  private func finishBurst() {
-    guard let cancellation = captureCancellation else { return }
-    let generation = captureGeneration
-    let candidates = burstCandidates
-    pendingProcessingCount = 1
-    armCaptureTimeout(seconds: 20, waitingForAngle: false,
-      failureMessage: "Combining the views took too long. Keep the page flat and try again.")
-    guidanceView.show(title: "Checking the detail", detail: "Combining useful photos and checking what is still unclear.",
-      stage: 2, accepted: burstCandidates.count, holding: false)
-    processingQueue.async { [weak self] in
-      guard let self, !cancellation.isCancelled else { return }
-      let resolution = self.processor.resolveAdaptiveCapture(
-        candidates,
-        profile: self.profile,
-        isCancelled: { cancellation.isCancelled }
-      )
-      DispatchQueue.main.async { [weak self] in
-        guard let self, self.isCapturing,
-              self.captureGeneration == generation, !self.finishing else { return }
-        self.pendingProcessingCount = 0
-        self.completeBurst(resolution)
+      UIAccessibility.post(notification: .announcement, argument: "Page captured. Preparing your document.")
+      var capabilities = ["live_quadrilateral", "stable_auto_capture", "one_hold_capture",
+        "perspective_correction", "automatic_single_page", "live_framing_guidance",
+        "document_model_detection", "manual_fallback_shutter"]
+      var processing: [String: Any] = ["mode": imagegen ? "imagegen" : "best_frame",
+        "photosTaken": attempts, "retainedUsefulViews": count, "framesUsed": 1, "manual": manual]
+      var response: [String: Any] = ["pages": [page], "engine": "avfoundation_vision",
+        "scannerBuild": "custom-live-v11"]
+      if imagegen {
+        capabilities += ["original_camera_jpegs", "source_photo_ocr_preview", "async_crm_enhancement"]
+        processing["originalPhotos"] = originals.count
+        response["originals"] = originals
+        response["processing"] = "imagegen"
       }
-    }
-  }
-
-  private func completeBurst(_ resolution: ScannerBurstResolution?) {
-    guard lightingAngleGuide?.hasExpired(at: CACurrentMediaTime()) == false else {
-      retryLightingCapture()
-      return
-    }
-#if SCANNER_DIAGNOSTICS
-    diagnosticEvent?(["event": "burst_resolved", "candidates": burstCandidates.count,
-      "resolved": resolution != nil,
-      "mode": resolution?.mode.rawValue ?? "none",
-      "fallbackReason": resolution?.fallbackReason?.rawValue ?? "none",
-      "framesUsed": resolution?.framesUsed ?? 0,
-      "needsDifferentAngle": resolution?.lighting?.needsDifferentAngle ?? false])
-#endif
-    guard burstCandidates.count >= ScannerAdaptiveCaptureGuide.minimumFramesForEvaluation else {
-      beginNextAngle()
-      return
-    }
-    // A failed comparison asks for another useful view while preserving earlier
-    // clear photos. Only verified fusion can end adaptive capture.
-    guard let resolution, resolution.mode != .bestFrameFallback,
-          resolution.lighting?.needsDifferentAngle != true else {
-      switch resolution?.fallbackReason {
-      case .frameTooSoft:
-        nextViewDetail = "Some detail is unclear. Hold still and keep shadows off the page."
-      case .incompatibleGeometry, .registrationRejected, .frameContentMismatch:
-        nextViewDetail = "Keep the page flat and tilt just a little. Earlier clear photos are saved."
-      default:
-        nextViewDetail = "Move the phone slightly until the reflection and phone shadow leave the page."
-      }
-      beginNextAngle()
-      return
-    }
-    defer {
-      capturePhase += 1
-      captureSettling = false
-      captureSettleEpoch &+= 1
-      captureSettlePolicy.cancel()
-      lightingAngleGuide?.cancel()
-      lightingAngleGuide = nil
-      isCapturing = false
-      captureCancellation?.cancel()
-      captureCancellation = nil
-      setCaptureAnalysisPaused(false)
-      setCaptureControls(enabled: true)
-      tracker.reset()
-      burstCandidates.removeAll()
-    }
-    switch completionFlow.resolve([resolution.candidate]) {
+      response["capabilities"] = capabilities
+      response["burstProcessing"] = processing
+      completion(response)
     case let .retry(message):
-      showMessage(message)
-    case let .complete(page):
-      finishing = true
-      guidanceView.show(title: "Scan ready", detail: "Preparing your fields for review.", stage: 2, accepted: burstCandidates.count, holding: false)
-      UINotificationFeedbackGenerator().notificationOccurred(.success)
-      UIAccessibility.post(notification: .announcement, argument: "Page captured. Preparing details.")
-      var burstProcessing: [String: Any] = [
-        "mode": resolution.mode.rawValue,
-        "framesConsidered": resolution.framesConsidered,
-        "framesUsed": resolution.framesUsed,
-        "alignmentModels": resolution.alignmentModels.map(\.rawValue),
-      ]
-      if let fallbackReason = resolution.fallbackReason {
-        burstProcessing["fallbackReason"] = fallbackReason.rawValue
-      }
-      if let lighting = resolution.lighting {
-        burstProcessing["lighting"] = [
-          "shadowCorrectionApplied": lighting.shadowCorrectionApplied,
-          "glarePixelsReplacedFraction": lighting.glarePixelsReplacedFraction,
-          "unresolvedGlareFraction": lighting.unresolvedGlareFraction,
-          "needsDifferentAngle": lighting.needsDifferentAngle,
-        ]
-      }
-      burstProcessing["guidedExtraCaptures"] = max(0, (lightingAngleGuide?.attemptsTaken ?? 1) - 1)
-      burstProcessing["acceptedGuidedAngles"] = lightingAngleGuide?.acceptedAdditionalViews ?? 0
-      burstProcessing["photosTaken"] = photosTaken
-      burstProcessing["retainedUsefulViews"] = burstCandidates.count
-      let fusionCapability: String
-      switch resolution.mode {
-      case .alignedMedianFusion: fusionCapability = "aligned_three_frame_median_fusion"
-      case .alignedLightingFusion: fusionCapability = "aligned_lighting_fusion"
-      case .bestFrameFallback: fusionCapability = "sharpest_frame_fallback"
-      }
-      completion([
-        "pages": [page],
-        "engine": "avfoundation_vision",
-        "scannerBuild": "custom-live-v8",
-        "capabilities": [
-          "live_quadrilateral", "stable_auto_capture", "adaptive_multi_view_capture",
-          "perspective_correction", "automatic_single_page",
-          "bounded_adaptive_capture", "visual_capture_guide", "lighting_quality_gate", fusionCapability,
-        ],
-        "burstProcessing": burstProcessing,
-      ])
+      retryCapture(detail: message)
     case .ignored:
       break
     }
   }
 
-  private var nextCaptureInstruction: String {
-    profile.usesImagegen
-      ? "Keep the whole page visible and hold still for another clear photo."
-      : "Tilt the phone slightly to reveal more detail. Keep the page flat."
-  }
-
-  private var lightingAngleInstruction: String { nextViewDetail }
-
   private func showPlacementGuide() {
-    let detail = profile.layout == .passport
-      ? "Lay the details page flat in soft light. Keep every corner uncovered."
-      : "Lay the document flat in soft light. Keep every corner visible."
-    guidanceView.show(title: "Point at the page", detail: detail, stage: 0, accepted: 0, holding: false)
+    guidanceView.show(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: profile.layout),
+      holding: false)
   }
 
-  private func showAngleGuide(holding: Bool = false, missingPage: Bool = false) {
-    guidanceView.show(title: holding || profile.usesImagegen ? "Hold still" : "Tilt slightly",
-      detail: missingPage ? "Bring all four corners back into view."
-        : holding ? "Capturing the clear detail automatically."
-        : nextViewDetail,
-      stage: 1, accepted: burstCandidates.count, holding: holding)
-  }
-
-  private func retryLightingCapture(title: String = FoorsaScannerViewController.captureRetryMessage,
-                                    detail: String? = nil) {
-    lightingRetryAnchor = latestQuadrilateral ?? lightingAngleGuide?.mostRecentCapturedView ?? tracker.anchor
+  private func retryCapture(title: String = FoorsaScannerViewController.captureRetryMessage,
+                            detail: String? = nil) {
+    lightingRetryAnchor = latestQuadrilateral ?? lastShotQuadrilateral ?? tracker.anchor
     lightingRetryMissingSince = nil
+    lightingRetrySince = CACurrentMediaTime()
     retryTitle = title
-    retryDetail = detail ?? (profile.usesImagegen
-      ? "Reframe the page, keep all four corners visible, and hold still."
-      : "Keep the page flat and all four corners visible. Tilt slightly, then hold still.")
+    retryDetail = detail ?? "Reframe the page, keep all four corners visible, and hold still."
     abortCapture()
-    // Require a deliberate reframe after exhausted/expired guidance; an unchanged
-    // shiny page must not automatically restart another forced sequence.
+    // Ask for a deliberate reframe (or a short pause) so an unchanged bad
+    // view does not immediately restart the same failed capture.
     lastCaptureTime = CACurrentMediaTime()
-    guidanceView.show(title: retryTitle, detail: retryDetail,
-      stage: 0, accepted: 0, holding: false)
+    guidanceView.show(title: retryTitle, detail: retryDetail, compact: "Try again.", holding: false)
     UINotificationFeedbackGenerator().notificationOccurred(.warning)
     UIAccessibility.post(notification: .announcement, argument: retryDetail)
-  }
-
-  private func handleLightingAngle(_ quadrilateral: ScannerQuadrilateral?,
-                                  at time: TimeInterval, processingDuration: TimeInterval) {
-    let observation = lightingAngleGuide?.observe(quadrilateral, at: time,
-                                                  processingDuration: processingDuration) ?? .inactive
-    switch observation {
-    case .inactive: break
-    case .move:
-      overlay.progress = 0
-      showAngleGuide(missingPage: quadrilateral == nil)
-    case let .hold(progress):
-      overlay.progress = progress
-      showAngleGuide(holding: true)
-    case .capture:
-      setCaptureAnalysisPaused(true)
-      overlay.progress = 1
-      burstRemaining = 1
-      showAngleGuide(holding: true)
-      UIAccessibility.post(notification: .announcement, argument: "Hold still. Taking this view.")
-      UIImpactFeedbackGenerator(style: .light).impactOccurred()
-      armCaptureTimeout(seconds: 20, waitingForAngle: false)
-      captureNextCandidate()
-    case .expired:
-      retryLightingCapture()
-    }
   }
 
   private func setCaptureControls(enabled: Bool) {
     torchButton.isEnabled = enabled
     torchButton.alpha = enabled ? 1 : 0.45
+  }
+
+  /// A quiet way out when automatic capture has not happened: the shutter
+  /// appears only after a few seconds without a photo, never during capture.
+  private func updateShutterVisibility(at time: TimeInterval) {
+    let visible = !isCapturing && !finishing && analysisActive && time - shutterIdleSince >= Self.manualShutterDelay
+    guard shutterButton.isHidden == visible else { return }
+    if visible {
+      shutterButton.alpha = 0
+      shutterButton.isHidden = false
+      UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.25) { self.shutterButton.alpha = 1 }
+      UIAccessibility.post(notification: .layoutChanged, argument: nil)
+    } else {
+      shutterButton.isHidden = true
+    }
+  }
+
+  @objc private func shutterPressed() {
+    guard !isCapturing, !finishing else { return }
+    lightingRetryAnchor = nil
+    beginCapture(manual: true)
   }
 
   @objc private func torchPressed() {
@@ -959,6 +863,15 @@ final class FoorsaScannerViewController: UIViewController {
     } catch {
       showMessage("The torch is unavailable right now.")
     }
+  }
+
+  /// Dim light is read from the camera itself: a very high ISO means the
+  /// scene is dark even when auto exposure makes the preview look fine.
+  private func cameraNeedsMoreLight() -> Bool {
+    guard let camera = (session.inputs.first as? AVCaptureDeviceInput)?.device else { return false }
+    let active = camera.activePrimaryConstituent ?? camera
+    let maximum = active.activeFormat.maxISO
+    return camera.torchMode != .on && maximum > 0 && active.iso >= max(1200, maximum * 0.6)
   }
 
   private func fail(_ message: String) {
@@ -1001,6 +914,7 @@ final class FoorsaScannerViewController: UIViewController {
       // A result captured before rotation belongs to the previous preview.
       // Revoke its hold progress before another orientation can auto-capture.
       tracker.reset()
+      smoother.reset()
       latestQuadrilateral = nil
       latestImageSize = nil
       overlay.quadrilateral = nil
@@ -1009,8 +923,8 @@ final class FoorsaScannerViewController: UIViewController {
   }
 
   private func setCaptureAnalysisPaused(_ paused: Bool) {
-    // Keep the accepted outline visible during the burst. Prevent new preview
-    // inference while a still or the final combined image is being processed.
+    // Keep the accepted outline visible during capture. Prevent new preview
+    // inference while a still is being taken.
     orientationLock.lock()
     captureAnalysisPaused = paused
     analysisEpoch &+= 1
@@ -1022,16 +936,25 @@ final class FoorsaScannerViewController: UIViewController {
     analysisEpoch &+= 1
     analysisActive = active
     orientationLock.unlock()
-    guard !active else { return }
+    if active {
+      analysisStartedAt = CACurrentMediaTime()
+      shutterIdleSince = analysisStartedAt
+      lastEvidenceTime = 0
+      lastEvidenceQuadrilateral = nil
+      return
+    }
     tracker.reset()
+    smoother.reset()
+    readySince = nil
     latestQuadrilateral = nil
     latestImageSize = nil
     overlay.quadrilateral = nil
     overlay.progress = 0
+    shutterButton.isHidden = true
   }
 
-  private func handleDetection(
-    _ detectedQuadrilateral: ScannerQuadrilateral?,
+  private func handleLiveObservation(
+    _ incoming: ScannerLiveObservation,
     imageSize: CGSize,
     time: TimeInterval,
     processingDuration: TimeInterval,
@@ -1041,76 +964,118 @@ final class FoorsaScannerViewController: UIViewController {
     let resultIsCurrent = analysisActive && !captureAnalysisPaused && analysisEpoch == epoch
     orientationLock.unlock()
     guard resultIsCurrent, !finishing else { return }
-    let quadrilateral = CACurrentMediaTime() - time <= ScannerStabilityTracker.maximumObservationAge
-      ? detectedQuadrilateral : nil
-    latestQuadrilateral = quadrilateral
+    let fresh = CACurrentMediaTime() - time <= ScannerStabilityTracker.maximumObservationAge
+    var observation = fresh ? incoming : ScannerLiveObservation.none
+    var countsTowardHold = observation.framing == .ready
+    // Passports: the booklet-aware cascade decides first. A document-model
+    // page drives capture only when it matches the confirmed photo page, or
+    // once the cascade has had three seconds without finding one.
+    if profile.layout == .passport, let quad = observation.quadrilateral {
+      if observation.confirmedByEvidence {
+        lastEvidenceTime = time
+        lastEvidenceQuadrilateral = quad
+      } else if observation.framing == .ready {
+        let matchesEvidence = time - lastEvidenceTime < 1.5 && (lastEvidenceQuadrilateral.map {
+          $0.maximumCornerDistance(to: quad) <= 0.035 } ?? false)
+        let cascadeHadItsChance = time - max(lastEvidenceTime, analysisStartedAt) >= 3
+        countsTowardHold = matchesEvidence || cascadeHadItsChance
+      }
+    }
+    if observation.framing == .ready, observation.lighting == .good, cameraNeedsMoreLight() {
+      observation = ScannerLiveObservation(quadrilateral: observation.quadrilateral, framing: .ready,
+        lighting: .dim, confirmedByEvidence: observation.confirmedByEvidence)
+    }
+    let quad = observation.quadrilateral
+    let readyQuad = observation.framing == .ready && countsTowardHold ? quad : nil
+    liveLighting = observation.lighting
+    // The capture geometry and the focus-settle check use complete pages
+    // only; a soft frame keeps its outline so motion is still measured.
+    latestQuadrilateral = readyQuad ?? (observation.framing == .blurry ? quad : nil)
     latestImageSize = imageSize
     latestDetectionTime = time
     updatePreviewGeometry()
-    renderQuadrilateral(quadrilateral, imageSize: imageSize)
-    let shapeAccepted = quadrilateral.map {
-      profile.accepts(aspectRatio: $0.estimatedAspectRatio(in: imageSize))
-    } ?? false
+    overlay.style = readyQuad != nil ? .tracking : .adjusting
+    renderQuadrilateral(smoother.update(quad), imageSize: imageSize)
+    updateShutterVisibility(at: time)
 #if SCANNER_DIAGNOSTICS
-    diagnosticEvent?(["event": "detection", "detected": detectedQuadrilateral != nil,
-      "fresh": quadrilateral != nil, "shapeAccepted": shapeAccepted,
+    diagnosticEvent?(["event": "detection", "detected": incoming.quadrilateral != nil,
+      "fresh": fresh, "framing": observation.framing.rawValue, "lighting": observation.lighting.rawValue,
+      "evidence": observation.confirmedByEvidence, "countsTowardHold": countsTowardHold,
       "processingMilliseconds": processingDuration * 1000,
       "observationAgeMilliseconds": (CACurrentMediaTime() - time) * 1000,
-      "capturing": isCapturing, "waitingForAngle": lightingAngleGuide?.isWaiting ?? false])
+      "capturing": isCapturing])
 #endif
     if isCapturing {
-      if lightingAngleGuide?.isWaiting == true {
-        handleLightingAngle(shapeAccepted ? quadrilateral : nil, at: time,
-                            processingDuration: processingDuration)
-      }
+      handleCaptureObservation(observation, readyQuad: readyQuad, imageSize: imageSize,
+        time: time, processingDuration: processingDuration)
       return
     }
     if let retryAnchor = lightingRetryAnchor {
       tracker.reset()
       overlay.progress = 0
-      if let quadrilateral {
+      if let quad {
         lightingRetryMissingSince = nil
-        let reframed = profile.usesImagegen
-          ? quadrilateral.maximumCornerDistance(to: retryAnchor) >= 0.035
-          : ScannerLightingAngleGuide.isDifferentAngle(quadrilateral, from: retryAnchor, imageSize: imageSize)
-        if reframed {
-          lightingRetryAnchor = nil
-        }
+        if quad.maximumCornerDistance(to: retryAnchor) >= 0.035 { lightingRetryAnchor = nil }
       } else {
         if lightingRetryMissingSince == nil { lightingRetryMissingSince = time }
-        if time - (lightingRetryMissingSince ?? time) >= 1 {
-          lightingRetryAnchor = nil
-          lightingRetryMissingSince = nil
-        }
+        if time - (lightingRetryMissingSince ?? time) >= 1 { lightingRetryAnchor = nil }
       }
-      guidanceView.show(title: retryTitle, detail: retryDetail,
-        stage: 0, accepted: 0, holding: false)
-      return
+      // A short pause also counts as a fresh attempt.
+      if time - (lightingRetrySince ?? time) >= 3 { lightingRetryAnchor = nil }
+      if lightingRetryAnchor != nil {
+        guidanceView.show(title: retryTitle, detail: retryDetail, compact: "Try again.", holding: false)
+        return
+      }
+      lightingRetryMissingSince = nil
+      lightingRetrySince = nil
     }
-    let state = tracker.observe(shapeAccepted ? quadrilateral : nil, at: time,
-      processingDuration: processingDuration)
+    let state = tracker.observe(readyQuad, at: time, processingDuration: processingDuration)
     overlay.progress = state.progress
-    if quadrilateral == nil {
-      showPlacementGuide()
+    let shownFraming: ScannerLiveFraming = observation.framing == .ready && readyQuad == nil
+      ? .blurry : observation.framing
+    guidanceView.show(ScannerLiveGuidance.copy(framing: shownFraming, lighting: observation.lighting,
+      layout: profile.layout), holding: readyQuad != nil)
+    guard state.ready else {
+      readySince = nil
       return
     }
-    guard shapeAccepted else {
-      guidanceView.show(title: "Fit the whole page", detail: "Rotate the document to match the guide.",
-        stage: 0, accepted: 0, holding: false)
+    if readySince == nil { readySince = time }
+    // Give the student a moment to fix shadow, glare or dim light, then
+    // capture anyway: a slightly shadowed page beats no page.
+    let lightingSettled = observation.lighting == .good || time - (readySince ?? time) >= Self.lightingGrace
+    if lightingSettled && time - lastCaptureTime > 1.2 {
+      beginCapture()
+    }
+  }
+
+  private func handleCaptureObservation(_ observation: ScannerLiveObservation, readyQuad: ScannerQuadrilateral?,
+                                        imageSize: CGSize, time: TimeInterval, processingDuration: TimeInterval) {
+    if let requestedAt = awaitingMovedShot {
+      let moved = readyQuad.map { quad in
+        lastShotQuadrilateral.map {
+          ScannerLightingAngleGuide.isDifferentAngle(quad, from: $0, imageSize: imageSize)
+            || quad.maximumCornerDistance(to: $0) >= 0.05
+        } ?? true
+      } ?? false
+      let state = shotTracker.observe(moved ? readyQuad : nil, at: time, processingDuration: processingDuration)
+      overlay.progress = state.progress
+      // Bounded: after a few seconds the next photo is taken where it is.
+      guard state.ready || time - requestedAt >= Self.angleRequestLimit else { return }
+      awaitingMovedShot = nil
+      shotTracker.reset()
+      burstRemaining = 1
+      beginCaptureSettling()
       return
     }
-    if state.ready {
-      guidanceView.show(title: "Hold still", detail: "Capturing clear detail automatically.",
-        stage: 0, accepted: 0, holding: true)
-      if time - lastCaptureTime > 2.2 {
-        beginCapture()
-      }
-    } else {
-      if state.progress > 0.15 {
-        guidanceView.show(title: "Hold still", detail: "Clear detail will be captured automatically.",
-          stage: 0, accepted: 0, holding: true)
-      } else { showPlacementGuide() }
-    }
+    guard awaitingSteadyShot else { return }
+    let state = shotTracker.observe(readyQuad, at: time, processingDuration: processingDuration)
+    overlay.progress = state.progress
+    guidanceView.show(ScannerLiveGuidance.copy(framing: readyQuad == nil ? observation.framing : .ready,
+      lighting: .good, layout: profile.layout), holding: readyQuad != nil)
+    guard state.ready else { return }
+    awaitingSteadyShot = false
+    shotTracker.reset()
+    advanceCapture()
   }
 
 
@@ -1214,7 +1179,7 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
     from connection: AVCaptureConnection
   ) {
     let now = CACurrentMediaTime()
-    guard !isAnalyzing, now - lastAnalysisTime >= 0.12,
+    guard !isAnalyzing, now - lastAnalysisTime >= 0.1,
           let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
     isAnalyzing = true
     lastAnalysisTime = now
@@ -1234,7 +1199,7 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
     let imageSize = orientation.orientedImageSize(for: rawSize)
     // Keep live and still analysis on the same pixel-aware detection path.
     // CIImage applies the camera orientation before geometry is normalized.
-    let quadrilateral: ScannerQuadrilateral? = autoreleasepool {
+    let observation: ScannerLiveObservation = autoreleasepool {
       let oriented = CIImage(cvPixelBuffer: imageBuffer).oriented(orientation)
       let upright = oriented.transformed(by: CGAffineTransform(
         translationX: -oriented.extent.minX, y: -oriented.extent.minY
@@ -1255,20 +1220,12 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
         }
       }
 #endif
-      guard let best = try? ScannerRectangleDetector.detect(
-        in: upright, profile: profile, purpose: .live
-      ) else { return nil }
-      return ScannerQuadrilateral(
-        topLeft: best.topLeft,
-        topRight: best.topRight,
-        bottomRight: best.bottomRight,
-        bottomLeft: best.bottomLeft
-      )
+      return ScannerRectangleDetector.detectLive(in: upright, profile: profile)
     }
     isAnalyzing = false
     let processingDuration = CACurrentMediaTime() - now
     DispatchQueue.main.async { [weak self] in
-      self?.handleDetection(quadrilateral, imageSize: imageSize, time: now,
+      self?.handleLiveObservation(observation, imageSize: imageSize, time: now,
         processingDuration: processingDuration, epoch: epoch)
     }
   }
@@ -1281,84 +1238,70 @@ extension FoorsaScannerViewController: AVCapturePhotoCaptureDelegate {
     error: Error?
   ) {
     let photoID = photo.resolvedSettings.uniqueID
+    let data = error == nil ? photo.fileDataRepresentation() : nil
+#if SCANNER_DIAGNOSTICS
+    let errorDomain = (error as NSError?)?.domain ?? "none"
+    let errorCode = (error as NSError?)?.code ?? 0
+#endif
     DispatchQueue.main.async { [weak self] in
       guard let self, self.activePhotoIDs.remove(photoID) != nil,
             self.isCapturing, !self.finishing else { return }
       let generation = self.captureGeneration
-      let data = error == nil ? photo.fileDataRepresentation() : nil
       let geometry = self.capturedGeometry.removeValue(forKey: photoID)
-      if self.profile.usesImagegen {
-        guard let data, geometry != nil, self.originalPhotos.append(data) else {
-          self.retryLightingCapture(detail: "The photo could not be saved within the camera limit. Reframe and try again.")
-          return
-        }
-      }
 #if SCANNER_DIAGNOSTICS
       if let data { self.diagnosticCapturedPhoto?(data) }
 #endif
-      if let data, let cancellation = self.captureCancellation {
-        self.pendingProcessingCount += 1
-        self.processingQueue.async { [weak self] in
-          guard let self, !cancellation.isCancelled else { return }
-          let processingResult = self.processor.processCapture(photoData: data, profile: self.profile,
-            liveQuadrilateral: geometry?.quad, liveImageSize: geometry?.size)
-          let candidate = try? processingResult.get()
-          DispatchQueue.main.async { [weak self] in
-            guard let self, self.isCapturing,
-                  self.captureGeneration == generation, !self.finishing else { return }
-            self.pendingProcessingCount -= 1
-            let assessment = ScannerImageProcessor.assessViewQuality(accepted: self.burstCandidates, candidate: candidate)
-            let useful = assessment == .accepted || assessment == .restartForEarlierSoftView
-            let wasGuided = self.lightingAngleGuide?.pendingCaptureView != nil
-            let acceptedGuided = self.lightingAngleGuide?.resolveCapture(accepted: useful) ?? false
-            if let candidate, useful, !wasGuided || acceptedGuided {
-              self.burstCandidates = ScannerImageProcessor.retainingUsefulViews(self.burstCandidates + [candidate])
-              self.nextViewDetail = self.nextCaptureInstruction
-            } else {
-              self.nextViewDetail = candidate == nil
-                ? "Keep every corner visible, then hold still. Earlier clear photos are saved."
-                : "This view has less clear detail. Hold still and keep shadows off the page."
-            }
+      guard let data, let cancellation = self.captureCancellation else {
 #if SCANNER_DIAGNOSTICS
-            let processingFailure: String
-            if case let .failure(reason) = processingResult { processingFailure = reason.rawValue }
-            else { processingFailure = "none" }
-            self.diagnosticEvent?(["event": "view_processed", "accepted": useful && (!wasGuided || acceptedGuided),
-              "qualityDecision": String(describing: assessment),
-              "processingFailure": processingFailure,
-              "photosTaken": self.photosTaken, "acceptedViews": self.burstCandidates.count,
-              "acceptedGuidedAngles": self.lightingAngleGuide?.acceptedAdditionalViews ?? 0])
+        self.diagnosticEvent?(["event": "photo_unavailable", "errorDomain": errorDomain, "errorCode": errorCode])
 #endif
-            if !self.profile.usesImagegen, self.burstCandidates.isEmpty, case let .failure(reason) = processingResult {
-              self.retryLightingCapture(
-                title: reason == .documentBoundaryNotFound ? "Fit the whole page" : "Try again",
-                detail: reason == .documentBoundaryNotFound
-                  ? "The photo’s page edges weren’t clear. Keep all four corners visible and hold still."
-                  : "The camera couldn’t save this photo. Keep the page visible and reframe.")
-              return
-            }
-            if !useful && (!self.burstCandidates.isEmpty || self.profile.usesImagegen) {
-              // Rejected pixels provide no new evidence. Keep the useful pool
-              // and ask for a retake without rerunning the same failed merge.
-              self.beginNextAngle()
-            } else {
-              self.finishBurstIfReady()
-            }
-          }
-        }
-      } else {
-#if SCANNER_DIAGNOSTICS
-        self.diagnosticEvent?(["event": "photo_unavailable",
-          "errorDomain": (error as NSError?)?.domain ?? "none",
-          "errorCode": (error as NSError?)?.code ?? 0])
-#endif
-        self.lightingAngleGuide?.resolveCapture(accepted: false)
+        self.capturePolicy?.photoResolved(usefulViews: self.burstCandidates.count)
+        self.advanceCapture()
+        return
       }
-      // Let the phase settle after the photo callback. A new angle is requested
-      // only after correction accepts or rejects this view.
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+      let manual = self.manualCapture
+      self.processingQueue.async { [weak self] in
+        guard let self, !cancellation.isCancelled else { return }
+        let processingResult = self.processor.processCapture(photoData: data, profile: self.profile,
+          liveQuadrilateral: geometry?.quad, liveImageSize: geometry?.size, allowFullFrame: manual)
+        let candidate = try? processingResult.get()
+        DispatchQueue.main.async { [weak self] in
+          guard let self, self.isCapturing,
+                self.captureGeneration == generation, !self.finishing else { return }
+          let assessment = ScannerImageProcessor.assessViewQuality(accepted: self.burstCandidates, candidate: candidate)
+          var useful = candidate != nil && (assessment == .accepted || assessment == .restartForEarlierSoftView)
+          // Imagegen keeps the exact camera bytes of every useful view for the
+          // CRM. A view that cannot be kept within the limits is not counted.
+          if useful, self.profile.usesImagegen, !self.originalPhotos.append(data) { useful = false }
+          if useful, let candidate {
+            // v11 sends the JPEG it already made; the uncompressed page (about
+            // 19 MB) is not needed once the view is judged, so it is dropped.
+            let kept = ScannerProcessedCandidate(jpeg: candidate.jpeg, sharpness: candidate.sharpness,
+              coverage: candidate.coverage, fingerprint: candidate.fingerprint)
+            self.burstCandidates = ScannerImageProcessor.retainingUsefulViews(self.burstCandidates + [kept])
+          } else if case let .failure(reason) = processingResult {
+            self.lastPhotoFailure = reason
+            // Say what to change while the next photo is taken.
+            self.guidanceView.show(ScannerLiveGuidance.copy(
+              framing: reason == .documentBoundaryNotFound ? .searching : .blurry,
+              lighting: .good, layout: self.profile.layout), holding: false)
+          }
+#if SCANNER_DIAGNOSTICS
+          let processingFailure: String
+          if case let .failure(reason) = processingResult { processingFailure = reason.rawValue }
+          else { processingFailure = "none" }
+          self.diagnosticEvent?(["event": "view_processed", "accepted": useful,
+            "qualityDecision": String(describing: assessment), "processingFailure": processingFailure,
+            "photosTaken": self.photosTaken, "acceptedViews": self.burstCandidates.count, "manual": manual])
+#endif
+          self.capturePolicy?.photoResolved(usefulViews: self.burstCandidates.count)
+          self.advanceCapture()
+        }
+      }
+      // The next photo can be taken while this one is still being checked.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
         guard let self, self.captureGeneration == generation else { return }
-        self.captureNextCandidate()
+        self.advanceCapture()
       }
     }
   }
@@ -1375,6 +1318,7 @@ private final class ScannerGuidanceView: UIView {
   private var compactInstructions = false
   private var fullTitle = ""
   private var fullDetail = ""
+  private var compactDetail: String?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -1430,7 +1374,9 @@ private final class ScannerGuidanceView: UIView {
 
   private func updateVisibleText() {
     titleLabel.text = fullTitle
-    if compactInstructions {
+    if compactInstructions, let compactDetail {
+      detailLabel.text = compactDetail
+    } else if compactInstructions {
       if fullTitle == "Point at the page" { titleLabel.text = "Fit page" }
       if fullTitle == "Reframe the page" { titleLabel.text = "Try again" }
       if fullTitle == "Fit the whole page" { titleLabel.text = "Fit page" }
@@ -1459,26 +1405,43 @@ private final class ScannerGuidanceView: UIView {
   }
 #endif
 
+  func show(_ copy: ScannerGuidanceCopy, holding: Bool) {
+    apply(title: copy.title, detail: copy.detail, compact: copy.compact, holding: holding)
+  }
+
+  func show(title: String, detail: String, compact: String, holding: Bool) {
+    apply(title: title, detail: detail, compact: compact, holding: holding)
+  }
+
   func show(title: String, detail: String, stage: Int, accepted: Int, holding: Bool) {
-    if fullTitle != title || fullDetail != detail {
+    apply(title: title, detail: detail, compact: nil, holding: holding)
+  }
+
+  private func apply(title: String, detail: String, compact: String?, holding: Bool) {
+    if fullTitle != title || fullDetail != detail || compactDetail != compact {
       fullTitle = title
       fullDetail = detail
+      compactDetail = compact
       updateVisibleText()
     }
     accessibilityLabel = "\(title). \(detail)"
     accessibilityValue = nil
-    let image = title == "Scan ready" ? "checkmark.circle"
-      : title == "Tilt slightly" ? "iphone.radiowaves.left.and.right"
+    let finished = title == "Scan ready" || title == "Photos ready"
+    let image = finished ? "checkmark.circle"
+      : title.hasPrefix("Tilt") ? "iphone.radiowaves.left.and.right"
+      : title == "More light needed" ? "lightbulb"
       : holding ? "iphone" : "viewfinder"
     symbol.image = UIImage(systemName: image)
-    symbol.tintColor = title == "Scan ready" ? .systemGreen : .white
+    symbol.tintColor = finished ? .systemGreen : .white
   }
 }
 
 private final class ScannerOverlayView: UIView {
+  enum Style { case tracking, adjusting }
   private let outline = CAShapeLayer()
   var quadrilateral: [CGPoint]? { didSet { updateOutline(animated: true) } }
-  var progress: CGFloat = 0 { didSet { updateOutline(animated: false) } }
+  var progress: CGFloat = 0 { didSet { if progress != oldValue { updateOutline(animated: false) } } }
+  var style: Style = .tracking { didSet { if style != oldValue { updateOutline(animated: false) } } }
   var guideAspectRatio: CGFloat = 0.71
   var guideRect: CGRect = .zero { didSet { updateOutline(animated: false) } }
 
@@ -1506,17 +1469,31 @@ private final class ScannerOverlayView: UIView {
       quadrilateral.dropFirst().forEach(path.addLine)
       path.close()
     } else {
-      path = UIBezierPath(rect: guideRect)
+      // Corner marks say "fit the page here" without implying one orientation.
+      path = UIBezierPath()
+      let rect = guideRect
+      if rect.width > 0, rect.height > 0 {
+        let arm = min(rect.width, rect.height) * 0.12
+        for (corner, dx, dy) in [(CGPoint(x: rect.minX, y: rect.minY), CGFloat(1), CGFloat(1)),
+                                 (CGPoint(x: rect.maxX, y: rect.minY), -1, 1),
+                                 (CGPoint(x: rect.maxX, y: rect.maxY), -1, -1),
+                                 (CGPoint(x: rect.minX, y: rect.maxY), 1, -1)] {
+          path.move(to: CGPoint(x: corner.x, y: corner.y + dy * arm))
+          path.addLine(to: corner)
+          path.addLine(to: CGPoint(x: corner.x + dx * arm, y: corner.y))
+        }
+      }
     }
     let previous = outline.presentation()?.path ?? outline.path
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     outline.path = path.cgPath
     outline.strokeColor = (detected
-      ? (progress >= 1 ? UIColor.systemGreen : UIColor.systemBlue)
-      : UIColor.white.withAlphaComponent(0.72)).cgColor
-    outline.lineWidth = detected ? 2.5 : 1.5
-    outline.lineDashPattern = detected ? nil : [8, 7]
+      ? (style == .adjusting ? UIColor.white.withAlphaComponent(0.85)
+        : progress >= 1 ? UIColor.systemGreen : UIColor.systemBlue)
+      : UIColor.white.withAlphaComponent(0.7)).cgColor
+    outline.lineWidth = detected ? 2 : 3
+    outline.lineDashPattern = nil
     CATransaction.commit()
     if animated, detected, let previous, !UIAccessibility.isReduceMotionEnabled {
       let movement = CABasicAnimation(keyPath: "path")

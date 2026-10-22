@@ -568,7 +568,8 @@ enum ScannerRectangleDetector {
   static func detect(
     in image: CIImage,
     profile: FoorsaScannerProfile,
-    purpose: ScannerDetectionPurpose
+    purpose: ScannerDetectionPurpose,
+    cache: ScannerVisionFrameCache? = nil
   ) throws -> VNRectangleObservation? {
     let e=image.extent
     guard !e.isInfinite,!e.isNull,e.minX.isFinite,e.minY.isFinite,
@@ -606,8 +607,10 @@ enum ScannerRectangleDetector {
       for turns in 0..<(profile.layout == .passport ? 4 : 1) {
         if turns > 0 {rotated=rotated.transformed(by:CGAffineTransform(a:0,b:1,c:-1,d:0,tx:rotated.extent.height,ty:0))}
         recovery=nil; raw=nil; rawContentClear=false
+        let fullFrame = turns == 0 && region == CGRect(x:0,y:0,width:1,height:1)
         let primary=try detectSingleOrientation(in:rotated,profile:profile,purpose:purpose,
-          measuredClarity:turns == 0 && region == CGRect(x:0,y:0,width:1,height:1) ? clarity : nil,
+          measuredClarity:fullFrame ? clarity : nil,
+          cache:fullFrame ? cache : nil,
           recovery:&recovery,rawDocument:&raw,rawContentClear:&rawContentClear)
         if let raw, region == CGRect(x:0,y:0,width:1,height:1) || rawContentClear {
           let observation=mapped(raw,turns:turns)
@@ -804,6 +807,7 @@ enum ScannerRectangleDetector {
     profile: FoorsaScannerProfile,
     purpose: ScannerDetectionPurpose,
     measuredClarity: ClarityScores? = nil,
+    cache: ScannerVisionFrameCache? = nil,
     recovery: inout VNRectangleObservation?,
     rawDocument: inout VNRectangleObservation?,
     rawContentClear: inout Bool
@@ -815,11 +819,9 @@ enum ScannerRectangleDetector {
       extent.width >= 32, extent.height >= 32 else {return nil}
     let clarity = measuredClarity ?? ContentClarity.score(image)
     guard clarity.support < 24 || clarity.q50 >= 0.35 else { return nil }
-    let request = makeRequest(for: purpose)
-    let segmentation = VNDetectDocumentSegmentationRequest()
-    try VNImageRequestHandler(ciImage: image, orientation: .up).perform([request, segmentation])
-    rawDocument=segmentation.results?.first
-    guard let document = segmentation.results?.first, document.confidence >= 0.6,
+    let vision = try ScannerVisionFrameCache.observations(in: image, purpose: purpose, cache: cache)
+    rawDocument=vision.document
+    guard let document = vision.document, document.confidence >= 0.6,
       select([document], imageSize: image.extent.size, profile: profile, purpose: .still) != nil else { return nil }
     if clarity.support < 24 {
       // Sparse pages may place all their writing outside the central guide.
@@ -834,7 +836,7 @@ enum ScannerRectangleDetector {
       guard pageClarity.support >= 24, pageClarity.q50 >= 0.35 else {return nil}
     }
     rawContentClear=true
-    let proposals = request.results ?? []
+    let proposals = vision.proposals
     func agreeingCorners(_ candidate: VNRectangleObservation, tolerance: CGFloat = 0.06) -> Int {
       let a = [candidate.topLeft,candidate.topRight,candidate.bottomRight,candidate.bottomLeft]
       let b = [document.topLeft,document.topRight,document.bottomRight,document.bottomLeft]
@@ -1181,5 +1183,163 @@ private extension BoundaryPixels {
       if supported >= 20 {framedSides += 1}
     }
     return framedSides >= 3
+  }
+}
+
+// MARK: - Hand-held live detection (custom-live-v11)
+
+/// Vision results for one upright frame, so the document model and the strict
+/// cascade read a single detection pass.
+final class ScannerVisionFrameCache {
+  private(set) var proposals: [VNRectangleObservation] = []
+  private(set) var document: VNRectangleObservation?
+  private(set) var performed = false
+
+  static func observations(in image: CIImage, purpose: ScannerDetectionPurpose,
+                           cache: ScannerVisionFrameCache?) throws
+    -> (proposals: [VNRectangleObservation], document: VNRectangleObservation?) {
+    if let cache, cache.performed { return (cache.proposals, cache.document) }
+    let request = ScannerRectangleDetector.makeRequest(for: purpose)
+    let segmentation = VNDetectDocumentSegmentationRequest()
+    try VNImageRequestHandler(ciImage: image, orientation: .up).perform([request, segmentation])
+    let proposals = request.results ?? []
+    let document = segmentation.results?.first
+    if let cache {
+      cache.proposals = proposals
+      cache.document = document
+      cache.performed = true
+    }
+    return (proposals, document)
+  }
+}
+
+/// One preview frame's verdict: the outline to draw and what to tell the student.
+struct ScannerLiveObservation {
+  let quadrilateral: ScannerQuadrilateral?
+  let framing: ScannerLiveFraming
+  let lighting: ScannerLiveLighting
+  /// True when the strict pixel-evidence cascade confirmed this outline.
+  let confirmedByEvidence: Bool
+
+  static let none = ScannerLiveObservation(quadrilateral: nil, framing: .searching,
+    lighting: .good, confirmedByEvidence: false)
+}
+
+extension ScannerQuadrilateral {
+  init(_ observation: VNRectangleObservation) {
+    self.init(topLeft: observation.topLeft, topRight: observation.topRight,
+      bottomRight: observation.bottomRight, bottomLeft: observation.bottomLeft)
+  }
+}
+
+extension ScannerRectangleDetector {
+  private static let lightingContext = CIContext(options: [.useSoftwareRenderer: false, .cacheIntermediates: false])
+
+  /// Live detection for pages held in a hand or lying on a busy surface.
+  /// The strict cascade demanded a plain, uniform background beside every
+  /// edge, so a hand-held page over clothes or a sofa produced no outline at
+  /// all. Vision's document model is trained for exactly that scene; the
+  /// stability hold, the still-photo checks and the student's review remain
+  /// the guards against a wrong outline. Passports keep the validated
+  /// booklet-aware cascade first because a document model can return the
+  /// whole open booklet.
+  static func detectLive(in image: CIImage, profile: FoorsaScannerProfile) -> ScannerLiveObservation {
+    let e = image.extent
+    guard !e.isInfinite, !e.isNull, e.minX.isFinite, e.minY.isFinite,
+          e.width.isFinite, e.height.isFinite, e.width >= 32, e.height >= 32 else { return .none }
+    let size = e.size
+    let clarity = ContentClarity.score(image)
+    let isClear = clarity.support < 24 || clarity.q50 >= 0.35
+    let cache = ScannerVisionFrameCache()
+    func observation(_ quadrilateral: ScannerQuadrilateral?, evidence: Bool) -> ScannerLiveObservation {
+      let framing = ScannerLiveFramingPolicy.classify(quadrilateral, imageSize: size,
+        profile: profile, isClear: isClear)
+      guard framing != .searching, let quadrilateral else { return .none }
+      let lighting = framing == .ready ? pageLighting(in: image, quadrilateral: quadrilateral) : .good
+      return ScannerLiveObservation(quadrilateral: quadrilateral, framing: framing,
+        lighting: lighting, confirmedByEvidence: evidence)
+    }
+    if profile.layout == .passport {
+      if isClear, let strict = try? detect(in: image, profile: profile, purpose: .live, cache: cache) {
+        return observation(ScannerQuadrilateral(strict), evidence: true)
+      }
+      return observation(documentModelQuadrilateral(in: image, cache: cache), evidence: false)
+    }
+    let model = documentModelQuadrilateral(in: image, cache: cache)
+    let modelObservation = observation(model, evidence: false)
+    if modelObservation.framing == .ready { return modelObservation }
+    // A faint page on a matching surface can still have strong measured edges.
+    guard isClear, let strict = try? detect(in: image, profile: profile, purpose: .live, cache: cache) else {
+      return modelObservation
+    }
+    let strictQuadrilateral = ScannerQuadrilateral(strict)
+    // A page the model sees cut off is cut off: an inner printed panel inside
+    // it must not stand in for the paper.
+    if modelObservation.framing == .clipped, let model, model.encloses(strictQuadrilateral) {
+      return modelObservation
+    }
+    let strictObservation = observation(strictQuadrilateral, evidence: true)
+    return strictObservation.framing == .ready ? strictObservation : modelObservation
+  }
+
+  /// Vision's document segmentation, with its edges taken from a rectangle
+  /// proposal that shares its corners. Over a busy background the model often
+  /// gets the page right but throws one or two corners to the frame's edge or
+  /// onto a hand; in synthetic hand-held scenes the matching proposal was
+  /// within one percent of every page (see ScannerOutlineRefinement).
+  static func documentModelQuadrilateral(in image: CIImage, cache: ScannerVisionFrameCache,
+                                         purpose: ScannerDetectionPurpose = .live) -> ScannerQuadrilateral? {
+    guard let vision = try? ScannerVisionFrameCache.observations(in: image, purpose: purpose, cache: cache),
+          let document = vision.document, document.confidence >= 0.6 else { return nil }
+    let size = image.extent.size
+    let model = ScannerQuadrilateral(document)
+    if let refined = ScannerOutlineRefinement.refine(model: model,
+         proposals: vision.proposals.map { ScannerQuadrilateral($0) }, imageSize: size) {
+      return refined
+    }
+    return model.isPlausiblePage(in: size) ? model : nil
+  }
+
+  /// Still fallback when the strict cascade rejects a hand-held page: the
+  /// document model on the photo itself, kept only when it is a complete page
+  /// of the expected shape and agrees with the live outline that authorized
+  /// the shutter. Without that outline it is used only for a photo taken by
+  /// hand. A one percent margin protects edge detail.
+  static func stillDocumentModel(in image: CIImage, profile: FoorsaScannerProfile,
+                                 near live: ScannerQuadrilateral?,
+                                 allowUnanchored: Bool = false,
+                                 cache: ScannerVisionFrameCache = ScannerVisionFrameCache()) -> ScannerQuadrilateral? {
+    guard live != nil || allowUnanchored else { return nil }
+    guard let model = documentModelQuadrilateral(in: image, cache: cache, purpose: .still),
+          ScannerLiveFramingPolicy.classify(model, imageSize: image.extent.size,
+            profile: profile, isClear: true) == .ready else { return nil }
+    if let live, model.maximumCornerDistance(to: live) > 0.08 { return nil }
+    return model.expanded(by: 0.01)
+  }
+
+  /// Light on the page itself, from a 160-pixel corrected rendering.
+  static func pageLighting(in image: CIImage, quadrilateral: ScannerQuadrilateral) -> ScannerLiveLighting {
+    let e = image.extent
+    func vector(_ point: CGPoint) -> CIVector {
+      CIVector(x: e.minX + point.x * e.width, y: e.minY + point.y * e.height)
+    }
+    guard let corrected = CIFilter(name: "CIPerspectiveCorrection", parameters: [
+      kCIInputImageKey: image,
+      "inputTopLeft": vector(quadrilateral.topLeft), "inputTopRight": vector(quadrilateral.topRight),
+      "inputBottomRight": vector(quadrilateral.bottomRight), "inputBottomLeft": vector(quadrilateral.bottomLeft),
+    ])?.outputImage else { return .good }
+    let extent = corrected.extent
+    guard !extent.isInfinite, !extent.isNull, extent.width >= 8, extent.height >= 8 else { return .good }
+    let origin = corrected.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+    let scale = min(1, 160 / max(extent.width, extent.height))
+    let width = max(24, Int((extent.width * scale).rounded()))
+    let height = max(24, Int((extent.height * scale).rounded()))
+    let scaled = origin.transformed(by: CGAffineTransform(scaleX: CGFloat(width) / extent.width,
+      y: CGFloat(height) / extent.height))
+    var rgba = [UInt8](repeating: 0, count: width * height * 4)
+    lightingContext.render(scaled, toBitmap: &rgba, rowBytes: width * 4,
+      bounds: CGRect(x: 0, y: 0, width: width, height: height), format: .RGBA8,
+      colorSpace: CGColorSpaceCreateDeviceRGB())
+    return ScannerPageLightingProbe.assess(rgba: rgba, width: width, height: height)
   }
 }
