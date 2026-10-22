@@ -27,6 +27,7 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 import 'config.dart';
 import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
+import 'shell_capabilities.dart';
 import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
@@ -723,11 +724,10 @@ class _ShellPageState extends State<ShellPage> {
                   // Tactile tick for portal button presses —
                   // navigator.vibrate is unreliable inside the WebView.
                   // What this build can do, so the portal can tell it from
-                  // older builds: embeddedFrames = an iframe (a YouTube
-                  // player) plays in the page instead of leaving the app.
+                  // older builds (shell_capabilities.dart).
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellCapabilities',
-                    callback: (args) => const {'embeddedFrames': true},
+                    callback: (args) => shellCapabilities(isIOS: Platform.isIOS),
                   );
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellHaptic',
