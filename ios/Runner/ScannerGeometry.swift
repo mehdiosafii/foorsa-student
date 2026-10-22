@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 struct FoorsaScannerProfile {
@@ -196,12 +198,21 @@ struct ScannerStabilityTracker {
   private(set) var lastSeen: TimeInterval?
   private var lastProcessingDuration: TimeInterval = 0
   private var consecutiveObservations = 0
+  private var misses = 0
+  private var lastProgress: CGFloat = 0
   let requiredDuration: TimeInterval
   let minimumArea: CGFloat
+  let requiredObservations: Int
+  // A hand-held page is occasionally missed for one preview frame. Without a
+  // tolerance that single miss restarts the hold and delays capture.
+  let toleratedMisses: Int
 
-  init(requiredDuration: TimeInterval = 0.72, minimumArea: CGFloat = 0.16) {
+  init(requiredDuration: TimeInterval = 0.72, minimumArea: CGFloat = 0.16,
+       requiredObservations: Int = 4, toleratedMisses: Int = 0) {
     self.requiredDuration = requiredDuration
     self.minimumArea = minimumArea
+    self.requiredObservations = max(2, requiredObservations)
+    self.toleratedMisses = max(0, toleratedMisses)
   }
 
   mutating func observe(
@@ -210,14 +221,27 @@ struct ScannerStabilityTracker {
     processingDuration: TimeInterval = 0
   ) -> ScannerStabilityState {
     guard time.isFinite, processingDuration.isFinite,
-          processingDuration >= 0, processingDuration <= Self.maximumObservationAge,
-          let quadrilateral, quadrilateral.isComplete(minimumArea: minimumArea) else {
+          processingDuration >= 0, processingDuration <= Self.maximumObservationAge else {
       reset()
       return ScannerStabilityState(progress: 0, ready: false)
     }
+    guard let quadrilateral, quadrilateral.isComplete(minimumArea: minimumArea) else {
+      // Keep the hold through a single missing frame, without advancing it.
+      if misses < toleratedMisses, anchor != nil, let lastSeen,
+         time > lastSeen, time - lastSeen < Self.maximumObservationAge {
+        misses += 1
+        return ScannerStabilityState(progress: lastProgress, ready: false)
+      }
+      reset()
+      return ScannerStabilityState(progress: 0, ready: false)
+    }
+    let missedFrames = misses
+    misses = 0
     // Account for time spent analyzing the previous frame, while retaining a
     // hard ceiling so a camera interruption cannot count as a continuous hold.
-    let allowedGap = min(Self.maximumObservationAge, max(0.28, lastProcessingDuration * 1.5 + 0.12))
+    // A tolerated miss leaves one extra analysis interval between sightings.
+    let allowedGap = min(Self.maximumObservationAge,
+      max(0.28, lastProcessingDuration * 1.5 + 0.12) * Double(1 + missedFrames))
     defer {
       lastSeen = time
       lastProcessingDuration = processingDuration
@@ -229,13 +253,15 @@ struct ScannerStabilityTracker {
       self.anchor = quadrilateral
       self.stableSince = time
       consecutiveObservations = 1
+      lastProgress = 0
       return ScannerStabilityState(progress: 0, ready: false)
     }
     // Slowly follow hand drift while preserving a stable reference window.
     self.anchor = anchor.blended(with: quadrilateral, amount: 0.18)
     consecutiveObservations += 1
-    let progress = min(1, CGFloat(consecutiveObservations - 1) / 3,
+    let progress = min(1, CGFloat(consecutiveObservations - 1) / CGFloat(requiredObservations - 1),
       max(0, CGFloat((time - stableSince) / requiredDuration)))
+    lastProgress = progress
     return ScannerStabilityState(progress: progress, ready: progress >= 1)
   }
 
@@ -245,6 +271,8 @@ struct ScannerStabilityTracker {
     lastSeen = nil
     lastProcessingDuration = 0
     consecutiveObservations = 0
+    misses = 0
+    lastProgress = 0
   }
 }
 
@@ -737,11 +765,414 @@ enum ScannerLivePhotoCrop {
     let xScale = min(1, liveAspect / photoAspect)
     let yScale = min(1, photoAspect / liveAspect)
     func point(_ p: CGPoint) -> CGPoint {
-      // Slight padding protects printed detail at the detected edge.
-      CGPoint(x: min(1, max(0, 0.5 + (p.x - 0.5) * xScale * 1.02)),
-              y: min(1, max(0, 0.5 + (p.y - 0.5) * yScale * 1.02)))
+      CGPoint(x: min(1, max(0, 0.5 + (p.x - 0.5) * xScale)),
+              y: min(1, max(0, 0.5 + (p.y - 0.5) * yScale)))
     }
+    // Slight padding protects printed detail at every detected edge. It is
+    // measured from the page's own centre, so an off-centre page keeps its
+    // margin on the side nearest the middle of the frame too.
     return ScannerQuadrilateral(topLeft: point(quad.topLeft), topRight: point(quad.topRight),
-      bottomRight: point(quad.bottomRight), bottomLeft: point(quad.bottomLeft))
+      bottomRight: point(quad.bottomRight), bottomLeft: point(quad.bottomLeft)).expanded(by: 0.02)
+  }
+}
+
+// MARK: - Live framing (custom-live-v11)
+//
+// The live preview answers one question per frame: is there a page, and what
+// should the student change? These types are pure so the decisions can be
+// tested without a camera. Stability over time stays in the tracker.
+
+/// What one preview frame shows, before any hold time is counted.
+enum ScannerLiveFraming: String, Equatable {
+  case searching
+  case ready
+  case tooSmall
+  case clipped
+  case wrongShape
+  case blurry
+}
+
+/// Coarse light on the corrected page. Only a hint: it never blocks capture
+/// for long, because a slightly shadowed page is better than no page.
+enum ScannerLiveLighting: String, Equatable {
+  case good
+  case shadow
+  case glare
+  case dim
+}
+
+extension ScannerQuadrilateral {
+  /// A convex outline whose corners make plausible paper angles in image
+  /// pixels. Perspective is allowed; bow ties, slivers and spikes are not.
+  func isPlausiblePage(in imageSize: CGSize) -> Bool {
+    guard imageSize.width > 0, imageSize.height > 0, imageSize.width.isFinite,
+          imageSize.height.isFinite else { return false }
+    let p = points.map { CGPoint(x: $0.x * imageSize.width, y: $0.y * imageSize.height) }
+    guard p.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return false }
+    var orientation: CGFloat = 0
+    var sides: [CGFloat] = []
+    for index in 0..<4 {
+      let a = p[index], b = p[(index + 1) % 4], c = p[(index + 2) % 4]
+      let cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)
+      guard abs(cross) > 1e-6 else { return false }
+      let sign: CGFloat = cross > 0 ? 1 : -1
+      if orientation == 0 { orientation = sign } else if sign != orientation { return false }
+      let u = CGPoint(x: a.x - b.x, y: a.y - b.y)
+      let v = CGPoint(x: c.x - b.x, y: c.y - b.y)
+      let lu = hypot(u.x, u.y), lv = hypot(v.x, v.y)
+      guard lu > 1, lv > 1 else { return false }
+      let cosine = Double((u.x * v.x + u.y * v.y) / (lu * lv))
+      let angle = acos(max(-1, min(1, cosine))) * 180 / Double.pi
+      guard angle >= 40, angle <= 140 else { return false }
+      sides.append(hypot(b.x - a.x, b.y - a.y))
+    }
+    guard let shortest = sides.min(), let longest = sides.max(), longest > 0 else { return false }
+    return shortest / longest >= 0.15
+  }
+}
+
+enum ScannerLiveFramingPolicy {
+  static let edgeMargin: CGFloat = 0.015
+
+  /// `ready` implies `isComplete(minimumArea: profile.minimumCaptureArea)`
+  /// and the profile's shape rule, so the hold tracker sees the same page.
+  static func classify(_ quadrilateral: ScannerQuadrilateral?, imageSize: CGSize,
+                       profile: FoorsaScannerProfile, isClear: Bool) -> ScannerLiveFraming {
+    guard let quadrilateral, quadrilateral.isPlausiblePage(in: imageSize) else { return .searching }
+    let inside = quadrilateral.points.allSatisfy {
+      $0.x >= edgeMargin && $0.x <= 1 - edgeMargin && $0.y >= edgeMargin && $0.y <= 1 - edgeMargin
+    }
+    guard inside else { return .clipped }
+    guard quadrilateral.area >= profile.minimumCaptureArea else { return .tooSmall }
+    guard profile.accepts(aspectRatio: quadrilateral.estimatedAspectRatio(in: imageSize)) else {
+      return .wrongShape
+    }
+    guard isClear else { return .blurry }
+    return .ready
+  }
+}
+
+struct ScannerGuidanceCopy: Equatable {
+  let title: String
+  let detail: String
+  /// Shown instead of `detail` at accessibility text sizes.
+  let compact: String
+}
+
+/// One short instruction per state: framing first, then light, then the hold.
+enum ScannerLiveGuidance {
+  static func copy(framing: ScannerLiveFraming, lighting: ScannerLiveLighting,
+                   layout: FoorsaScannerProfile.Layout) -> ScannerGuidanceCopy {
+    switch framing {
+    case .searching:
+      switch layout {
+      case .passport:
+        return .init(title: "Show the photo page",
+          detail: "Open the passport and fit the whole photo page in view.", compact: "Photo page in view.")
+      case .card:
+        return .init(title: "Show the card", detail: "Fit the whole card in view, all four corners.",
+          compact: "Whole card in view.")
+      case .portrait, .adaptive:
+        return .init(title: "Show the whole page", detail: "Fit all four corners in view. Any orientation works.",
+          compact: "Whole page in view.")
+      }
+    case .clipped:
+      return .init(title: "Move back a little", detail: "Keep all four corners inside the view.",
+        compact: "Show all corners.")
+    case .tooSmall:
+      return .init(title: "Move closer", detail: "Let the document fill more of the view.",
+        compact: "Move closer.")
+    case .wrongShape:
+      return layout == .passport
+        ? .init(title: "Show only the photo page", detail: "Keep the passport open on the page with your photo.",
+          compact: "Photo page only.")
+        : .init(title: "Fit the whole page", detail: "Show the complete document with all four corners.",
+          compact: "Show all corners.")
+    case .blurry:
+      return .init(title: "Hold still", detail: "Keep the phone steady so the text is sharp.", compact: "Hold still.")
+    case .ready:
+      switch lighting {
+      case .shadow:
+        return .init(title: "Shadow on the page", detail: "Move the phone or the light so the page is evenly lit.",
+          compact: "Avoid the shadow.")
+      case .glare:
+        return .init(title: "Glare on the page", detail: "Tilt the phone slightly to move the reflection.",
+          compact: "Tilt slightly.")
+      case .dim:
+        return .init(title: "More light needed", detail: "Turn on a light or use the torch.", compact: "More light.")
+      case .good:
+        return .init(title: "Hold still", detail: "Capturing automatically.", compact: "Capturing.")
+      }
+    }
+  }
+}
+
+/// Keeps the drawn outline calm: small detector jitter is averaged, a real
+/// move jumps at once, and one missed frame does not make the outline blink.
+struct ScannerOutlineSmoother {
+  private(set) var current: ScannerQuadrilateral?
+  private var misses = 0
+  let holdFrames: Int
+  let blendAmount: CGFloat
+  let jumpDistance: CGFloat
+
+  init(holdFrames: Int = 2, blendAmount: CGFloat = 0.6, jumpDistance: CGFloat = 0.06) {
+    self.holdFrames = max(0, holdFrames)
+    self.blendAmount = min(1, max(0.05, blendAmount))
+    self.jumpDistance = max(0.001, jumpDistance)
+  }
+
+  mutating func update(_ quadrilateral: ScannerQuadrilateral?) -> ScannerQuadrilateral? {
+    guard let quadrilateral else {
+      misses += 1
+      if misses > holdFrames { current = nil }
+      return current
+    }
+    misses = 0
+    if let current, current.maximumCornerDistance(to: quadrilateral) < jumpDistance {
+      self.current = current.blended(with: quadrilateral, amount: blendAmount)
+    } else {
+      current = quadrilateral
+    }
+    return current
+  }
+
+  mutating func reset() {
+    current = nil
+    misses = 0
+  }
+}
+
+/// Reads a small, perspective-corrected rendering of the page only (RGBA8,
+/// row-major). Paper is the brightest material on most pages, so each cell's
+/// bright percentile estimates the light falling on the paper there.
+enum ScannerPageLightingProbe {
+  struct Cell {
+    let paper: Double
+    let saturated: Double
+    let neutral: Bool
+  }
+
+  static func cells(rgba: [UInt8], width: Int, height: Int) -> [Cell] {
+    guard width >= 24, height >= 24, rgba.count == width * height * 4 else { return [] }
+    let columns = width >= height ? 8 : 6
+    let rows = width >= height ? 6 : 8
+    var result: [Cell] = []
+    result.reserveCapacity(columns * rows)
+    for row in 0..<rows {
+      for column in 0..<columns {
+        let x0 = column * width / columns, x1 = (column + 1) * width / columns
+        let y0 = row * height / rows, y1 = (row + 1) * height / rows
+        var lumas: [Double] = []
+        lumas.reserveCapacity((x1 - x0) * (y1 - y0))
+        var saturated = 0
+        var chroma = 0.0
+        for y in y0..<y1 {
+          for x in x0..<x1 {
+            let i = (y * width + x) * 4
+            let r = Double(rgba[i]), g = Double(rgba[i + 1]), b = Double(rgba[i + 2])
+            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            lumas.append(luma)
+            if luma >= 250 { saturated += 1 }
+            chroma += max(abs(r - g), abs(g - b), abs(r - b))
+          }
+        }
+        guard !lumas.isEmpty else { continue }
+        lumas.sort()
+        let paper = lumas[min(lumas.count - 1, Int(Double(lumas.count - 1) * 0.9))]
+        result.append(Cell(paper: paper, saturated: Double(saturated) / Double(lumas.count),
+          neutral: chroma / Double(lumas.count) <= 28))
+      }
+    }
+    return result
+  }
+
+  static func assess(rgba: [UInt8], width: Int, height: Int) -> ScannerLiveLighting {
+    let grid = cells(rgba: rgba, width: width, height: height)
+    guard grid.count >= 24 else { return .good }
+    func percentile(_ values: [Double], _ p: Double) -> Double {
+      let sorted = values.sorted()
+      return sorted[min(sorted.count - 1, max(0, Int(Double(sorted.count - 1) * p)))]
+    }
+    // Glare: a few cells blown out while the typical cell is not.
+    let blown = grid.filter { $0.saturated >= 0.35 }.count
+    let typicalSaturation = percentile(grid.map(\.saturated), 0.5)
+    if blown >= 1, blown * 3 <= grid.count, typicalSaturation < 0.05 { return .glare }
+    // Shadow: a sizeable, neutral region where the paper itself is much darker
+    // than the brightest paper. Small dark artwork (a photo, a header) is too
+    // small to count, and colored panels are not neutral.
+    let bright = percentile(grid.map(\.paper), 0.9)
+    guard bright >= 60 else { return .good }
+    let shaded = grid.filter { $0.neutral && $0.paper < bright * 0.62 }.count
+    let share = Double(shaded) / Double(grid.count)
+    if share >= 0.15 && share <= 0.85 { return .shadow }
+    return .good
+  }
+}
+
+/// A page is taken as a short burst: the next photo is shot while the last
+/// one is checked. The system shutter would sound on every one of them, so
+/// only a page's first photo sounds; the rest are silenced where iOS allows
+/// it (iOS 18+, and not in regions that require the sound).
+enum ScannerShutterSound {
+  /// `photoNumber` counts the photos of the current page, starting at 1.
+  static func plays(photoNumber: Int) -> Bool { photoNumber <= 1 }
+}
+
+/// Imagegen capture keeps taking clear photos in one hold until enough are
+/// useful, instead of asking for a fresh hold before every photo. A photo in
+/// flight counts toward the goal so the camera never over-shoots.
+struct ScannerImagegenCapturePolicy {
+  static let requiredUsefulViews = ScannerOriginalPhotoPool.minimumUsefulViews
+  static let maximumAttempts = ScannerOriginalPhotoPool.maximumCount
+  static let totalDuration: TimeInterval = 30
+
+  enum Decision: Equatable {
+    case shootNext
+    case waitForResults
+    case complete
+    case giveUp
+  }
+
+  let startedAt: TimeInterval
+  private(set) var attempts = 0
+  private(set) var usefulViews = 0
+  private(set) var inFlight = 0
+
+  init(startedAt: TimeInterval) {
+    self.startedAt = startedAt.isFinite ? startedAt : 0
+  }
+
+  mutating func photoRequested() {
+    attempts += 1
+    inFlight += 1
+  }
+
+  /// `usefulViews` is the processor's retained count, which can drop when a
+  /// much sharper later view replaces an earlier soft one.
+  mutating func photoResolved(usefulViews: Int) {
+    inFlight = max(0, inFlight - 1)
+    self.usefulViews = max(0, usefulViews)
+  }
+
+  func decision(at time: TimeInterval) -> Decision {
+    if usefulViews >= Self.requiredUsefulViews { return .complete }
+    if usefulViews + inFlight >= Self.requiredUsefulViews { return .waitForResults }
+    let expired = !time.isFinite || time < startedAt || time - startedAt >= Self.totalDuration
+    if expired || attempts >= Self.maximumAttempts { return inFlight > 0 ? .waitForResults : .giveUp }
+    return .shootNext
+  }
+}
+
+extension ScannerQuadrilateral {
+  /// Loose containment: every corner of `other` lies inside this outline's
+  /// bounding box, widened by `margin`.
+  func encloses(_ other: ScannerQuadrilateral, margin: CGFloat = 0.01) -> Bool {
+    let xs = points.map(\.x), ys = points.map(\.y)
+    guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { return false }
+    return other.points.allSatisfy {
+      $0.x >= minX - margin && $0.x <= maxX + margin && $0.y >= minY - margin && $0.y <= maxY + margin
+    }
+  }
+
+  /// Scales the outline about its centroid, clamped to the image. A small
+  /// outward margin keeps printed detail at an approximate model edge.
+  func expanded(by fraction: CGFloat) -> ScannerQuadrilateral {
+    let center = centroid
+    func point(_ p: CGPoint) -> CGPoint {
+      CGPoint(x: min(1, max(0, center.x + (p.x - center.x) * (1 + fraction))),
+              y: min(1, max(0, center.y + (p.y - center.y) * (1 + fraction))))
+    }
+    return ScannerQuadrilateral(topLeft: point(topLeft), topRight: point(topRight),
+      bottomRight: point(bottomRight), bottomLeft: point(bottomLeft))
+  }
+
+  static let fullFrame = ScannerQuadrilateral(topLeft: CGPoint(x: 0, y: 1), topRight: CGPoint(x: 1, y: 1),
+    bottomRight: CGPoint(x: 1, y: 0), bottomLeft: CGPoint(x: 0, y: 0))
+}
+
+/// A precise rectangle proposal checked against Vision's document model.
+/// The model tells a page from clutter, but over a busy background it often
+/// throws one or two corners off to the frame's edge or onto a hand; the
+/// rectangle detector traces exact edges but cannot tell paper from a cushion.
+/// A proposal that shares the model's corners takes the best of both.
+enum ScannerOutlineRefinement {
+  /// Corners agree within this share of the proposal's own diagonal, which is
+  /// tighter than the inset of a printed border inside the page.
+  static let cornerTolerance: CGFloat = 0.025
+  /// A model corner this close to the frame's edge has run off the page.
+  static let edgeMargin: CGFloat = 0.02
+
+  struct Agreement: Equatable {
+    let agreeing: Int
+    /// Model corners, by index, that matched none of the proposal's corners.
+    let strayModelCorners: [Int]
+    /// Summed pixel distance of the agreeing corners, for ranking.
+    let distance: CGFloat
+    /// Proposal corner `i` matched model corner `(i + shift) % 4`.
+    var shift: Int = 0
+  }
+
+  /// Corners matched under the best cyclic alignment, so the result does not
+  /// depend on which corner each detector called top-left.
+  static func agreement(of proposal: ScannerQuadrilateral, with model: ScannerQuadrilateral,
+                        imageSize: CGSize) -> Agreement {
+    func pixel(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * imageSize.width, y: p.y * imageSize.height) }
+    let a = proposal.points.map(pixel), b = model.points.map(pixel)
+    let diagonal = max(hypot(a[0].x - a[2].x, a[0].y - a[2].y), hypot(a[1].x - a[3].x, a[1].y - a[3].y))
+    let limit = diagonal * cornerTolerance
+    var best = Agreement(agreeing: 0, strayModelCorners: [0, 1, 2, 3], distance: .infinity)
+    for shift in 0..<4 {
+      var agreeing = 0, distance: CGFloat = 0, stray: [Int] = []
+      for index in 0..<4 {
+        let corner = (index + shift) % 4
+        let gap = hypot(a[index].x - b[corner].x, a[index].y - b[corner].y)
+        if gap <= limit { agreeing += 1; distance += gap } else { stray.append(corner) }
+      }
+      if agreeing > best.agreeing || (agreeing == best.agreeing && agreeing > 0 && distance < best.distance) {
+        best = Agreement(agreeing: agreeing, strayModelCorners: stray.sorted(), distance: distance,
+          shift: shift)
+      }
+    }
+    return best
+  }
+
+  /// Three shared corners place the page. Two are enough only when the
+  /// model's other two ran off to the frame's edge: a page inside the frame
+  /// whose model corners stay inside it (an open booklet, a two-page spread)
+  /// keeps its own outline rather than shrinking to one half.
+  static func accepts(_ agreement: Agreement, model: ScannerQuadrilateral) -> Bool {
+    if agreement.agreeing >= 3 { return true }
+    guard agreement.agreeing == 2 else { return false }
+    return agreement.strayModelCorners.allSatisfy { index in
+      let p = model.points[index]
+      return p.x <= edgeMargin || p.x >= 1 - edgeMargin || p.y <= edgeMargin || p.y >= 1 - edgeMargin
+    }
+  }
+
+  /// The proposal that sharpens `model`, if one agrees closely enough.
+  static func refine(model: ScannerQuadrilateral, proposals: [ScannerQuadrilateral],
+                     imageSize: CGSize) -> ScannerQuadrilateral? {
+    var best: (proposal: ScannerQuadrilateral, agreement: Agreement)?
+    for proposal in proposals where proposal.isPlausiblePage(in: imageSize) {
+      let candidate = agreement(of: proposal, with: model, imageSize: imageSize)
+      guard accepts(candidate, model: model) else { continue }
+      if let current = best?.agreement {
+        let more = candidate.agreeing > current.agreeing
+        let closer = candidate.agreeing == current.agreeing && candidate.distance < current.distance
+        guard more || closer else { continue }
+      }
+      best = (proposal, candidate)
+    }
+    guard let chosen = best else { return nil }
+    // Everything after this compares corners by position (the hold tracker,
+    // the settle check, the still crop, the perspective correction), so the
+    // proposal is relabelled into the model's corner order. A detector that
+    // listed the page from another corner would otherwise reset the hold or
+    // save the page turned a quarter.
+    let points = chosen.proposal.points
+    func corner(_ index: Int) -> CGPoint { points[(index - chosen.agreement.shift + 4) % 4] }
+    return ScannerQuadrilateral(topLeft: corner(0), topRight: corner(1),
+      bottomRight: corner(2), bottomLeft: corner(3))
   }
 }
