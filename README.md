@@ -62,21 +62,39 @@ box ticked: that uploads the version `main` is on (`1.2.17+34`). If App Store
 Connect already has that build number, the run says so; bump the number and
 merge instead.
 
+**Two ways to sign.** The App Store Connect key below is always needed: it
+uploads the build. On its own, as an **Admin** key, it is enough: Apple signs
+the build in the cloud with the team's cloud-managed distribution certificate,
+so nothing has to be exported from a Mac (24 Oct 2026). The archive is built
+unsigned and signed once, by Apple, at export; if an export ever refuses the
+unsigned archive, the run archives again with automatic signing, and the
+development certificate Xcode makes on the runner for that is revoked at the
+end of the run (`scripts/app_store_connect.py revoke-new`; only certificates
+Xcode made "Created via API" during the run). A distribution certificate is
+never revoked by the workflow: Apple marks a build that is uploaded but not
+yet submitted for review "Invalid Binary" when the certificate that signed it
+is revoked. An App Manager key signs in but Apple refuses it cloud signing
+("Cloud signing permission error"); with an App Manager key, add the
+certificate and the profile too. When `IOS_DISTRIBUTION_P12`, its password and
+`IOS_PROVISIONING_PROFILE` are all set, the run signs with them instead, as
+before. The run's summary says which it used.
+
 **One-time setup** (repository Settings → Secrets and variables → Actions):
 
 | Name | Kind | What to put in it |
 |---|---|---|
-| `IOS_DISTRIBUTION_P12` | Secret | The Apple Distribution certificate **with its private key**. On the Mac that holds it: Keychain Access → login → My Certificates → "Apple Distribution: … (G865J7CMBG)" (a key shows beneath it) → File → Export Items… → Personal Information Exchange (.p12), saved as `dist.p12`; then `base64 -i dist.p12 \| pbcopy`. If it is not under My Certificates, its key is not on that Mac: make a new Apple Distribution certificate and update the profile to use it |
-| `IOS_DISTRIBUTION_P12_PASSWORD` | Secret | The password chosen when exporting the `.p12`. It must not be empty: GitHub does not store an empty secret, and the workflow then treats signing as not set up |
-| `IOS_PROVISIONING_PROFILE` | Secret | The `Foorsa Student App Store` profile from developer.apple.com → Certificates, Identifiers & Profiles → Profiles, base64-encoded: `base64 -i Foorsa_Student_App_Store.mobileprovision \| pbcopy` |
-| `APPSTORE_API_PRIVATE_KEY` | Secret | The contents of `AuthKey_XXXXXXXXXX.p8` (`pbcopy < AuthKey_XXXXXXXXXX.p8`), from App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → + (created by the Account Holder or an Admin, with the App Manager role; the file downloads only once, and if the page shows Request Access the Account Holder clicks it first) |
+| `IOS_DISTRIBUTION_P12` | Secret, optional with an Admin key | The Apple Distribution certificate **with its private key**. On the Mac that holds it: Keychain Access → login → My Certificates → "Apple Distribution: … (G865J7CMBG)" (a key shows beneath it) → File → Export Items… → Personal Information Exchange (.p12), saved as `dist.p12`; then `base64 -i dist.p12 \| pbcopy`. If it is not under My Certificates, its key is not on that Mac: make a new Apple Distribution certificate and update the profile to use it |
+| `IOS_DISTRIBUTION_P12_PASSWORD` | Secret, optional with an Admin key | The password chosen when exporting the `.p12`. It must not be empty: GitHub does not store an empty secret, and the workflow then treats signing as not set up |
+| `IOS_PROVISIONING_PROFILE` | Secret, optional with an Admin key | The `Foorsa Student App Store` profile from developer.apple.com → Certificates, Identifiers & Profiles → Profiles, base64-encoded: `base64 -i Foorsa_Student_App_Store.mobileprovision \| pbcopy` |
+| `APPSTORE_API_PRIVATE_KEY` | Secret | The contents of `AuthKey_XXXXXXXXXX.p8` (`pbcopy < AuthKey_XXXXXXXXXX.p8`), from App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → + (created by the Account Holder or an Admin, with the **Admin** role for cloud signing, or App Manager when the certificate and profile are set; the file downloads only once, and if the page shows Request Access the Account Holder clicks it first) |
 | `APPSTORE_API_KEY_ID` | Variable | That key's Key ID (on the Variables tab) |
 | `APPSTORE_ISSUER_ID` | Variable | The Issuer ID shown above the keys list (on the Variables tab) |
 
-An upload run with any of these missing stops at once and names the missing
-ones. Before building, the workflow also checks that the profile is the
-`Foorsa Student App Store` one for `ma.foorsa.foorsaStudent`, that it has not
-expired, and that it was made for the certificate in the `.p12`.
+An upload run without the key stops at once and names what is missing. With
+the certificate secrets, the workflow also checks before building that the
+profile is the `Foorsa Student App Store` one for `ma.foorsa.foorsaStudent`,
+that it has not expired, and that it was made for the certificate in the
+`.p12`.
 
 The certificate and the profile each last a year (every run's log prints the
 profile's expiry). A renewed profile replaces only `IOS_PROVISIONING_PROFILE`;
