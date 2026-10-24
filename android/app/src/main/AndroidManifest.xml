@@ -11,6 +11,9 @@
     <!-- Legacy devices only: MediaStore needs no permission on API 29+ -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                      android:maxSdkVersion="28"/>
+    <!-- Install-time, no prompt: the portal's haptic textures (ShellHaptics.kt).
+         Touch feedback settings still apply. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- open_filex adds broad media read permissions; the app only opens its
          own files and uploads go through the system picker, so drop them
          (Google Play photo & video permissions policy). -->

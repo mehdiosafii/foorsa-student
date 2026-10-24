@@ -2,20 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'src/config.dart';
+import 'src/shell_appearance.dart';
 import 'src/shell_page.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
     statusBarBrightness: Brightness.dark,
   ));
-  runApp(const FoorsaStudentApp());
+  // The theme the student chose, before the first frame: the loading screen
+  // opens in it rather than in the phone's. One small file, a few ms.
+  final appearance = await ShellAppearanceStore().read();
+  runApp(FoorsaStudentApp(appearance: appearance));
 }
 
 class FoorsaStudentApp extends StatelessWidget {
-  const FoorsaStudentApp({super.key});
+  const FoorsaStudentApp({super.key, this.appearance});
+
+  final ShellAppearance? appearance;
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +33,7 @@ class FoorsaStudentApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(AppConfig.brandColorValue)),
       ),
-      home: const ShellPage(),
+      home: ShellPage(appearance: appearance),
     );
   }
 }
