@@ -102,3 +102,25 @@ above (the workflow writes the same file). The production archive and IPA
 completed successfully on 5 October 2026. Analysis reports five existing
 informational lints. Physical-device permission testing is still required before
 final submission.
+
+## What the portal tells the app
+
+The portal (student.foorsa.ma, `src/portal` in foorsa-reward) calls these
+handlers through `window.flutter_inappwebview.callHandler`. Builds that do not
+know one ignore it, so the portal sends them to every build.
+
+- `FoorsaShellCapabilities` answers what this build does (`shell_capabilities.dart`):
+  `embeddedFrames`, `videoInput`, `hapticTextures` (3: the admission reveal's
+  textures and `error`) and `bootHandoff`.
+- `FoorsaShellLoading('hold' | 'ready')`: the portal draws the app's own loader
+  until its first screen, so the app keeps its loader on top from `hold` to
+  `ready` (at most 10 s), centred where the portal centres its one, and one
+  loader runs from the app icon to the first screen (`boot_loader_gate.dart`).
+- `FoorsaShellAppearance('light' | 'dark' | 'system')`: the theme the student
+  chose, kept on the phone (`shell_appearance.dart`) so the next start's loader
+  and the offline screen open in it.
+- `FoorsaShellHaptic(name, level)`: a texture by name (`shell_haptics.dart`,
+  `ShellHaptics.kt` on Android at media strength, Taptic impacts on iOS); a
+  number is an ordinary press, one light tick. Builds 33 to 46 shipped without
+  the textures and played a tick for every one.
+- `FoorsaShellTheme(color)`: the status bar follows the page.

@@ -24,17 +24,25 @@ import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:url_launcher/url_launcher.dart' as launcher;
 
+import 'boot_loader_gate.dart';
 import 'config.dart';
 import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
+import 'shell_appearance.dart';
 import 'shell_capabilities.dart';
+import 'shell_haptics.dart';
+import 'shell_screens.dart';
 import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
 import 'trusted_portal.dart';
 
 class ShellPage extends StatefulWidget {
-  const ShellPage({super.key});
+  const ShellPage({super.key, this.appearance});
+
+  /// The theme the portal last said the student chose (read before the first
+  /// frame, main.dart); null follows the phone.
+  final ShellAppearance? appearance;
 
   @override
   State<ShellPage> createState() => _ShellPageState();
@@ -44,8 +52,14 @@ class ShellPage extends StatefulWidget {
 class _ShellPageState extends State<ShellPage> {
   InAppWebViewController? _controller;
   PackageInfo? _packageInfo;
-  bool _firstLoadDone = false;
-  bool _introDone = false;
+  /// When the loading screen gives way to the portal (boot_loader_gate.dart).
+  final BootLoaderGate _loader = BootLoaderGate();
+  Timer? _holdTimer;
+  /// Gone from the tree once its fade has ended.
+  bool _loaderRemoved = false;
+  late ShellAppearance? _appearance = widget.appearance;
+  final ShellAppearanceStore _appearanceStore = ShellAppearanceStore();
+  final ShellHaptics _haptics = ShellHaptics();
   bool _bootWebView = false;
   bool _loadFailed = false;
   /// The CURRENT navigation reported a main-frame error. Android fires
@@ -84,9 +98,9 @@ class _ShellPageState extends State<ShellPage> {
   void initState() {
     super.initState();
     // Minimum splash so a fast load can't flash it; the screen otherwise
-    // lifts the moment the portal's first load finishes.
-    Timer(const Duration(milliseconds: 800), () {
-      if (mounted) setState(() => _introDone = true);
+    // lifts when the portal has its first screen (BootLoaderGate).
+    Timer(BootLoaderGate.minimum, () {
+      if (mounted) setState(_loader.minimumPassed);
     });
     // Let the loading screen paint its first frame before the WebView's
     // platform-view init grabs the UI thread.
@@ -109,7 +123,7 @@ class _ShellPageState extends State<ShellPage> {
     if (!_loadFailed) {
       setState(() {
         _loadFailed = true;
-        _firstLoadDone = true;
+        _loader.pageLoaded();
       });
     }
     // Auto-recover: retry quietly until a load succeeds. The branded offline
@@ -401,10 +415,10 @@ class _ShellPageState extends State<ShellPage> {
       final path = openPath;
       messenger?.showSnackBar(SnackBar(
         content: Text(Platform.isIOS
-            ? 'Enregistré dans Fichiers › Foorsa Student'
-            : 'Enregistré dans Téléchargements'),
+            ? 'Saved in Files › Foorsa Student'
+            : 'Saved in Downloads'),
         action: SnackBarAction(
-          label: 'Ouvrir',
+          label: 'Open',
           onPressed: () {
             OpenFilex.open(path, type: mime.isEmpty ? null : mime);
           },
@@ -479,13 +493,13 @@ class _ShellPageState extends State<ShellPage> {
             await OpenFilex.open(file.path, type: kind.isEmpty ? null : kind);
         if (result.type != ResultType.done) {
           messenger?.showSnackBar(const SnackBar(
-              content: Text("Impossible d'ouvrir le fichier")));
+              content: Text('This file could not be opened')));
         }
       }
     } catch (_) {
       dismissSpinner();
       messenger?.showSnackBar(
-          const SnackBar(content: Text("Impossible d'ouvrir le fichier")));
+          const SnackBar(content: Text('This file could not be opened')));
     } finally {
       _previewBusy = false;
     }
@@ -529,6 +543,30 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
+
+  /// Whether the loading and offline screens are dark: the student's choice
+  /// in the portal, else the phone's.
+  bool _isDark(BuildContext context) => _appearance == null
+      ? MediaQuery.platformBrightnessOf(context) == Brightness.dark
+      : _appearance == ShellAppearance.dark;
+
+  void _applyAppearance(Object? value) {
+    final next = ShellAppearanceStore.parse(value);
+    if (next == _appearance || !mounted) return;
+    setState(() => _appearance = next);
+    _appearanceStore.write(next);
+  }
+
+  void _portalLoading(Object? message) {
+    if (!mounted) return;
+    var startHold = false;
+    setState(() => startHold = _loader.portalSays(message));
+    if (startHold) {
+      _holdTimer ??= Timer(BootLoaderGate.holdLimit, () {
+        if (mounted) setState(_loader.holdExpired);
+      });
+    }
+  }
 
   void _applyChromeColor(String css) {
     final s = css.trim().toLowerCase();
@@ -642,6 +680,7 @@ class _ShellPageState extends State<ShellPage> {
   @override
   void dispose() {
     _retryTimer?.cancel();
+    _holdTimer?.cancel();
     super.dispose();
   }
 
@@ -702,6 +741,24 @@ class _ShellPageState extends State<ShellPage> {
                       return null;
                     },
                   );
+                  // The theme the student chose ('light', 'dark', 'system'),
+                  // kept for the next start's loading screen.
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellAppearance',
+                    callback: (args) {
+                      _applyAppearance(args.isNotEmpty ? args[0] : null);
+                      return null;
+                    },
+                  );
+                  // 'hold': the portal shows its own loader until its first
+                  // screen; 'ready': it has one (BootLoaderGate).
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellLoading',
+                    callback: (args) {
+                      _portalLoading(args.isNotEmpty ? args[0] : null);
+                      return null;
+                    },
+                  );
                   // Opens a URL OUTSIDE the WebView, letting Android pick the
                   // native app (wa.me -> WhatsApp, ig.me -> Instagram, ...).
                   // Called by the portal's Contact button.
@@ -729,10 +786,15 @@ class _ShellPageState extends State<ShellPage> {
                     handlerName: 'FoorsaShellCapabilities',
                     callback: (args) => shellCapabilities(isIOS: Platform.isIOS),
                   );
+                  // A texture by name (and the grain's level), or a number for
+                  // an ordinary press: shell_haptics.dart.
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellHaptic',
                     callback: (args) {
-                      HapticFeedback.lightImpact();
+                      _haptics.play(
+                        args.isNotEmpty ? args[0] : null,
+                        args.length > 1 ? args[1] : null,
+                      );
                       return null;
                     },
                   );
@@ -819,9 +881,7 @@ class _ShellPageState extends State<ShellPage> {
                   _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
-                  if (!_firstLoadDone) {
-                    setState(() => _firstLoadDone = true);
-                  }
+                  if (_loader.showing) setState(_loader.pageLoaded);
                   if (!_errorThisLoad) {
                     _exitOffline();
                     try {
@@ -871,9 +931,24 @@ class _ShellPageState extends State<ShellPage> {
                 },
               ),
             ),
-            if (!_firstLoadDone || !_introDone) const _BrandLoading(),
+            if (!_loaderRemoved)
+              IgnorePointer(
+                ignoring: !_loader.showing,
+                child: AnimatedOpacity(
+                  opacity: _loader.showing ? 1 : 0,
+                  // The portal's own loader fades in the same 220 ms.
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  onEnd: () {
+                    if (!_loader.showing && mounted) {
+                      setState(() => _loaderRemoved = true);
+                    }
+                  },
+                  child: ShellLoadingScreen(dark: _isDark(context)),
+                ),
+              ),
             if (_loadFailed)
-              _OfflineView(onRetry: _retry),
+              ShellOfflineScreen(onRetry: _retry, dark: _isDark(context)),
           ],
         ),
       ),
@@ -881,117 +956,6 @@ class _ShellPageState extends State<ShellPage> {
   }
 }
 
-class _BrandLoading extends StatelessWidget {
-  const _BrandLoading();
-
-  @override
-  Widget build(BuildContext context) {
-    final dark =
-        MediaQuery.platformBrightnessOf(context) == Brightness.dark;
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
-      child: Container(
-        color: dark ? const Color(AppConfig.brandColorValue) : Colors.white,
-        alignment: Alignment.center,
-        // The app's loading animation — nothing else. Android already
-        // shows the branded logo splash (flutter_native_splash, same
-        // #183250 ground) before Flutter's first frame, so this reads as
-        // one continuous screen: logo, then the loader.
-        child: FlickerSpinner(
-          size: 64,
-          onColor: dark
-              ? const Color(0xFFF5F5F5)
-              : const Color(AppConfig.brandColorValue),
-          offColor: dark ? const Color(0xFF404040) : const Color(0xFFDCE2EC),
-        ),
-      ),
-    );
-  }
-}
-
-class _OfflineView extends StatelessWidget {
-  const _OfflineView({required this.onRetry});
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF0D1526), Color(0xFF17233F), Color(0xFF1F2F52)],
-        ),
-      ),
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Image.asset('assets/images/splash_logo.png', width: 96),
-          const SizedBox(height: 28),
-          Container(
-            padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.07),
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.10),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
-                  ),
-                  child: const Icon(Icons.wifi_off_rounded,
-                      color: Colors.white, size: 30),
-                ),
-                const SizedBox(height: 18),
-                const Text('Pas de connexion Internet',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700)),
-                const SizedBox(height: 6),
-                const Text('لا يوجد اتصال بالإنترنت',
-                    textDirection: TextDirection.rtl,
-                    style: TextStyle(color: Color(0xFFB6C2D6), fontSize: 14)),
-                const SizedBox(height: 14),
-                const Text(
-                  'Vérifiez votre Wi-Fi ou vos données mobiles.\nLa page se rechargera automatiquement.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: Color(0xFF9FB0C8), fontSize: 13, height: 1.5),
-                ),
-                const SizedBox(height: 22),
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: const Color(0xFF16223D),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 26, vertical: 13),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16)),
-                  ),
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text('Réessayer',
-                      style: TextStyle(fontWeight: FontWeight.w700)),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 // ── full-screen viewers for FoorsaShellPreviewFile ─────────────────────────
 class _PreviewScaffold extends StatelessWidget {
   const _PreviewScaffold({required this.title, required this.child});
@@ -1034,7 +998,7 @@ class _PdfPreviewPageState extends State<_PdfPreviewPage> {
       title: widget.title,
       child: _failed
           ? const Center(
-              child: Text("Impossible d'ouvrir le fichier",
+              child: Text('This file could not be opened',
                   style: TextStyle(color: Colors.white70)))
           : PDFView(
               filePath: widget.path,
@@ -1083,7 +1047,7 @@ class _ImagePreviewPageState extends State<_ImagePreviewPage> {
             child: Image.file(
               File(widget.path),
               errorBuilder: (_, __, ___) => const Text(
-                  "Impossible d'ouvrir le fichier",
+                  'This file could not be opened',
                   style: TextStyle(color: Colors.white70)),
             ),
           ),

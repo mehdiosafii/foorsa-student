@@ -63,6 +63,22 @@ class MainActivity : FlutterActivity() {
                     result.error("save_failed", e.message, null)
                 }
             }
+        // The portal's textures, by name (shell_haptics.dart). Answers false
+        // when the phone cannot play one, so Dart falls back to system impacts.
+        val haptics = ShellHaptics(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/haptics")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "play") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                // { touch, level } from current Dart; a bare name from older builds.
+                val args = call.arguments
+                val map = args as? Map<*, *>
+                val touch = map?.get("touch") as? String ?: args as? String ?: ""
+                val level = (map?.get("level") as? Number)?.toDouble() ?: 1.0
+                result.success(haptics.play(touch, level))
+            }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
