@@ -8,7 +8,10 @@
 #   runs the same build without uploading, signed when the signing secrets are
 #   set and unsigned otherwise.
 #
-# Secrets and variables it reads are described in README.md ("iOS release build").
+# Signing: with the distribution certificate and its profile in the secrets,
+# the build signs with them; with only the App Store Connect key (an Admin
+# key), Apple signs it in the cloud. Secrets and variables it reads are
+# described in README.md ("iOS release build").
 name: TestFlight
 
 on:
@@ -129,87 +132,54 @@ jobs:
       BUILD_NAME: ${{ needs.version.outputs.name }}
       BUILD_NUMBER: ${{ needs.version.outputs.number }}
       UPLOAD: ${{ needs.version.outputs.upload }}
-      HAS_SIGNING: ${{ secrets.IOS_DISTRIBUTION_P12 != '' && secrets.IOS_DISTRIBUTION_P12_PASSWORD != '' && secrets.IOS_PROVISIONING_PROFILE != '' }}
+      HAS_CERT: ${{ secrets.IOS_DISTRIBUTION_P12 != '' && secrets.IOS_DISTRIBUTION_P12_PASSWORD != '' && secrets.IOS_PROVISIONING_PROFILE != '' }}
+      HAS_ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY != '' && vars.APPSTORE_API_KEY_ID != '' && vars.APPSTORE_ISSUER_ID != '' }}
     steps:
-      - name: Release builds need the signing secrets and the App Store Connect key
-        if: env.UPLOAD == 'true'
+      # Two ways to sign. With the Apple Distribution certificate and its
+      # profile in the secrets, the build signs with them ("manual"). With only
+      # the App Store Connect key, an Admin key, Apple signs it in the cloud
+      # ("cloud"): no certificate has to be exported from anybody's Mac.
+      # Uploading always needs the key.
+      - name: Choose how to sign
         env:
-          HAS_P12: ${{ secrets.IOS_DISTRIBUTION_P12 != '' }}
-          HAS_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD != '' }}
-          HAS_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE != '' }}
           HAS_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY != '' }}
           HAS_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID != '' }}
           HAS_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID != '' }}
         run: |
-          missing=()
-          [[ "$HAS_P12" == true ]] || missing+=("secret IOS_DISTRIBUTION_P12")
-          [[ "$HAS_P12_PASSWORD" == true ]] || missing+=("secret IOS_DISTRIBUTION_P12_PASSWORD")
-          [[ "$HAS_PROFILE" == true ]] || missing+=("secret IOS_PROVISIONING_PROFILE")
-          [[ "$HAS_KEY" == true ]] || missing+=("secret APPSTORE_API_PRIVATE_KEY")
-          [[ "$HAS_KEY_ID" == true ]] || missing+=("variable APPSTORE_API_KEY_ID")
-          [[ "$HAS_ISSUER_ID" == true ]] || missing+=("variable APPSTORE_ISSUER_ID")
-          if (( ${#missing[@]} )); then
-            printf -v list '%s, ' "${missing[@]}"
-            echo "::error::Missing ${list%, } (README.md, iOS release build, says where each comes from)."
-            exit 1
+          if [[ "$HAS_CERT" == true ]]; then
+            signing=manual
+          elif [[ "$HAS_ASC_KEY" == true ]]; then
+            signing=cloud
+          else
+            signing=none
           fi
+          if [[ "$UPLOAD" == true ]]; then
+            missing=()
+            [[ "$HAS_KEY" == true ]] || missing+=("secret APPSTORE_API_PRIVATE_KEY")
+            [[ "$HAS_KEY_ID" == true ]] || missing+=("variable APPSTORE_API_KEY_ID")
+            [[ "$HAS_ISSUER_ID" == true ]] || missing+=("variable APPSTORE_ISSUER_ID")
+            if (( ${#missing[@]} )); then
+              printf -v list '%s, ' "${missing[@]}"
+              echo "::error::Missing ${list%, } (README.md, iOS release build, says where each comes from)."
+              exit 1
+            fi
+          fi
+          echo "SIGNING=$signing" >> "$GITHUB_ENV"
+          echo "Signing: $signing" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       # App Store Connect refuses a build number it already has, but only after
-      # the whole build; ask first so the run stops in seconds.
+      # the whole build; ask first so the run stops in a minute.
       - name: Stop if App Store Connect already has this build number
         if: env.UPLOAD == 'true'
         env:
           ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
           ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
-        run: |
-          python3 - <<'PY'
-          import base64, json, os, subprocess, sys, tempfile, time, urllib.parse
-
-          def b64(data):
-              return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-          # An App Store Connect token: ES256 JWT signed with the .p8 key.
-          now = int(time.time())
-          header = {"alg": "ES256", "kid": os.environ["ASC_KEY_ID"], "typ": "JWT"}
-          claims = {"iss": os.environ["ASC_ISSUER_ID"], "iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"}
-          signing_input = b64(json.dumps(header).encode()) + "." + b64(json.dumps(claims).encode())
-          with tempfile.NamedTemporaryFile("w", suffix=".p8", dir=os.environ["RUNNER_TEMP"]) as key:
-              key.write(os.environ["ASC_KEY"].strip() + "\n")
-              key.flush()
-              der = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key.name],
-                                   input=signing_input.encode(), capture_output=True, check=True).stdout
-          # openssl gives DER SEQUENCE { INTEGER r, INTEGER s }; a JWT wants r || s, 32 bytes each.
-          i, raw = 2, b""
-          for _ in range(2):
-              length = der[i + 1]
-              raw += der[i + 2:i + 2 + length].lstrip(b"\0").rjust(32, b"\0")
-              i += 2 + length
-          token = signing_input + "." + b64(raw)
-
-          def get(path, query):
-              url = "https://api.appstoreconnect.apple.com" + path + "?" + urllib.parse.urlencode(query)
-              out = subprocess.run(["curl", "-sS", "--fail-with-body", "-H", "Authorization: Bearer " + token, url],
-                                   capture_output=True, text=True)
-              if out.returncode:
-                  print(f"::error::App Store Connect answered {path} with: {out.stdout.strip() or out.stderr.strip()}")
-                  sys.exit(1)
-              return json.loads(out.stdout)["data"]
-
-          bundle, number = os.environ["BUNDLE_ID"], os.environ["BUILD_NUMBER"]
-          apps = [a for a in get("/v1/apps", {"filter[bundleId]": bundle}) if a["attributes"]["bundleId"] == bundle]
-          if not apps:
-              print(f"::error::The App Store Connect key cannot see an app with bundle id {bundle}.")
-              sys.exit(1)
-          if get("/v1/builds", {"filter[app]": apps[0]["id"], "filter[version]": number, "limit": "1"}):
-              print(f"::error::App Store Connect already has build {number}. Raise the number after + in pubspec.yaml's version.")
-              sys.exit(1)
-          print(f"Build number {number} is free in App Store Connect.")
-          PY
-
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
+        run: python3 scripts/app_store_connect.py check-build-number "$BUNDLE_ID" "$BUILD_NUMBER"
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
@@ -224,7 +194,7 @@ jobs:
       - run: flutter pub get
 
       - name: Install the distribution certificate and the provisioning profile
-        if: env.HAS_SIGNING == 'true'
+        if: env.SIGNING == 'manual'
         env:
           P12: ${{ secrets.IOS_DISTRIBUTION_P12 }}
           P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
@@ -303,7 +273,7 @@ jobs:
           EOF
 
       - name: Build the signed IPA
-        if: env.HAS_SIGNING == 'true'
+        if: env.SIGNING == 'manual'
         run: |
           set -euo pipefail
           flutter build ipa --release \
@@ -318,12 +288,80 @@ jobs:
           echo "IPA=$ipa" >> "$GITHUB_ENV"
           echo "Built $ipa ($(du -h "$ipa" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
 
+      # Apple signs the export with the team's cloud-managed distribution
+      # certificate, whose private key never leaves Apple. Only an Admin key may
+      # do that: an App Manager key signs in but is refused ("Cloud signing
+      # permission error").
+      - name: Build the IPA and sign it in the cloud
+        if: env.SIGNING == 'cloud'
+        env:
+          ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          (umask 077; printf '%s\n' "$ASC_KEY" > "$key")
+          auth=(-allowProvisioningUpdates -authenticationKeyPath "$key"
+                -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+
+          # The team's certificates before the build, so the clean-up step
+          # revokes only what Xcode makes on this runner.
+          python3 scripts/app_store_connect.py certificates DEVELOPMENT IOS_DEVELOPMENT > "$RUNNER_TEMP/dev-certs-before.txt"
+          python3 scripts/app_store_connect.py certificates DISTRIBUTION IOS_DISTRIBUTION > "$RUNNER_TEMP/dist-certs-before.txt"
+
+          cat > "$RUNNER_TEMP/ExportOptions-cloud.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+
+          export_ipa() {
+            rm -rf build/ios/ipa
+            xcodebuild -exportArchive -archivePath "$1" -exportPath build/ios/ipa \
+              -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-cloud.plist" "${auth[@]}"
+          }
+
+          # The archive is built unsigned and signed once, by Apple, at export.
+          flutter build ipa --release --no-codesign \
+            --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+          if ! export_ipa build/ios/archive/Runner.xcarchive; then
+            # An export can refuse an archive that was never signed. Archive
+            # again with automatic signing: Xcode makes a development
+            # certificate through the key, which the clean-up step revokes.
+            echo "::warning::The unsigned archive did not export; archiving again with automatic signing."
+            xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
+              -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Runner.xcarchive" archive "${auth[@]}" \
+              DEVELOPMENT_TEAM="$TEAM_ID" \
+              CODE_SIGN_STYLE=Automatic 'CODE_SIGN_STYLE[sdk=iphoneos*]=Automatic' \
+              CODE_SIGN_IDENTITY='Apple Development' 'CODE_SIGN_IDENTITY[sdk=iphoneos*]=Apple Development' \
+              PROVISIONING_PROFILE_SPECIFIER= 'PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]='
+            export_ipa "$RUNNER_TEMP/Runner.xcarchive"
+          fi
+          shopt -s nullglob
+          ipas=(build/ios/ipa/*.ipa)
+          ipa=${ipas[0]:-}
+          if [[ -z "$ipa" ]]; then
+            echo "::error::No IPA was exported; see the export errors above."
+            exit 1
+          fi
+          echo "IPA=$ipa" >> "$GITHUB_ENV"
+          echo "Built $ipa ($(du -h "$ipa" | cut -f1)), signed by Apple in the cloud" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build without signing (no signing secrets yet)
-        if: env.HAS_SIGNING != 'true'
+        if: env.SIGNING == 'none'
         run: |
           flutter build ios --release --no-codesign \
             --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
-          echo "Unsigned build of $BUILD_NAME ($BUILD_NUMBER) succeeded; add the signing secrets to produce an IPA." >> "$GITHUB_STEP_SUMMARY"
+          echo "Unsigned build of $BUILD_NAME ($BUILD_NUMBER) succeeded; add the App Store Connect key (or the signing secrets) to produce an IPA." >> "$GITHUB_STEP_SUMMARY"
 
       # Waits until App Store Connect has processed the build, so a green run
       # means the build is in TestFlight.
@@ -340,8 +378,25 @@ jobs:
         if: env.UPLOAD == 'true'
         run: echo "Build $BUILD_NAME ($BUILD_NUMBER) is processed and in TestFlight." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Remove the signing keychain
+      # A development certificate Xcode made on this runner dies with it, so
+      # it is revoked rather than left to pile up to Apple's limit. A
+      # distribution certificate is never revoked: Apple marks a build that is
+      # uploaded but not yet submitted for review "Invalid Binary" when its
+      # certificate is revoked.
+      - name: Revoke the development certificate Xcode made for this run
+        if: always() && env.SIGNING == 'cloud'
+        env:
+          ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
+        run: |
+          [[ -f "$RUNNER_TEMP/dev-certs-before.txt" ]] || exit 0
+          python3 scripts/app_store_connect.py revoke-new "$RUNNER_TEMP/dev-certs-before.txt" DEVELOPMENT IOS_DEVELOPMENT
+          python3 scripts/app_store_connect.py report-new "$RUNNER_TEMP/dist-certs-before.txt" DISTRIBUTION IOS_DISTRIBUTION
+
+      - name: Remove the signing keychain and the key
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/dist.mobileprovision" "$RUNNER_TEMP/profile.plist" "$RUNNER_TEMP/profile_certs.txt"
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8
