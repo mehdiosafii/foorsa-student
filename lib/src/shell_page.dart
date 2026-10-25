@@ -725,6 +725,11 @@ class _ShellPageState extends State<ShellPage> {
                   // Rasterise slightly beyond the viewport so fast scrolling
                   // and large moving surfaces don't reveal unpainted tiles.
                   offscreenPreRaster: true,
+                  // iOS draws its form toolbar (previous, next, done) above the
+                  // keyboard in a web view. The portal's fields carry their own
+                  // controls, and in the live chat the bar sat between the
+                  // composer and the keyboard (the owner, 25 Oct 2026).
+                  disableInputAccessoryView: true,
                 ),
                 onWebViewCreated: (controller) {
                   _controller = controller;
