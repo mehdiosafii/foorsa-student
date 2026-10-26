@@ -346,7 +346,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" embed_and_thin";
+			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" embed_and_thin || exit $?\nif [ -f \"$PROJECT_DIR/Runner/GoogleService-Info.plist\" ]; then\n  cp \"$PROJECT_DIR/Runner/GoogleService-Info.plist\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/GoogleService-Info.plist\"\nfi";
 		};
 		9069F922C7B06A997D75DE16 /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -524,6 +524,8 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = ma.foorsa.foorsaStudent;
+				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
+				APS_ENVIRONMENT = production;
 				DEVELOPMENT_TEAM = G865J7CMBG;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -707,6 +709,8 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = ma.foorsa.foorsaStudent;
+				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
+				APS_ENVIRONMENT = development;
 				DEVELOPMENT_TEAM = G865J7CMBG;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -730,6 +734,8 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = ma.foorsa.foorsaStudent;
+				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
+				APS_ENVIRONMENT = production;
 				DEVELOPMENT_TEAM = G865J7CMBG;
 				"CODE_SIGN_STYLE[sdk=iphoneos*]" = Manual;
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";

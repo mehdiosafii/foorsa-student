@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Environment-specific Firebase registrations (provided by CI).
+/android/app/google-services.json
+/ios/Runner/GoogleService-Info.plist
