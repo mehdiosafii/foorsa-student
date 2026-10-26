@@ -36,6 +36,7 @@ import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
 import 'trusted_portal.dart';
+import 'chat_viewport.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key, this.appearance});
@@ -61,6 +62,9 @@ class _ShellPageState extends State<ShellPage> {
   final ShellAppearanceStore _appearanceStore = ShellAppearanceStore();
   final ShellHaptics _haptics = ShellHaptics();
   bool _bootWebView = false;
+  late bool _chatUnderStatusBar = chatUsesStatusBarArea(
+    Uri.parse(AppConfig.baseUrl), AppConfig.baseUrl, isIOS: Platform.isIOS,
+  );
   bool _loadFailed = false;
   /// The CURRENT navigation reported a main-frame error. Android fires
   /// onLoadStop even for failed loads, so "finished" alone must never be
@@ -72,6 +76,16 @@ class _ShellPageState extends State<ShellPage> {
   Color _chromeColor = const Color(0xFF0B1220);
   String _scannerNonce = _newScannerNonce();
   bool _scanInProgress = false;
+
+
+  void _updateChatViewport(Uri? url) {
+    final enabled = chatUsesStatusBarArea(
+      url, AppConfig.baseUrl, isIOS: Platform.isIOS,
+    );
+    if (mounted && enabled != _chatUnderStatusBar) {
+      setState(() => _chatUnderStatusBar = enabled);
+    }
+  }
 
   static String _newScannerNonce() {
     final random = math.Random.secure();
@@ -696,6 +710,9 @@ class _ShellPageState extends State<ShellPage> {
         body: Stack(
           children: [
             SafeArea(
+              // Chat owns its top inset through viewport-fit=cover and CSS
+              // env(safe-area-inset-top), including the translucent backdrop.
+              top: !_chatUnderStatusBar,
               bottom: false,
               child: !_bootWebView
                   ? const SizedBox.expand()
@@ -881,7 +898,12 @@ class _ShellPageState extends State<ShellPage> {
                     },
                   );
                 },
+                onUpdateVisitedHistory: (controller, url, isReload) {
+                  // React Router navigation does not trigger onLoadStart.
+                  _updateChatViewport(url);
+                },
                 onLoadStart: (controller, url) {
+                  _updateChatViewport(url);
                   _errorThisLoad = false;
                   _scannerNonce = _newScannerNonce();
                 },
