@@ -25,7 +25,7 @@ on:
         type: boolean
         default: true
   pull_request:
-    paths: [.github/workflows/testflight.yml, pubspec.yaml, pubspec.lock, 'ios/**']
+    paths: [.github/workflows/testflight.yml, pubspec.yaml, pubspec.lock, 'ios/**', 'android/app/google-services.json', scripts/verify_firebase_config.py]
 
 # Releases wait their turn rather than replace each other: with the default
 # queue a newer run would cancel a pending version bump.
@@ -113,6 +113,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      - name: Verify Firebase app registrations
+        run: python3 scripts/verify_firebase_config.py
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
