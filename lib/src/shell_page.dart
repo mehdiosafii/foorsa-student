@@ -1,6 +1,6 @@
 /// The WebView shell around https://student.foorsa.ma.
 ///
-/// Lean student edition: no push, no calls, and no pull-to-refresh — the
+/// Student edition: adviser-message push, no calls, and no pull-to-refresh — the
 /// portal refreshes itself quietly every 5 minutes, so the gesture would
 /// only offer a jarring full reload. Uploads, downloads,
 /// theme-matched status bar (via the FoorsaShellTheme bridge message), and
@@ -36,6 +36,7 @@ import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
 import 'trusted_portal.dart';
+import 'student_push.dart';
 import 'chat_viewport.dart';
 
 class ShellPage extends StatefulWidget {
@@ -51,6 +52,25 @@ class ShellPage extends StatefulWidget {
 
 
 class _ShellPageState extends State<ShellPage> {
+  bool _pushOpenPending = false;
+  late final StudentPush _push = StudentPush(
+    openChat: () async {
+      _pushOpenPending = true;
+      await _openPushChat();
+    },
+    chatIsVisible: () async {
+      final url = await _controller?.getUrl();
+      return _isTrustedPortal(url) && url?.path == '/contact/chat';
+    },
+  );
+  Future<void> _openPushChat() async {
+    final controller = _controller;
+    if (!_pushOpenPending || controller == null || !mounted) return;
+    _pushOpenPending = false;
+    await controller.loadUrl(urlRequest: URLRequest(
+      url: WebUri(Uri.parse(AppConfig.baseUrl).resolve('/contact/chat').toString()),
+    ));
+  }
   InAppWebViewController? _controller;
   PackageInfo? _packageInfo;
   /// When the loading screen gives way to the portal (boot_loader_gate.dart).
@@ -111,6 +131,13 @@ class _ShellPageState extends State<ShellPage> {
   @override
   void initState() {
     super.initState();
+    _push.onTokenChanged = () async {
+      final controller = _controller;
+      if (controller != null && _isTrustedPortal(await controller.getUrl())) {
+        await controller.evaluateJavascript(source: "window.dispatchEvent(new Event('foorsa-push-token-changed'))");
+      }
+    };
+    unawaited(_push.start());
     // Minimum splash so a fast load can't flash it; the screen otherwise
     // lifts when the portal has its first screen (BootLoaderGate).
     Timer(BootLoaderGate.minimum, () {
@@ -625,7 +652,12 @@ class _ShellPageState extends State<ShellPage> {
     }
     switch (action) {
       case 'getPushToken':
-        return {'token': null}; // student app ships without push (yet)
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'token': null, 'status': 'pending'};
+        return _push.token();
+      case 'clearPushToken':
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'ok': false};
+        await _push.clear();
+        return {'ok': true};
       case 'appInfo':
         return {
           'platform': Platform.isIOS ? 'ios' : 'android',
@@ -693,6 +725,7 @@ class _ShellPageState extends State<ShellPage> {
 
   @override
   void dispose() {
+    _push.dispose();
     _retryTimer?.cancel();
     _holdTimer?.cancel();
     super.dispose();
@@ -908,6 +941,7 @@ class _ShellPageState extends State<ShellPage> {
                   _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
+                  await _openPushChat();
                   if (_loader.showing) setState(_loader.pageLoaded);
                   if (!_errorThisLoad) {
                     _exitOffline();
