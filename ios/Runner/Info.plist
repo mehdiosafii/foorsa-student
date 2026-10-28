@@ -35,9 +35,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Foorsa Student uses the camera to scan your documents and take your ID photo for your application file.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Foorsa Student uses your approximate location only when you turn on prayer times, to calculate them on your phone. It is not sent to Foorsa.</string>
+	<string>Foorsa Student uses your location while you use the app for prayer times, local weather and nearby places such as supermarkets.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Foorsa Student uses your microphone when you answer a call from your adviser or record your introduction video.</string>
+	<string>Foorsa Student uses your microphone for adviser calls, voice messages and introduction videos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Foorsa Student lets you choose a photo of a document, or your introduction video, to upload to your application file.</string>
 	<key>UIApplicationSceneManifest</key>
