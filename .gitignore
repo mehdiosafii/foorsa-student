@@ -44,6 +44,5 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Environment-specific Firebase registrations (provided by CI).
-/android/app/google-services.json
-/ios/Runner/GoogleService-Info.plist
+# Firebase mobile client registrations are versioned: they contain public app
+# identifiers, not service-account or Apple signing credentials.

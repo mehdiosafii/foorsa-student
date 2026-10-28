@@ -142,3 +142,50 @@ know one ignore it, so the portal sends them to every build.
   number is an ordinary press, one light tick. Builds 33 to 46 shipped without
   the textures and played a tick for every one.
 - `FoorsaShellTheme(color)`: the status bar follows the page.
+
+## Firebase phone notifications
+
+### Android device-test build
+
+The Android validation workflow runs independently of Apple setup. It verifies
+the Firebase registrations, runs Flutter analysis and tests, and builds an ARM64
+debug APK. Open the successful Android validation run in GitHub Actions and
+download its `foorsa-android-device-test-<commit>` artifact. The run summary
+records the APK checksum. Artifacts are retained for 14 days.
+
+This APK is for a dedicated test Android device and a test student account. It
+uses the production portal and is debug-signed; it is not a Google Play release
+and cannot update a Play-installed app signed by another certificate. Do not
+uninstall a live student's app for testing. Check permission granted/denied,
+token registration, foreground/background delivery, notification taps, sign-out
+and account switching before publishing a signed release.
+
+Google Play distribution still needs the existing upload-signing configuration
+and a release build. This change keeps the version at `1.2.18+48`, so merging it
+does not trigger a new Apple release. Bump the version only when preparing the
+corresponding signed release.
+
+### Registered Firebase clients
+
+Supabase remains the student backend. Firebase Cloud Messaging delivers remote
+phone notifications through the existing push service in foorsa-reward.
+
+The checked-in client registrations come from Firebase project `foorsa-d71c1`
+(sender `643586848398`): Android `ma.foorsa`, iOS `ma.foorsa.foorsaStudent`.
+`android/app/google-services.json` is loaded by the Google Services Gradle
+plugin; the existing Xcode build phase bundles
+`ios/Runner/GoogleService-Info.plist`. These files contain public client
+identifiers, not server credentials. Never commit service-account private keys,
+APNs authentication keys, or App Store Connect signing keys.
+
+Run `python3 scripts/verify_firebase_config.py` before building. The TestFlight
+checks job also verifies the registrations against the actual Android and iOS
+application IDs. The older `com.foorsa.app` Firebase registration is not the
+current Android application's ID.
+
+iOS remote delivery additionally requires an APNs authentication key or valid
+APNs certificate in Firebase Project settings → Cloud Messaging for this iOS
+app, plus a signed release with the push entitlement. Registering the app does
+not establish device delivery. Verify consent, token registration, and a push
+to a dedicated test device before releasing broadly. TestFlight signing and
+upload credentials are configured separately as described above.

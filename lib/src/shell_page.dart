@@ -52,12 +52,14 @@ class ShellPage extends StatefulWidget {
 
 
 class _ShellPageState extends State<ShellPage> {
-  bool _pushOpenPending = false;
+  String? _pushOpenPending;
   late final StudentPush _push = StudentPush(
     openChat: () async {
-      _pushOpenPending = true;
+      _pushOpenPending = '/contact/chat';
       await _openPushChat();
     },
+    openUpdate: (route) async { _pushOpenPending = route; await _openPushChat(); },
+    openCalendar: () async { _pushOpenPending = '/calendar'; await _openPushChat(); },
     chatIsVisible: () async {
       final url = await _controller?.getUrl();
       return _isTrustedPortal(url) && url?.path == '/contact/chat';
@@ -65,10 +67,11 @@ class _ShellPageState extends State<ShellPage> {
   );
   Future<void> _openPushChat() async {
     final controller = _controller;
-    if (!_pushOpenPending || controller == null || !mounted) return;
-    _pushOpenPending = false;
+    if (_pushOpenPending == null || controller == null || !mounted) return;
+    final destination = _pushOpenPending!;
+    _pushOpenPending = null;
     await controller.loadUrl(urlRequest: URLRequest(
-      url: WebUri(Uri.parse(AppConfig.baseUrl).resolve('/contact/chat').toString()),
+      url: WebUri(Uri.parse(AppConfig.baseUrl).resolve(destination).toString()),
     ));
   }
   InAppWebViewController? _controller;
@@ -658,6 +661,12 @@ class _ShellPageState extends State<ShellPage> {
         if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'ok': false};
         await _push.clear();
         return {'ok': true};
+      case 'calendarStatus':
+      case 'calendarEnable':
+      case 'calendarClear':
+      case 'calendarSync':
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'supported': false};
+        return _push.calendar(action, args[0] as Map);
       case 'appInfo':
         return {
           'platform': Platform.isIOS ? 'ios' : 'android',

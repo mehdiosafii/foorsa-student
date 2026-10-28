@@ -6,7 +6,7 @@ Use the existing Foorsa Firebase project (the project named by `FIREBASE_SERVICE
 
 1. In the existing Firebase project, register the iOS application `ma.foorsa.foorsaStudent` and the Android application `ma.foorsa` (reuse a matching registration if it already exists). Download each platform's configuration. Verify both project IDs match the sender's service account. Android's namespace `ma.foorsa.student` is not its application ID.
 2. Enable Push Notifications for the iOS identifier in Apple Developer. Upload the team's APNs authentication key to this Firebase project's iOS messaging settings. Regenerate the App Store provisioning profile with the `aps-environment` entitlement. Debug uses development; release uses production.
-3. In the native repository, provide `ios/Runner/GoogleService-Info.plist` and `android/app/google-services.json`. They are ignored by Git. The TestFlight workflow still needs a step to decode GitHub secret `FIREBASE_IOS_PLIST_BASE64` into that path and refuse release uploads without it. The prepared workflow patch is kept locally as `student-push-testflight.patch`; GitHub rejected the workflow update because the available OAuth token lacks workflow scope. Apply that patch using an authorized maintainer before publishing, then set the secret to the base64-encoded iOS plist. The service-account private key must never go in the app.
+3. The current public client registrations are checked in at `ios/Runner/GoogleService-Info.plist` and `android/app/google-services.json`. Both use `foorsa-d71c1` (sender `643586848398`). CI runs `scripts/verify_firebase_config.py` before building. These client files are public identifiers, not service-account credentials. Do not put service-account private keys in the app. The older `com.foorsa.app` registration is not the current Android application.
 4. Apply `server/migrations/create-student-push.sql` to the Foorsa Reward database and Conversation OS migration `20261026200000_student_push.sql` to its database. Neither migration backfills old notifications. Deploy the portal backend/frontend and Conversation OS changes together.
 5. Set a cryptographically random shared `STUDENT_PUSH_WEBHOOK_SECRET` (at least 32 characters) in both backend environments. Keep it out of browser variables and Git. Foorsa Reward also needs its existing `FIREBASE_SERVICE_ACCOUNT` with Firebase Cloud Messaging API access.
 6. Set Conversation OS `STUDENT_PUSH_WEBHOOK_URL` to `https://home.foorsa.ma/api/internal/student-chat-push`, `STUDENT_PUSH_SOURCE=foorsa`, and configure its existing authenticated cron mechanism (`CRON_SECRET`). Ensure `/mfc/api/student-push/tick` runs every minute. A non-Vercel scheduler must call this route too.
@@ -29,3 +29,17 @@ Schedule deletion of `student_push_deliveries` older than 30 days and `student_p
 ## Rollback
 
 Disable the Conversation OS worker configuration and cron first; existing chat still works. Native builds without Firebase configuration continue opening the portal, but cannot receive notifications. Keep the additive tables until outstanding events have expired. Do not remove shared staff Firebase credentials.
+
+## Android validation while Apple setup is deferred
+
+The independent Android validation workflow runs analysis, tests and an ARM64
+debug APK build. Download the `foorsa-android-device-test-<commit>` artifact from
+the successful Actions run; it is kept for 14 days. Use a dedicated test device
+and test student account: it connects to the production portal. This is not a
+Google Play release and cannot update an app signed with a different key. Keep
+the existing installed student app intact. Play release signing and physical
+device delivery verification are required before broad distribution.
+
+Apple APNs and TestFlight setup are deferred. The application version remains
+`1.2.18+48`, so this configuration merge does not initiate an iOS release.
+

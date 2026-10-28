@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "643586848398",
+    "project_id": "foorsa-d71c1",
+    "storage_bucket": "foorsa-d71c1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:643586848398:android:dd52bb6b920c622cacfbdf",
+        "android_client_info": {
+          "package_name": "com.foorsa.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC2H6Uj9Wd6QRnUgi13pPZ_6Q1jQ7EyJm4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:643586848398:android:bada2803d20209b0acfbdf",
+        "android_client_info": {
+          "package_name": "ma.foorsa"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC2H6Uj9Wd6QRnUgi13pPZ_6Q1jQ7EyJm4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
