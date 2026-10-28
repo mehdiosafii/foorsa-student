@@ -1,0 +1,80 @@
+name: Android validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/android.yml'
+      - 'android/**'
+      - 'lib/**'
+      - 'test/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/verify_firebase_config.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android.yml'
+      - 'android/**'
+      - 'lib/**'
+      - 'test/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/verify_firebase_config.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Verify Firebase app registrations
+        run: python3 scripts/verify_firebase_config.py
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: 3.47.5
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - name: Build Android device-test APK
+        run: flutter build apk --debug --target-platform android-arm64
+      - name: Save APK and checksum
+        id: apk
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: foorsa-android-device-test-${{ github.sha }}
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Record test-build status
+        env:
+          ARTIFACT_URL: ${{ steps.apk.outputs.artifact-url }}
+        run: |
+          {
+            echo '### Android device-test build'
+            echo "Commit: $GITHUB_SHA"
+            echo "APK: $ARTIFACT_URL"
+            echo 'Debug-signed ARM64 APK for a dedicated test device. This is not a Google Play release.'
+            echo 'The APK uses the production Foorsa portal; use a dedicated test student.'
+            echo 'It cannot update an installed app with a different signing certificate.'
+            echo 'Do not uninstall a live student app to install this test build.'
+            sha256sum build/app/outputs/flutter-apk/app-debug.apk
+          } >> "$GITHUB_STEP_SUMMARY"
