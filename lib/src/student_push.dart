@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'student_calls.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -9,6 +11,18 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+@pragma('vm:entry-point')
+Future<void> studentFirebaseBackground(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  if (message.data['type'] == 'student_call_end') {
+    await FlutterCallkitIncoming.endCall('${message.data['callId']}');
+    return;
+  }
+  if (message.data['type'] == 'student_call') {
+    await showStudentCall(message.data);
+  }
+}
+
 /// Only student-chat payloads may navigate the shell; remote URLs are never opened.
 bool isStudentChatPush(Map<String, dynamic> data) =>
     data['type'] == 'student_chat' && data['route'] == '/contact/chat';
@@ -16,7 +30,7 @@ bool isStudentChatPush(Map<String, dynamic> data) =>
 String? studentUpdateRoute(Map<String, dynamic> data) {
   final id = data['eventId'];
   if (data['type'] != 'student_update' || data['route'] != '/notifications' || id is! String ||
-      !RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(id)) return null;
+      !RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(id)) { return null; }
   return '/notifications?event=$id';
 }
 
@@ -80,6 +94,8 @@ class StudentPush {
       final localLaunch = await _local.getNotificationAppLaunchDetails();
       if (localLaunch?.didNotificationLaunchApp == true) await _openLocal(localLaunch?.notificationResponse?.payload);
       await Firebase.initializeApp();
+      FirebaseMessaging.onBackgroundMessage(studentFirebaseBackground);
+      StudentCalls.instance.onTokenChanged = () => onTokenChanged?.call();
       await FirebaseMessaging.instance
           .setForegroundNotificationPresentationOptions(
         alert: false,
@@ -88,6 +104,18 @@ class StudentPush {
       );
       if (_disposed) return;
       _subscriptions.add(FirebaseMessaging.onMessage.listen((message) async {
+        if (message.data['type'] == 'student_call_end') {
+          if (StudentCalls.instance.invite?['callId'] ==
+              message.data['callId']) {
+            await StudentCalls.instance.end(notifyServer: false);
+          }
+          await FlutterCallkitIncoming.endCall('${message.data['callId']}');
+          return;
+        }
+        if (message.data['type'] == 'student_call') {
+          await showStudentCall(message.data);
+          return;
+        }
         final chat = isStudentChatPush(message.data);
         final update = studentUpdateRoute(message.data);
         if ((!chat && update == null) || (chat && await chatIsVisible()) || _disposed) {
@@ -162,7 +190,9 @@ class StudentPush {
       'token': await messaging.getToken(),
       'platform': Platform.isIOS ? 'ios' : 'android',
       'status': 'ready',
-      'notificationVersion': 2
+      'notificationVersion': 2,
+      'callsEnabled': true,
+      'voipToken': Platform.isIOS ? await FlutterCallkitIncoming.getDevicePushTokenVoIP() : null
     };
   }
 
@@ -175,6 +205,8 @@ class StudentPush {
       await FirebaseMessaging.instance.deleteToken();
     }
     if (_localReady) await _local.cancelAll();
+    await StudentCalls.instance.end();
+    await FlutterCallkitIncoming.endAllCalls();
     _calendarState = {'enabled': false};
     await _saveCalendarState();
   }
