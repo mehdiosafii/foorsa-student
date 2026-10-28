@@ -684,22 +684,23 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
-  /// Camera capture is restricted to the trusted portal. Adviser calls use
-  /// the native audio engine; web pages never receive microphone access.
+  /// Only the trusted portal may use camera/microphone after OS consent.
   Future<PermissionResponse> _onPermissionRequest(
       InAppWebViewController controller, PermissionRequest request) async {
-    final cameraOnly = request.resources.isNotEmpty &&
-        request.resources.every((r) => r == PermissionResourceType.CAMERA);
-    var granted = false;
-    if (cameraOnly && _isTrustedPortal(request.origin)) {
-      granted = (await ph.Permission.camera.request()).isGranted;
+    var granted = _isTrustedPortal(request.origin) &&
+        _isTrustedPortal(await controller.getUrl()) &&
+        request.resources.isNotEmpty &&
+        request.resources.every((r) => r == PermissionResourceType.CAMERA ||
+            r == PermissionResourceType.MICROPHONE);
+    if (granted) {
+      for (final resource in request.resources) {
+        final permission = resource == PermissionResourceType.CAMERA
+            ? ph.Permission.camera : ph.Permission.microphone;
+        if (!(await permission.request()).isGranted) { granted = false; break; }
+      }
     }
-    return PermissionResponse(
-      resources: request.resources,
-      action: granted
-          ? PermissionResponseAction.GRANT
-          : PermissionResponseAction.DENY,
-    );
+    return PermissionResponse(resources: request.resources,
+      action: granted ? PermissionResponseAction.GRANT : PermissionResponseAction.DENY);
   }
 
   /// The portal's prayer times ask for the phone's location and compute the

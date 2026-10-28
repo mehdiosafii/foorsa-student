@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'src/config.dart';
+import 'src/device_access.dart';
 import 'src/student_calls.dart';
 import 'src/shell_appearance.dart';
 import 'src/shell_page.dart';
@@ -37,7 +38,7 @@ class FoorsaStudentApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(AppConfig.brandColorValue)),
       ),
-      home: ShellPage(appearance: appearance),
+      home: DeviceAccess(child: ShellPage(appearance: appearance)),
     );
   }
 }
