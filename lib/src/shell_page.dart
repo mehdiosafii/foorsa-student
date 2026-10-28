@@ -1,6 +1,6 @@
 /// The WebView shell around https://student.foorsa.ma.
 ///
-/// Student edition: adviser-message push, no calls, and no pull-to-refresh — the
+/// Student edition: adviser-message push and incoming adviser calls, and no pull-to-refresh — the
 /// portal refreshes itself quietly every 5 minutes, so the gesture would
 /// only offer a jarring full reload. Uploads, downloads,
 /// theme-matched status bar (via the FoorsaShellTheme bridge message), and
@@ -37,6 +37,7 @@ import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
 import 'trusted_portal.dart';
 import 'student_push.dart';
+import 'student_calls.dart';
 import 'chat_viewport.dart';
 
 class ShellPage extends StatefulWidget {
@@ -654,6 +655,12 @@ class _ShellPageState extends State<ShellPage> {
       action = ((args[0] as Map)['action'] ?? '').toString();
     }
     switch (action) {
+      case 'incomingCall':
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'ok': false};
+        final invite = Map<String, dynamic>.from(args[0] as Map);
+        if (!validStudentCall(invite)) return {'ok': false};
+        await showStudentCall(invite);
+        return {'ok': true};
       case 'getPushToken':
         if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'token': null, 'status': 'pending'};
         return _push.token();
@@ -677,10 +684,8 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
-  /// Only the portal's document scanner asks for a capture device, and only
-  /// for the camera. Everything else is refused: the app declares no
-  /// microphone permission or purpose string (iOS would terminate the app on
-  /// a microphone grant), and a page outside the portal gets nothing.
+  /// Camera capture is restricted to the trusted portal. Adviser calls use
+  /// the native audio engine; web pages never receive microphone access.
   Future<PermissionResponse> _onPermissionRequest(
       InAppWebViewController controller, PermissionRequest request) async {
     final cameraOnly = request.resources.isNotEmpty &&
