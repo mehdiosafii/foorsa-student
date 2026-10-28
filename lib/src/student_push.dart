@@ -30,7 +30,7 @@ bool isStudentChatPush(Map<String, dynamic> data) =>
 String? studentUpdateRoute(Map<String, dynamic> data) {
   final id = data['eventId'];
   if (data['type'] != 'student_update' || data['route'] != '/notifications' || id is! String ||
-      !RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(id)) return null;
+      !RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(id)) { return null; }
   return '/notifications?event=$id';
 }
 
