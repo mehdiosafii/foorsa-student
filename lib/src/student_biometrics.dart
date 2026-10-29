@@ -131,7 +131,9 @@ class StudentBiometrics {
       final namespace = state['namespace'];
       if (namespace is! String ||
           !RegExp(r'^foorsa_student_biometrics_v1_[a-f0-9]{32}$')
-              .hasMatch(namespace)) return;
+              .hasMatch(namespace)) {
+        return;
+      }
       _namespace = namespace;
       owner = state['owner'] as String?;
       label = state['label'] as String? ?? label;
