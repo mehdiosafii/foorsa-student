@@ -31,7 +31,8 @@ Future<void> main() async {
         .prepare()
         .timeout(const Duration(milliseconds: 900), onTimeout: () {});
   }
-  await StudentCalls.instance.start();
+  // Never what keeps the app on its launch screen (student_calls.dart).
+  await startStudentCalls();
   runApp(FoorsaStudentApp(
       appearance: appearance,
       firstLaunch: firstLaunch,

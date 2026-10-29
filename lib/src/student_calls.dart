@@ -113,6 +113,18 @@ Future<void> showStudentCall(Map<String, dynamic> invite) async {
           audioSessionActive: false)));
 }
 
+/// Starts adviser calls without ever holding the app back: whatever the
+/// platform answers, or however long it takes, the app goes on to draw.
+Future<void> startStudentCalls(
+    {Future<void> Function()? start,
+    Duration patience = const Duration(seconds: 2)}) async {
+  try {
+    await (start ?? StudentCalls.instance.start)().timeout(patience);
+  } catch (error) {
+    debugPrint('adviser calls not started: $error');
+  }
+}
+
 class StudentCalls extends ChangeNotifier {
   static final instance = StudentCalls._();
   StudentCalls._();
@@ -136,7 +148,16 @@ class StudentCalls extends ChangeNotifier {
         await end();
       }
     });
-    await FlutterCallkitIncoming.onBackgroundMessage(studentCallBackground);
+    // Only Android runs a background isolate for calls. On iOS PushKit wakes
+    // the app itself, and the plugin answers this method "not implemented":
+    // thrown out of main, that kept every iPhone on the launch screen.
+    if (Platform.isAndroid) {
+      try {
+        await FlutterCallkitIncoming.onBackgroundMessage(studentCallBackground);
+      } catch (error) {
+        debugPrint('adviser calls: no background handler: $error');
+      }
+    }
     FlutterCallkitIncoming.onEvent.listen((event) {
       if (event is CallEventActionCallAccept) {
         unawaited(answer(event.callKitParams));
@@ -154,13 +175,19 @@ class StudentCalls extends ChangeNotifier {
         onTokenChanged?.call();
       }
       // Intentionally no outgoing or callback action.
+    }, onError: (Object error) {
+      debugPrint('adviser call events: $error');
     });
-    for (final call in await FlutterCallkitIncoming.activeCalls()) {
-      if (call.isAccepted) {
-        unawaited(answer(call));
-      } else {
-        _watch(call);
+    try {
+      for (final call in await FlutterCallkitIncoming.activeCalls()) {
+        if (call.isAccepted) {
+          unawaited(answer(call));
+        } else {
+          _watch(call);
+        }
       }
+    } catch (error) {
+      debugPrint('adviser calls: active calls unknown: $error');
     }
   }
 
