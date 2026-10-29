@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:local_auth/local_auth.dart';
 import 'package:path_provider/path_provider.dart';
@@ -49,16 +52,6 @@ class StudentBiometrics {
     Future<Directory> Function()? directory,
   })  : _vault = vault ??
             const FlutterSecureStorage(
-              aOptions: AndroidOptions.biometric(
-                storageNamespace: 'foorsa_student_biometrics_v1',
-                enforceBiometrics: true,
-                biometricType: AndroidBiometricType.strongBiometricOnly,
-                biometricPromptTitle: 'Sign in to Foorsa',
-                biometricPromptSubtitle:
-                    'Use your fingerprint or face recognition',
-                biometricPromptNegativeButton: 'Use password',
-                resetOnError: false,
-              ),
               iOptions: IOSOptions(
                 accountName: 'foorsa_student_biometrics_v1',
                 accessibility: KeychainAccessibility.passcode,
@@ -75,10 +68,58 @@ class StudentBiometrics {
   final http.Client _client;
   final Future<Directory> Function() _directory;
   String? owner;
+  String _namespace = _newNamespace();
+  static String _newNamespace() {
+    final random = Random.secure();
+    return 'foorsa_student_biometrics_v1_${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+  }
+
+  AndroidOptions get _androidOptions => AndroidOptions.biometric(
+        storageNamespace: _namespace,
+        enforceBiometrics: true,
+        biometricType: AndroidBiometricType.strongBiometricOnly,
+        biometricPromptTitle: 'Sign in to Foorsa',
+        biometricPromptSubtitle: 'Use your fingerprint or face recognition',
+        biometricPromptNegativeButton: 'Use password',
+        resetOnError: false,
+        migrateOnAlgorithmChange: false,
+      );
+
+  Future<void> _deleteCredential() async {
+    if (Platform.isAndroid) {
+      // Deletion must not initialize the biometric cipher or demand the very
+      // biometric that the user is falling back from. A fresh namespace on
+      // enrollment also recovers from an invalidated KeyStore key.
+      await const MethodChannel('foorsa/biometrics').invokeMethod<void>(
+        'deleteProtectedStorage',
+        {'namespace': _namespace},
+      );
+    } else {
+      await _vault.delete(key: _key);
+    }
+  }
+
+  String? _savedToken;
   Map<String, int> _declined = {};
   String label = 'Face ID or fingerprint';
   bool get enabled => owner != null;
+  bool hasSavedSession(StudentSession session) =>
+      owner == session.owner && _savedToken == session.token;
   String get _key => 'session:$origin';
+  Future<void> _mutations = Future.value();
+  int _revision = 0;
+
+  Future<T> _serialize<T>(Future<T> Function() action) {
+    final result = Completer<T>();
+    _mutations = _mutations.then((_) async {
+      try {
+        result.complete(await action());
+      } catch (error, stack) {
+        result.completeError(error, stack);
+      }
+    });
+    return result.future;
+  }
 
   Future<File> _file() async =>
       File('${(await _directory()).path}/biometric_login.json');
@@ -87,6 +128,11 @@ class StudentBiometrics {
     try {
       final state = jsonDecode(await (await _file()).readAsString());
       if (state['origin'] != origin) return;
+      final namespace = state['namespace'];
+      if (namespace is! String ||
+          !RegExp(r'^foorsa_student_biometrics_v1_[a-f0-9]{32}$')
+              .hasMatch(namespace)) return;
+      _namespace = namespace;
       owner = state['owner'] as String?;
       label = state['label'] as String? ?? label;
       _declined = Map<String, int>.from(state['declined'] ?? {});
@@ -102,6 +148,7 @@ class StudentBiometrics {
     await pending.writeAsString(
         jsonEncode({
           'origin': origin,
+          'namespace': _namespace,
           'owner': owner,
           'label': label,
           'declined': _declined,
@@ -112,6 +159,12 @@ class StudentBiometrics {
 
   Future<bool> available() async {
     try {
+      if (Platform.isAndroid &&
+          await const MethodChannel('foorsa/biometrics')
+                  .invokeMethod<bool>('supportsProtectedStorage') !=
+              true) {
+        return false;
+      }
       final types = await _auth.getAvailableBiometrics();
       if (Platform.isIOS) {
         label = types.contains(BiometricType.face) ? 'Face ID' : 'Touch ID';
@@ -134,11 +187,11 @@ class StudentBiometrics {
                 const Duration(days: 7).inMilliseconds);
   }
 
-  Future<void> defer(String account) async {
-    _declined[account] = DateTime.now().millisecondsSinceEpoch;
-    if (_declined.length > 20) _declined.remove(_declined.keys.first);
-    await _persist();
-  }
+  Future<void> defer(String account) => _serialize(() async {
+        _declined[account] = DateTime.now().millisecondsSinceEpoch;
+        if (_declined.length > 20) _declined.remove(_declined.keys.first);
+        await _persist();
+      });
 
   Future<SessionValidity> validate(StudentSession session) async {
     try {
@@ -158,52 +211,75 @@ class StudentBiometrics {
     }
   }
 
-  Future<bool> save(StudentSession session) async {
-    final record = jsonEncode({
-      'token': session.token,
-      'owner': session.owner,
-      'origin': origin,
-    });
-    try {
-      await _vault.write(key: _key, value: record);
-      // iOS insertion alone does not authenticate. Read back through the
-      // biometric ACL before marking enabled; this also proves persistence.
-      // Android authenticated the write and reuses that unlocked key here.
-      if (await _vault.read(key: _key) != record) {
-        throw StateError('The secure login could not be verified');
+  Future<bool> save(StudentSession session) {
+    final revision = _revision;
+    return _serialize(() async {
+      if (revision != _revision) return false;
+      _namespace = _newNamespace();
+      final record = jsonEncode({
+        'token': session.token,
+        'owner': session.owner,
+        'origin': origin,
+      });
+      try {
+        await _vault.write(key: _key, value: record, aOptions: _androidOptions);
+        // iOS insertion alone does not authenticate. Read back through the
+        // biometric ACL before marking enabled; this also proves persistence.
+        // Android authenticated the write and reuses that unlocked key here.
+        if (await _vault.read(key: _key, aOptions: _androidOptions) != record) {
+          throw StateError('The secure login could not be verified');
+        }
+        if (revision != _revision) {
+          await _deleteCredential();
+          return false;
+        }
+        owner = session.owner;
+        await _persist();
+        if (revision != _revision) return false;
+        _savedToken = session.token;
+      } catch (_) {
+        owner = null;
+        _savedToken = null;
+        await _deleteCredential();
+        rethrow;
       }
-      owner = session.owner;
-      await _persist();
-    } catch (_) {
-      owner = null;
-      await _vault.delete(key: _key);
-      rethrow;
-    }
-    return true;
+      return true;
+    });
   }
 
   Future<StudentSession?> unlock() async {
     if (!enabled) return null;
-    final value = await _vault.read(key: _key);
+    final value = await _vault.read(key: _key, aOptions: _androidOptions);
     if (value == null) return null;
     try {
       final record = jsonDecode(value);
       final session = StudentSession.parse(record['token'] as String);
-      return record['origin'] == origin &&
-              session?.owner == owner &&
-              record['owner'] == owner
-          ? session
-          : null;
+      final valid = record['origin'] == origin &&
+          session?.owner == owner &&
+          record['owner'] == owner;
+      if (!valid) return null;
+      _savedToken = session!.token;
+      return session;
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> forget() async {
+  Future<void> forget() {
     // Disable discovery first. A failed deletion must not offer an old account.
     owner = null;
-    await _persist();
-    await _vault.delete(key: _key);
+    _savedToken = null;
+    _revision++;
+    return _serialize(() async {
+      owner = null;
+      _savedToken = null;
+      try {
+        await _persist();
+      } finally {
+        // Still remove the credential when a full disk prevents metadata writes.
+        await _deleteCredential();
+      }
+    });
   }
 
   void dispose() => _client.close();

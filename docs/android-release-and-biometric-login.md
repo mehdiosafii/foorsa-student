@@ -46,7 +46,7 @@ debug APK cannot update a Play-signed installation.
 ## Quick sign-in
 
 After a successful student `/api/portal/me` response, the native shell offers
-Face ID/Touch ID on iOS or strong fingerprint/face recognition on Android.
+Face ID/Touch ID on iOS or strong fingerprint/face recognition on Android 9 and later. Older Android phones retain password sign-in.
 Students can choose **Not now**; that decision is remembered for seven days,
 per student on this device. Ambassador sessions and the initial mandatory
 password-change screen are excluded. No portal deployment is required: the
@@ -61,7 +61,7 @@ namespaced encrypted store with an authenticated Android KeyStore key,
 strong biometrics only, and enrollment-change invalidation. Android backup and
 device transfer are disabled for app data; biometric keys never migrate.
 
-For enrolled users, the bridge moves the active web token out of persistent
+For enrolled users, the bridge moves the active web login and media tokens out of persistent
 `localStorage` into the current tab's session storage. Each new native launch
 clears that tab session before the portal starts. A native unlock screen reads
 the vault through OS biometric authentication, validates the token with the

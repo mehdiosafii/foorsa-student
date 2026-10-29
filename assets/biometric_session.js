@@ -4,6 +4,8 @@
   const config = FOORSA_CONFIG;
   if (window !== window.top || location.origin !== config.origin) return;
   const tokenKey = 'foorsa_portal_token';
+  const mediaKey = 'foorsa_portal_media_token';
+  const credentialKeys = new Set([tokenKey, mediaKey]);
   const kindKey = 'foorsa_portal_kind';
   const protectedKey = 'foorsa_biometric_session';
   const bootKey = 'foorsa_biometric_boot';
@@ -19,9 +21,9 @@
   let announced = null;
 
   if (protectedSession) {
-    rawRemove.call(localStorage, tokenKey);
+    for (const key of credentialKeys) rawRemove.call(localStorage, key);
     if (rawGet.call(sessionStorage, bootKey) !== config.boot) {
-      rawRemove.call(sessionStorage, tokenKey);
+      for (const key of credentialKeys) rawRemove.call(sessionStorage, key);
       rawSet.call(sessionStorage, bootKey, config.boot);
       if (config.token) {
         rawSet.call(sessionStorage, tokenKey, config.token);
@@ -34,7 +36,7 @@
   // in the native vault. Every new native launch clears this tab session before
   // React can read it, then installs only the session the user unlocked.
   Storage.prototype.getItem = function(key) {
-    if (this === localStorage && key === tokenKey && protectedSession) {
+    if (this === localStorage && credentialKeys.has(key) && protectedSession) {
       return rawGet.call(sessionStorage, key);
     }
     return rawGet.call(this, key);
@@ -43,8 +45,8 @@
     if (this === localStorage && key === tokenKey) {
       generation++;
       announced = null;
-      if (protectedSession) return rawSet.call(sessionStorage, key, value);
     }
+    if (this === localStorage && credentialKeys.has(key) && protectedSession) return rawSet.call(sessionStorage, key, value);
     return rawSet.call(this, key, value);
   };
   Storage.prototype.removeItem = function(key) {
@@ -52,8 +54,8 @@
       generation++;
       pendingSession = null;
       announced = null;
-      rawRemove.call(sessionStorage, key);
     }
+    if (this === localStorage && credentialKeys.has(key)) rawRemove.call(sessionStorage, key);
     return rawRemove.call(this, key);
   };
 
@@ -72,15 +74,19 @@
     if (pendingSession && !blocked && pendingSession === localStorage.getItem(tokenKey)
         && localStorage.getItem(kindKey) !== 'agent' && pendingSession !== announced && nonce) {
       announced = pendingSession;
-      Promise.resolve(send('session', pendingSession)).catch(() => { announced = null; });
+      Promise.resolve(send('session', pendingSession)).then((result) => {
+        if (result?.retry) { announced = null; setTimeout(flush, 750); }
+      }).catch(() => { announced = null; });
     }
   };
   window.addEventListener('portal-logout', () => {
     generation++;
     pendingSession = null;
     pendingLogout = true;
-    rawRemove.call(localStorage, tokenKey);
-    rawRemove.call(sessionStorage, tokenKey);
+    for (const key of credentialKeys) {
+      rawRemove.call(localStorage, key);
+      rawRemove.call(sessionStorage, key);
+    }
     flush();
   });
 
@@ -115,9 +121,11 @@
     protect(token) {
       if (token !== localStorage.getItem(tokenKey) || blocked) return false;
       rawSet.call(sessionStorage, tokenKey, token);
+      const media = rawGet.call(localStorage, mediaKey);
+      if (media) rawSet.call(sessionStorage, mediaKey, media);
       rawSet.call(sessionStorage, bootKey, config.boot);
       rawSet.call(localStorage, protectedKey, '1');
-      rawRemove.call(localStorage, tokenKey);
+      for (const key of credentialKeys) rawRemove.call(localStorage, key);
       protectedSession = true;
       return true;
     },

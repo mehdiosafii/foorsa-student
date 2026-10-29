@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -23,6 +24,9 @@ class FakeVault extends FlutterSecureStorage {
   bool failWrite = false;
   bool failDelete = false;
   bool cancelRead = false;
+  bool dropWrite = false;
+  Completer<void>? pauseWrite;
+  Completer<void>? writeStarted;
   @override
   Future<void> write(
       {required String key,
@@ -34,7 +38,9 @@ class FakeVault extends FlutterSecureStorage {
       AppleOptions? mOptions,
       WindowsOptions? wOptions}) async {
     if (failWrite) throw StateError('storage unavailable');
-    if (value != null) values[key] = value;
+    if (value != null && !dropWrite) values[key] = value;
+    writeStarted?.complete();
+    await pauseWrite?.future;
   }
 
   @override
@@ -151,6 +157,60 @@ void main() {
     final restarted = service();
     await restarted.initialize();
     expect(restarted.enabled, false);
+  });
+
+  test('a silently failed write is detected before enrollment is confirmed',
+      () async {
+    final store = service();
+    vault.dropWrite = true;
+    await expectLater(
+        store.save(StudentSession.parse(token())!), throwsStateError);
+    expect(store.enabled, false);
+  });
+
+  test('cancelling enrollment authentication removes the unconfirmed record',
+      () async {
+    final store = service();
+    vault.cancelRead = true;
+    await expectLater(
+        store.save(StudentSession.parse(token())!), throwsStateError);
+    expect(store.enabled, false);
+    expect(vault.values, isEmpty);
+  });
+
+  test('sign-out during enrollment cannot resurrect a saved account', () async {
+    final store = service();
+    vault.pauseWrite = Completer<void>();
+    vault.writeStarted = Completer<void>();
+    final saving = store.save(StudentSession.parse(token())!);
+    await vault.writeStarted!.future;
+    final forgetting = store.forget();
+    vault.pauseWrite!.complete();
+    expect(await saving, false);
+    await forgetting;
+    final restarted = service();
+    await restarted.initialize();
+    expect(restarted.enabled, false);
+    expect(vault.values, isEmpty);
+  });
+
+  test('sign-out deletes the vault record even when metadata cannot be written',
+      () async {
+    var diskFailed = false;
+    final store = StudentBiometrics(
+        origin: origin,
+        vault: vault,
+        directory: () async {
+          if (diskFailed) throw const FileSystemException('disk unavailable');
+          return directory;
+        });
+    await store.save(StudentSession.parse(token())!);
+    diskFailed = true;
+    await expectLater(store.forget(), throwsA(isA<FileSystemException>()));
+    expect(vault.values, isEmpty);
+    final restarted = service();
+    await restarted.initialize();
+    expect(await restarted.unlock(), isNull);
   });
 
   test('sign-out disables restoration even if the native deletion fails',

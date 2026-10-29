@@ -223,7 +223,8 @@ class _ShellPageState extends State<ShellPage> {
       try { await _biometrics.forget(); } catch (_) { /* No credential is returned. */ }
       return null;
     }
-    if (data['operation'] != 'session' || data['token'] is! String || _biometricBusy) return null;
+    if (data['operation'] != 'session' || data['token'] is! String) return null;
+    if (_biometricBusy) return {'retry': true};
     final session = StudentSession.parse(data['token']);
     if (session == null) return null;
     final generation = _biometricGeneration;
@@ -231,7 +232,7 @@ class _ShellPageState extends State<ShellPage> {
     try {
       if (!await _biometricSessionIsCurrent(session.token, nonce)) return null;
       // A different account must never inherit the previous student's vault.
-      if (_biometrics.enabled && _biometrics.owner != session.owner) await _biometrics.forget();
+      if (_biometrics.enabled && !_biometrics.hasSavedSession(session)) await _biometrics.forget();
       if (!_biometrics.shouldOffer(session.owner) || !await _biometrics.available() ||
           await _biometrics.validate(session) != SessionValidity.valid ||
           !await _biometricSessionIsCurrent(session.token, nonce) || !mounted) {

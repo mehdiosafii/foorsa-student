@@ -11,6 +11,37 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/biometrics")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "supportsProtectedStorage") {
+                    result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                } else if (call.method == "deleteProtectedStorage") {
+                    val namespace = call.argument<String>("namespace") ?: ""
+                    if (!namespace.matches(Regex("foorsa_student_biometrics_v1_[a-f0-9]{32}"))) {
+                        result.error("invalid_namespace", "Invalid quick sign-in storage", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        // flutter_secure_storage 10.3.4 initializes its cipher even
+                        // for delete(), which can prompt or fail after enrollment
+                        // changes. Remove only our dedicated namespace without auth.
+                        val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
+                        keyStore.load(null)
+                        keyStore.deleteEntry("$packageName.FlutterSecureStoragePluginKey.$namespace")
+                        for (name in listOf(namespace, "FlutterSecureKeyStorage:$namespace",
+                            "FlutterSecureStorageConfiguration:$namespace")) {
+                            if (!getSharedPreferences(name, MODE_PRIVATE).edit().clear().commit()) {
+                                throw IllegalStateException("Could not remove quick sign-in storage")
+                            }
+                        }
+                        result.success(null)
+                    } catch (_: Exception) {
+                        result.error("delete_failed", "Could not remove quick sign-in storage", null)
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
         // Saves a temp file into the public Downloads collection through
         // MediaStore (API 29+): no storage permission, no
         // MANAGE_EXTERNAL_STORAGE, and the system auto-suffixes duplicate

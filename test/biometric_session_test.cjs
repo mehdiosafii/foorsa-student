@@ -123,3 +123,17 @@ test('late responses from a signed-out account cannot enroll the next student', 
   assert.equal(p.calls[0][1].operation, 'forget');
   assert.equal(p.window.__foorsaBiometrics.protect('first'), false);
 });
+
+test('media bearer tokens are session-only after opt-in and cleared on a new launch', () => {
+  const MEDIA = 'foorsa_portal_media_token';
+  const local = new Map([[TOKEN, 'student'], [MEDIA, 'media-credential']]);
+  const tab = new Map();
+  const p = portal({local, tab});
+  p.window.__foorsaBiometrics.protect('student');
+  assert.equal(local.has(MEDIA), false);
+  assert.equal(p.storage.getItem(MEDIA), 'media-credential');
+  p.storage.setItem(MEDIA, 'renewed-media');
+  assert.equal(local.has(MEDIA), false);
+  const next = portal({local, tab, config: {boot: 'boot-2'}});
+  assert.equal(next.storage.getItem(MEDIA), null);
+});
