@@ -48,13 +48,15 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
     # permission_handler compiles every permission out unless enabled here;
     # without PERMISSION_CAMERA=1, Permission.camera reports "denied" on iOS
-    # and never shows the system prompt.
+    # and never shows the system prompt. The first-launch onboarding asks for
+    # notifications through it too (lib/src/onboarding).
     target.build_configurations.each do |config|
       config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
         '$(inherited)',
         'PERMISSION_CAMERA=1',
         'PERMISSION_MICROPHONE=1',
         'PERMISSION_LOCATION_WHENINUSE=1',
+        'PERMISSION_NOTIFICATIONS=1',
       ]
     end
   end

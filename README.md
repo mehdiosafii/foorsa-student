@@ -121,6 +121,16 @@ completed successfully on 5 October 2026. Analysis reports five existing
 informational lints. Physical-device permission testing is still required before
 final submission.
 
+## First launch
+
+A first-time downloader boards through a native onboarding before the
+sign-in: the splash's F becomes the journey's airliner, a departures board
+welcomes them, one screen asks for each phone access (notifications, camera,
+microphone, location), and a boarding pass ends it while the portal loads
+underneath. Updates skip it. Each screen's one button is Continue and always
+leads to the system prompt (App Review 5.1.1(iv)); tracking is built but off,
+because the app does not track. See `docs/first-launch-onboarding.md`.
+
 ## What the portal tells the app
 
 The portal (student.foorsa.ma, `src/portal` in foorsa-reward) calls these
