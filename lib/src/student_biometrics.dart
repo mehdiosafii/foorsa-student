@@ -199,7 +199,7 @@ class StudentBiometrics {
         Uri.parse(origin).resolve('/api/portal/me'),
         headers: {'Authorization': 'Bearer ${session.token}'},
       ).timeout(const Duration(seconds: 15));
-      if (result.statusCode == 401 || result.statusCode == 403) {
+      if (result.statusCode == 401) {
         return SessionValidity.expired;
       }
       if (result.statusCode != 200 || jsonDecode(result.body) is! Map) {

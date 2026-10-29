@@ -104,7 +104,7 @@ void main() {
     for (final entry in {
       200: SessionValidity.valid,
       401: SessionValidity.expired,
-      403: SessionValidity.expired,
+      403: SessionValidity.unavailable,
       500: SessionValidity.unavailable
     }.entries) {
       final store = service(client: MockClient((request) async {
