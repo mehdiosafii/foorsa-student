@@ -1,6 +1,8 @@
-/// The onboarding's sounds (scripts/onboarding_sounds/compose.py): one family
-/// of glass tones, air and paper, and a soft bed of night music under the
-/// steps.
+/// The onboarding's sounds (scripts/onboarding_sounds/compose.py): a few,
+/// and quiet. Music played by sampled instruments (piano, harp, strings,
+/// celesta) in one key, recordings of the things in the story (the board's
+/// flaps, the arrow's air, the camera, the stub), and a soft bed of night
+/// music under the steps. A plain press or a step changing makes no sound.
 ///
 /// They are meant to be heard. The first version used iOS's ambient session,
 /// which the ring/silent switch silences, and Android's interface-sound
@@ -45,24 +47,17 @@ class SilentSounds extends BoardingSounds {
 
 const onboardingCues = <String>[
   'intro',
-  'tap',
-  'shutter',
+  'flap',
   'swoop',
   'dock',
   'granted',
-  'flap',
+  'shutter',
   'tear',
   'board',
-  'step-1',
-  'step-2',
-  'step-3',
-  'step-4',
-  'step-5',
-  'step-6',
 ];
 
 /// The short ones, where Android starts a sound soonest.
-const _quick = {'tap', 'shutter', 'flap'};
+const _quick = {'shutter', 'flap', 'tear'};
 
 /// The longest cue, so the last one is never cut off when the onboarding
 /// lets go of its players.

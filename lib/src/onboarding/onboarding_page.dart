@@ -177,8 +177,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   Swoop? _swoop;
   bool _ghost = false;
 
-  /// The stage is morphing on its own (not driven by a flight).
-  bool _morphing = false;
   final Set<String> _beats = {};
 
   final GlobalKey _overlayKey = GlobalKey();
@@ -247,7 +245,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     unawaited(_load());
     _intro.addListener(_introTick);
     _flight.addListener(_flightTick);
-    _shift.addListener(_shiftTick);
     _exit.addListener(_exitTick);
   }
 
@@ -378,11 +375,9 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
         .globalToLocal(stage.localToGlobal(stage.size.center(Offset.zero)));
   }
 
-  /// Every press on an object is felt and heard alike.
-  void _feel(String touch, [double level = 1]) {
-    widget.feel(touch, level);
-    if (touch == 'press') widget.sounds.play('tap');
-  }
+  /// Every press on an object is felt. It makes no sound of its own: the
+  /// sound is kept for what the object does.
+  void _feel(String touch, [double level = 1]) => widget.feel(touch, level);
 
   /// The student acted on the object. A step that asks shows the phone's
   /// prompt at once; whatever the answer, the next step follows. A step whose
@@ -467,7 +462,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       _wordsDelay = Duration(milliseconds: (_times.wordsFrom * 1000).round());
     });
     _beats.clear();
-    _morphing = false;
     widget.sounds.play('swoop');
     _flight.duration = Duration(milliseconds: (_times.total * 1000).round());
     _spring(_drift, _index.toDouble(), response: 1.1);
@@ -492,9 +486,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       widget.feel('detent');
       widget.sounds.play('dock');
     }
-    if (s >= _times.beatTo && _beats.add('unfold')) {
-      widget.sounds.play('step-${_index.clamp(1, 6)}');
-    }
   }
 
   /// To step [index], the stage morphing on its own: the object folds into
@@ -514,21 +505,12 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       _wordsDelay = _still ? Duration.zero : const Duration(milliseconds: 460);
     });
     _beats.clear();
-    _morphing = true;
     _shift.duration = Duration(milliseconds: _still ? 240 : 1050);
     _shift.forward(from: 0).whenComplete(() {
-      _morphing = false;
       if (mounted && _shift.value >= 1) setState(() => _previous = null);
     });
     _spring(_drift, index.toDouble(), response: 0.9);
     _spring(_route, _steps.length <= 1 ? 0 : index / (_steps.length - 1));
-  }
-
-  void _shiftTick() {
-    // As the arrow unfolds into the next object, the step's note.
-    if (_morphing && _shift.value >= arrowLeaves && _beats.add('unfold')) {
-      widget.sounds.play('step-${_index.clamp(1, 6)}');
-    }
   }
 
   // Boarding.
