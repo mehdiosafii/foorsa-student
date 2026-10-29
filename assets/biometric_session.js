@@ -31,6 +31,8 @@
       }
     }
   }
+  // Do not retain a second copy inside the bridge's closures after bootstrap.
+  config.token = null;
 
   // Keep the active web session in tab storage. The durable login lives only
   // in the native vault. Every new native launch clears this tab session before

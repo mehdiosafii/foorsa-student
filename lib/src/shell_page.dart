@@ -143,6 +143,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   UserScript _sessionScript() => UserScript(
+    groupName: 'foorsa-biometric-session',
     source: _biometricScript.replaceFirst('const config = FOORSA_CONFIG;',
       'const config = ${jsonEncode({
         'origin': Uri.parse(AppConfig.baseUrl).origin,
@@ -153,6 +154,15 @@ class _ShellPageState extends State<ShellPage> {
     injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
     forMainFrameOnly: true,
   );
+
+  Future<void> _retireBiometricBootstrap(InAppWebViewController controller) async {
+    if (_unlockedToken == null) return;
+    _unlockedToken = null;
+    // Restoration is for the first document only. Future reloads use the tab
+    // session; clearing it or signing out must never replay the initial token.
+    await controller.removeUserScriptsByGroupName(groupName: 'foorsa-biometric-session');
+    await controller.addUserScript(userScript: _sessionScript());
+  }
 
   Future<void> _unlockBiometrics() async {
     if (_biometricBusy) return;
@@ -219,7 +229,10 @@ class _ShellPageState extends State<ShellPage> {
     if (nonce != _scannerNonce || !_isTrustedPortal(await _controller?.getUrl())) return null;
     if (data['operation'] == 'forget') {
       _biometricGeneration++;
-      _unlockedToken = null;
+      try {
+        final controller = _controller;
+        if (controller != null) await _retireBiometricBootstrap(controller);
+      } catch (_) { /* The web view may have closed during sign-out. */ }
       try { await _biometrics.forget(); } catch (_) { /* No credential is returned. */ }
       return null;
     }
@@ -1162,6 +1175,7 @@ class _ShellPageState extends State<ShellPage> {
                   _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
+                  await _retireBiometricBootstrap(controller);
                   await _openPushChat();
                   if (_loader.showing) setState(_loader.pageLoaded);
                   if (!_errorThisLoad) {
