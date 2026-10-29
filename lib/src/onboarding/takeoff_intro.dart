@@ -143,8 +143,8 @@ class _TakeoffPainter extends CustomPainter {
     final (at, heading, scale, flown) = _flight(t, size);
 
     if (morph <= 0) {
-      final breath =
-          1 + 0.03 * math.sin(math.pi * _smooth((t - 0.2) / (morphStarts - 0.2)));
+      final breath = 1 +
+          0.03 * math.sin(math.pi * _smooth((t - 0.2) / (morphStarts - 0.2)));
       canvas.save();
       canvas.scale(breath);
       paintGlassArrow(canvas,

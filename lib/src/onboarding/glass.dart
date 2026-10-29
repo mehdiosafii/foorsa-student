@@ -170,10 +170,8 @@ class Glass {
 class GlassShape {
   GlassShape._(this.path, this.bounds, this._grow);
 
-  factory GlassShape.rrect(RRect shape) => GlassShape._(
-      Path()..addRRect(shape),
-      shape.outerRect,
-      (d) => Path()..addRRect(_inflate(shape, d)));
+  factory GlassShape.rrect(RRect shape) => GlassShape._(Path()..addRRect(shape),
+      shape.outerRect, (d) => Path()..addRRect(_inflate(shape, d)));
 
   /// Any path; a spread is ignored.
   factory GlassShape.path(Path path) =>
@@ -198,8 +196,8 @@ class GlassShape {
 }
 
 RRect _inflate(RRect r, double d) {
-  Radius grow(Radius x) => Radius.elliptical(
-      math.max(0, x.x + d), math.max(0, x.y + d));
+  Radius grow(Radius x) =>
+      Radius.elliptical(math.max(0, x.x + d), math.max(0, x.y + d));
   final rect = r.outerRect.inflate(d);
   if (rect.width <= 0 || rect.height <= 0) {
     return RRect.fromRectAndRadius(
@@ -258,7 +256,10 @@ void paintGlassBody(Canvas canvas, GlassShape shape, Glass glass,
   final bounds = shape.bounds;
   if (bounds.isEmpty) return;
 
-  final cast = [for (final s in glass.shadows) if (s.color.a > 0.001) s];
+  final cast = [
+    for (final s in glass.shadows)
+      if (s.color.a > 0.001) s
+  ];
   if (cast.isNotEmpty) {
     canvas.save();
     canvas.clipPath(Path()
@@ -282,8 +283,11 @@ void paintGlassBody(Canvas canvas, GlassShape shape, Glass glass,
   canvas.drawPath(
       shape.path,
       Paint()
-        ..shader = ui.Gradient.linear(from, to,
-            [for (final c in glass.fill) _fade(c, opacity)], const [0, .48, 1]));
+        ..shader = ui.Gradient.linear(
+            from,
+            to,
+            [for (final c in glass.fill) _fade(c, opacity)],
+            const [0, .48, 1]));
 
   canvas.save();
   canvas.clipPath(shape.path);
@@ -372,7 +376,8 @@ class GlassPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => CustomPaint(
-        painter: _GlassPainter(glass, radius, circle, opacity, lift, rim: false),
+        painter:
+            _GlassPainter(glass, radius, circle, opacity, lift, rim: false),
         foregroundPainter:
             _GlassPainter(glass, radius, circle, opacity, lift, rim: true),
         child: child,
@@ -391,11 +396,14 @@ class _GlassPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final r = circle ? size.shortestSide / 2 : math.min(radius, size.shortestSide / 2);
+    final r = circle
+        ? size.shortestSide / 2
+        : math.min(radius, size.shortestSide / 2);
     final shape = GlassShape.rrect(circle
         ? RRect.fromRectAndRadius(
             Rect.fromCircle(
-                center: size.center(Offset.zero), radius: size.shortestSide / 2),
+                center: size.center(Offset.zero),
+                radius: size.shortestSide / 2),
             Radius.circular(r))
         : RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(r)));
     if (rim) {

@@ -1,14 +1,19 @@
 /// The first-launch onboarding: the takeoff, the welcome board, a step for
 /// each phone access that can still be asked for, and the boarding pass.
 ///
-/// One arrow tells it. It waits at the gate of the runway, the one control
-/// at the foot of the screen; the student presses the runway and the arrow
-/// taxis, lifts off and swoops up into the picture, which has folded into an
-/// arrow of light for it to dock in, and unfolds as the next picture while
-/// the next arrow rolls in to the gate. On the last screen it cuts the
-/// boarding pass's stub off along the perforation, takes what is left of the
-/// pass into itself and lands on the sign-in's own arrow, and the onboarding
-/// fades onto the portal underneath.
+/// There are no buttons. On each screen the student acts on the object
+/// itself, wherever it stands: throws the arrow up into the departures board,
+/// taps the notification, puts the passport page in the scanner's frame,
+/// taps the mic, taps the map's locate arrow, tears the boarding pass's stub.
+/// What to do is said quietly under the object (scene_hint.dart).
+///
+/// One arrow tells the story. Where the object is itself an arrow (the one
+/// under the board, the one in the map's button), it flies up into the
+/// picture, which has folded into an arrow of light for it to dock in, and
+/// unfolds as the next picture. Elsewhere the object folds into the arrow
+/// and unfolds as the next one. Once the stub is off, what is left of the
+/// pass folds into the arrow, which lands on the sign-in's own arrow, and the
+/// onboarding fades onto the portal underneath.
 library;
 
 import 'dart:async';
@@ -17,85 +22,90 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'arrow_flight.dart';
 import 'boarding_pass.dart';
 import 'boarding_style.dart';
 import 'brand_marks.dart';
-import 'glass.dart';
 import 'glass_arrow.dart';
-import 'lucide.dart';
 import 'night_sky.dart';
 import 'onboarding_flow.dart';
 import 'onboarding_sound.dart';
 import 'route_progress.dart';
-import 'runway.dart';
-import 'scene_departures.dart';
 import 'scene_location.dart';
 import 'scene_notifications.dart';
 import 'scene_scan.dart';
 import 'scene_tracking.dart';
 import 'scene_voice.dart';
+import 'scene_welcome.dart';
 import 'stage_forms.dart';
 import 'stage_morph.dart';
 import 'takeoff_intro.dart';
 
-/// A step's flight, in seconds from the arrow leaving the runway: it swoops
-/// in as the picture folds into an arrow of light, docks, shines, and the
-/// picture unfolds as the next one while the next arrow rolls in.
-const _swoopSeconds = 0.6;
-const _foldFrom = 0.32;
-const _beatTo = 0.72;
-const _wordsFrom = 0.78;
-const _arriveFrom = 0.84;
-const _flightSeconds = 1.36;
+/// A step's flight, in seconds from the arrow leaving the student's hand: it
+/// swoops in as the picture folds into an arrow of light, docks, shines, and
+/// the picture unfolds as the next one.
+class FlightTimes {
+  const FlightTimes._(
+      this.swoop, this.foldFrom, this.beatTo, this.wordsFrom, this.total);
+
+  /// Lifted out of the map's button: it rises and glides into the middle
+  /// while the map folds round it.
+  static const lifted = FlightTimes._(0.6, 0.32, 0.72, 0.78, 1.36);
+
+  /// Thrown: it is in the picture almost at once, so the picture folds to
+  /// meet it as it goes.
+  static const thrown = FlightTimes._(0.38, 0.04, 0.5, 0.56, 1.14);
+
+  /// It docks at [swoop]; the picture starts to fold at [foldFrom], becomes
+  /// the next at [beatTo], and has finished unfolding at [total]. The words
+  /// come in at [wordsFrom].
+  final double swoop, foldFrom, beatTo, wordsFrom, total;
+}
 
 /// Where the stage's morph is ([StageMorphPainter]'s progress) [s] seconds
 /// into a flight.
-double flightMorph(double s) {
-  if (s <= _foldFrom) return 0;
-  if (s < _swoopSeconds) {
-    return arrowAt * (s - _foldFrom) / (_swoopSeconds - _foldFrom);
+double flightMorph(double s, [FlightTimes times = FlightTimes.lifted]) {
+  if (s <= times.foldFrom) return 0;
+  if (s < times.swoop) {
+    return arrowAt * (s - times.foldFrom) / (times.swoop - times.foldFrom);
   }
-  if (s < _beatTo) {
+  if (s < times.beatTo) {
     return arrowAt +
-        (arrowLeaves - arrowAt) * (s - _swoopSeconds) / (_beatTo - _swoopSeconds);
+        (arrowLeaves - arrowAt) *
+            (s - times.swoop) /
+            (times.beatTo - times.swoop);
   }
-  return math.min(1.0,
-      arrowLeaves + (1 - arrowLeaves) * (s - _beatTo) / (_flightSeconds - _beatTo));
+  return math.min(
+      1.0,
+      arrowLeaves +
+          (1 - arrowLeaves) *
+              (s - times.beatTo) /
+              (times.total - times.beatTo));
 }
+
+/// How fast a thrown arrow carries on into its flight ([launchCurve]'s v0):
+/// its speed over the speed that crosses [reach] in a thrown swoop's time,
+/// and never so fast that it would overshoot.
+double throwSpeed(Offset velocity, double reach) =>
+    (velocity.distance * FlightTimes.thrown.swoop / math.max(reach, 1))
+        .clamp(0.0, 2.4)
+        .toDouble();
 
 double _smooth(double x) {
   final t = x.clamp(0.0, 1.0);
   return t * t * (3 - 2 * t);
 }
 
-/// Boarding, in seconds: the arrow swoops to the perforation, cuts along it,
-/// rises to the middle as the pass folds into it, shines, flies to the
-/// sign-in's arrow and the onboarding fades onto it. Torn by hand, the stub
-/// is already off and the arrow flies straight in.
-class _BoardTimes {
-  const _BoardTimes.zip()
-      : toNotch = 0.46,
-        zipEnd = 0.92,
-        foldFrom = 1.02,
-        dock = 1.4,
-        shineEnd = 1.58,
-        markEnd = 2.08,
-        total = 2.48;
-  const _BoardTimes.straight()
-      : toNotch = 0,
-        zipEnd = 0,
-        foldFrom = 0.26,
-        dock = 0.6,
-        shineEnd = 0.78,
-        markEnd = 1.28,
-        total = 1.68;
-  final double toNotch, zipEnd, foldFrom, dock, shineEnd, markEnd, total;
-  bool get zips => zipEnd > 0;
-}
+/// Boarding, in seconds from the stub coming off: what is left of the pass
+/// folds into the arrow, which shines, flies to the sign-in's arrow, and the
+/// onboarding fades onto it.
+const _boardFoldFrom = 0.2;
+const _boardDock = 0.75;
+const _boardShineEnd = 0.92;
+const _boardMarkEnd = 1.42;
+const _boardTotal = 1.82;
 
 class FirstLaunchOnboarding extends StatefulWidget {
   const FirstLaunchOnboarding({
@@ -152,43 +162,26 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       vsync: this, duration: const Duration(milliseconds: 700));
 
   /// The stage between two steps: the old object becomes the arrow, the arrow
-  /// the new one. Driven by [_flight] going forward, by itself going back.
+  /// the new one. Driven by [_flight] when an arrow flies in, by itself
+  /// otherwise.
   late final AnimationController _shift = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 1050));
 
-  // The runway's arrow: rolling out, rolling in, held under a finger.
-  late final AnimationController _depart = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 520));
-  late final AnimationController _arrive = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 640), value: 1);
-  late final AnimationController _press =
-      AnimationController.unbounded(vsync: this);
+  /// From the student's hand into the picture ([FlightTimes]).
+  late final AnimationController _flight = AnimationController(vsync: this);
+  FlightTimes _times = FlightTimes.lifted;
 
-  /// From the runway into the picture ([_flightSeconds]).
-  late final AnimationController _flight = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: (_flightSeconds * 1000) ~/ 1));
-
-  /// Boarding: the stub, the pass, the sign-in ([_BoardTimes]).
+  /// Boarding: the pass, the arrow, the sign-in ([_boardTotal]).
   late final AnimationController _exit = AnimationController(vsync: this);
-  _BoardTimes _board = const _BoardTimes.zip();
 
-  /// Seconds since the onboarding opened, for the arrow's idle breath and
-  /// its hover while the phone asks.
-  late final Ticker _ticker;
-  final ValueNotifier<double> _clock = ValueNotifier<double>(0);
-
-  RunwayPhase _runway = RunwayPhase.away;
-
-  /// The arrow hovers over the runway while the phone's prompt is up.
-  bool _holding = false;
-  double _heldSince = 0;
   Swoop? _swoop;
   bool _ghost = false;
+
+  /// The stage is morphing on its own (not driven by a flight).
+  bool _morphing = false;
   final Set<String> _beats = {};
 
   final GlobalKey _overlayKey = GlobalKey();
-  final GlobalKey _runwayKey = GlobalKey();
   final GlobalKey _stageKey = GlobalKey();
 
   BoardingStep? _previous;
@@ -198,27 +191,31 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   bool _busy = false;
   bool _leaving = false;
   final Map<BoardingAccess, bool> _answered = {};
-  ValueNotifier<bool?> _outcome = ValueNotifier<bool?>(null);
 
-  /// The words of the step come in a beat after it, on a flight.
+  /// Each step's answer, for its object to show (a notification going up,
+  /// the blue dot on the map).
+  final Map<BoardingStep, ValueNotifier<bool?>> _outcomes = {};
+
+  /// The map's arrow has left its button: the page flies it.
+  final ValueNotifier<bool> _away = ValueNotifier<bool>(false);
+
+  /// The words of the step come in a beat after it.
   Duration _wordsDelay = Duration.zero;
 
-  /// The student just said yes: a check on the runway for a moment.
-  bool _done = false;
-  final GlobalKey<BoardingPassSceneState> _passKey =
-      GlobalKey<BoardingPassSceneState>();
+  /// Pauses the page is waiting out, cancelled if it goes.
+  final Set<Timer> _waits = {};
 
-  /// Boarding: where the sign-in's arrow is, in the overlay's points.
+  /// Boarding: where the stage's middle is, and where the sign-in's arrow
+  /// is, in the overlay's points.
+  Offset? _boardCentre;
   Rect? _mark;
-  Swoop? _boardSwoop;
-  Swoop? _riseSwoop;
-  Offset? _notchFrom, _notchTo;
+  bool _markKnown = false;
+  bool _waitingForMark = false;
 
-  /// The progress, the words and the runway step aside as the student boards.
-  late final Animation<double> _chromeFade = _exit.drive(_ChromeFade(this));
+  /// The progress and the words step aside as the student boards.
+  late final Animation<double> _chromeFade = _exit.drive(const _ChromeFade());
   bool _feltUnfold = false;
   bool _feltRelease = false;
-  bool _feltLift = false;
 
   /// The welcome's board flips when it appears, not while the plane flies.
   bool _contentShown = false;
@@ -229,16 +226,29 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       _plan?.steps ?? const [BoardingStep.welcome, BoardingStep.boarding];
   BoardingStep get _step => _steps[_index];
 
+  /// The student may act on the object: the takeoff is over, nothing is
+  /// moving and nothing is being asked.
+  bool get _armed =>
+      _plan != null &&
+      _introDone &&
+      _contentShown &&
+      !_busy &&
+      !_leaving &&
+      _previous == null;
+
+  ValueNotifier<bool?> _outcomeOf(BoardingStep step) => _outcomes.putIfAbsent(
+      step,
+      () => ValueNotifier<bool?>(
+          step.access == null ? null : _answered[step.access]));
+
   @override
   void initState() {
     super.initState();
     unawaited(_load());
     _intro.addListener(_introTick);
     _flight.addListener(_flightTick);
+    _shift.addListener(_shiftTick);
     _exit.addListener(_exitTick);
-    _depart.addListener(_departTick);
-    _ticker = createTicker(
-        (elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
   }
 
   @override
@@ -247,8 +257,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     final still = MediaQuery.disableAnimationsOf(context);
     if (_still != still || !_introStarted) {
       _still = still;
-      if (!_still && !_ticker.isActive) _ticker.start();
-      if (_still && _ticker.isActive) _ticker.stop();
       _startIntro();
     }
   }
@@ -262,7 +270,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       _introDone = true;
       _contentShown = true;
       _content.value = 1;
-      _runway = RunwayPhase.parked;
       return;
     }
     widget.sounds.play('intro');
@@ -277,25 +284,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     if (mounted) setState(() {});
     _content.forward();
     widget.sounds.startBed();
-    _rollIn(delay: const Duration(milliseconds: 260));
-  }
-
-  /// The next arrow rolls in to the gate.
-  void _rollIn({Duration delay = Duration.zero}) {
-    if (_still) {
-      setState(() => _runway = RunwayPhase.parked);
-      return;
-    }
-    Future<void>.delayed(delay, () {
-      if (!mounted) return;
-      setState(() => _runway = RunwayPhase.arriving);
-      _arrive.forward(from: 0).whenComplete(() {
-        if (!mounted || _runway != RunwayPhase.arriving) return;
-        setState(() => _runway = RunwayPhase.parked);
-        widget.feel('detent');
-        widget.sounds.play('park');
-      });
-    });
   }
 
   Future<void> _load() async {
@@ -332,21 +320,35 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
 
   @override
   void dispose() {
-    _ticker.dispose();
-    _clock.dispose();
     _intro.dispose();
     _night.dispose();
     _drift.dispose();
     _route.dispose();
     _content.dispose();
     _shift.dispose();
-    _depart.dispose();
-    _arrive.dispose();
-    _press.dispose();
     _flight.dispose();
     _exit.dispose();
-    _outcome.dispose();
+    for (final outcome in _outcomes.values) {
+      outcome.dispose();
+    }
+    _away.dispose();
+    for (final wait in _waits) {
+      wait.cancel();
+    }
     super.dispose();
+  }
+
+  /// A pause that ends with the page: if it goes first, whatever waits on it
+  /// simply never goes on.
+  Future<void> _pause(Duration length) {
+    final done = Completer<void>();
+    late final Timer timer;
+    timer = Timer(length, () {
+      _waits.remove(timer);
+      done.complete();
+    });
+    _waits.add(timer);
+    return done.future;
   }
 
   void _spring(AnimationController c, double target,
@@ -369,96 +371,31 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     return box is RenderBox && box.attached && box.hasSize ? box : null;
   }
 
-  Offset? _overlayPoint(GlobalKey key, Offset local) {
-    final box = _box(key), overlay = _box(_overlayKey);
-    if (box == null || overlay == null) return null;
-    return overlay.globalToLocal(box.localToGlobal(local));
-  }
-
   Offset? get _stageCentre {
-    final stage = _box(_stageKey);
-    if (stage == null) return null;
-    return _overlayPoint(_stageKey, stage.size.center(Offset.zero));
+    final stage = _box(_stageKey), overlay = _box(_overlayKey);
+    if (stage == null || overlay == null) return null;
+    return overlay
+        .globalToLocal(stage.localToGlobal(stage.size.center(Offset.zero)));
   }
 
-  /// The arrow over the runway's far end, as it lifted off; bobbing while the
-  /// phone asks.
-  ArrowPose? _liftPose() {
-    final runway = _box(_runwayKey);
-    if (runway == null) return null;
-    final at = _overlayPoint(_runwayKey, runwayLiftOff(runway.size));
-    if (at == null) return null;
-    if (!_holding) {
-      return ArrowPose(at, restHeading, liftArrowHeight, glow: 0.9);
-    }
-    final t = _clock.value - _heldSince;
-    final settle = _smooth(t / 0.5);
-    final bob = math.sin(t * 2 * math.pi / 2.4);
-    return ArrowPose(at + Offset(0, 2.6 * bob * settle),
-        restHeading + 0.05 * math.sin(t * 2 * math.pi / 2.4 + 0.9) * settle,
-        liftArrowHeight,
-        glow: 0.9 - 0.2 * settle);
+  /// Every press on an object is felt and heard alike.
+  void _feel(String touch, [double level = 1]) {
+    widget.feel(touch, level);
+    if (touch == 'press') widget.sounds.play('tap');
   }
 
-  void _departTick() {
-    if (!_feltLift && departProgress(_depart.value) > 0.7) {
-      _feltLift = true;
-      widget.feel('release');
-    }
-  }
-
-  void _pressDown() {
-    widget.feel('press');
-    widget.sounds.play('tap');
-    if (_still) return;
-    _press.animateTo(1,
-        duration: const Duration(milliseconds: 100), curve: Curves.easeOut);
-  }
-
-  void _pressUp() {
-    if (_still) {
-      _press.value = 0;
-      return;
-    }
-    _press.animateWith(SpringSimulation(
-        foorsaSpring(damping: 0.72, response: 0.24),
-        _press.value,
-        0,
-        _press.velocity));
-  }
-
-  /// The arrow taxis and lifts off. Completes once it is in the air.
-  Future<void> _takeOff() async {
-    _feltLift = false;
-    setState(() => _runway = RunwayPhase.departing);
-    widget.sounds.play('takeoff');
-    await _depart.forward(from: 0);
-    if (!mounted) return;
-    setState(() {
-      _runway = RunwayPhase.away;
-      _holding = false;
-    });
-  }
-
-  /// The runway, pressed.
-  Future<void> _continue() async {
-    if (_busy || _leaving || _runway != RunwayPhase.parked) return;
-    if (_step == BoardingStep.boarding) {
-      await _boardNow(zip: true);
-      return;
-    }
-    final access = _step.access;
+  /// The student acted on the object. A step that asks shows the phone's
+  /// prompt at once; whatever the answer, the next step follows. A step whose
+  /// object is an arrow sends that arrow on into the next picture.
+  Future<void> _act({ArrowPose? arrow, Offset? velocity}) async {
+    if (!_armed) return;
+    final step = _step;
+    final access = step.access;
     final asks = access != null && !_answered.containsKey(access);
     setState(() => _busy = true);
-    if (!_still) await _takeOff();
-    if (!mounted) return;
+    // The scanner takes the page.
+    if (step == BoardingStep.camera) widget.sounds.play('shutter');
     if (asks) {
-      if (!_still) {
-        setState(() {
-          _holding = true;
-          _heldSince = _clock.value;
-        });
-      }
       AccessState answer;
       try {
         answer = await widget.permissions.request(access);
@@ -468,57 +405,76 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       if (!mounted) return;
       final on = answer == AccessState.granted;
       _answered[access] = on;
-      _outcome.value = on;
-      // A yes is felt and shown, a no simply moves on: nothing on the way
-      // makes a student feel they answered wrong.
+      _outcomeOf(step).value = on;
+      // A yes is felt and seen on the object for a moment; a no simply moves
+      // on: nothing on the way makes a student feel they answered wrong.
       if (on) {
         widget.feel('land');
         widget.sounds.play('granted');
-        setState(() => _done = true);
         widget.onGranted?.call(access);
       }
-      await Future<void>.delayed(Duration(milliseconds: on ? 760 : 260));
+      await _pause(Duration(milliseconds: on ? 900 : 320));
       if (!mounted) return;
     }
-    if (_still) {
+    if (_still || arrow == null) {
       _goTo(_index + 1);
-      setState(() => _busy = false);
       return;
     }
-    _fly(_index + 1, fromRun: !asks);
+    _fly(_index + 1, arrow, velocity: velocity);
   }
 
-  /// From the air over the runway into the picture, which becomes step
-  /// [next].
-  void _fly(int next, {required bool fromRun}) {
-    final from = _liftPose();
+  /// The arrow flies from where the student sent it (in the screen's
+  /// points) into the picture, which becomes step [next].
+  void _fly(int next, ArrowPose from, {Offset? velocity}) {
+    final overlay = _box(_overlayKey);
     final to = _stageCentre;
-    setState(() {
-      _swoop = from == null || to == null
-          ? null
-          : Swoop.intoStage(
-              from: from.at,
+    final thrown = velocity != null && velocity.distance > 60;
+    _times = thrown ? FlightTimes.thrown : FlightTimes.lifted;
+    Swoop? swoop;
+    if (overlay != null && to != null) {
+      final at = overlay.globalToLocal(from.at);
+      swoop = thrown
+          // Thrown, it carries on the way it was thrown, up into the board.
+          ? Swoop(
+              from: at,
               fromHeading: from.heading,
-              fromHeight: liftArrowHeight,
+              fromHeight: from.height,
               to: to,
-              // Straight on from the run, or off from a hover.
-              speed: fromRun ? 1.5 : 0.2,
+              toHeight: stageArrowHeight,
+              speed: throwSpeed(velocity, (to - at).distance),
+              launch: velocity / velocity.distance,
+              approach: const Offset(0, -1),
+            )
+          // Lifted out of the map's button, it rises a little and glides
+          // into the middle, still pointing its own way.
+          : Swoop(
+              from: at,
+              fromHeading: from.heading,
+              fromHeight: from.height,
+              to: to,
+              toHeight: stageArrowHeight,
+              follow: false,
+              launch: const Offset(0.2, -1),
+              approach: const Offset(-0.5, -1),
             );
-      _holding = false;
-      _ghost = _swoop != null;
+    }
+    _away.value = true;
+    setState(() {
+      _swoop = swoop;
+      _ghost = swoop != null;
       _previous = _step;
       _index = next;
-      _done = false;
-      _wordsDelay = const Duration(milliseconds: (_wordsFrom * 1000) ~/ 1);
-      _outcome = ValueNotifier<bool?>(
-          _step.access == null ? null : _answered[_step.access]);
+      _wordsDelay = Duration(milliseconds: (_times.wordsFrom * 1000).round());
     });
     _beats.clear();
+    _morphing = false;
     widget.sounds.play('swoop');
+    _flight.duration = Duration(milliseconds: (_times.total * 1000).round());
     _spring(_drift, _index.toDouble(), response: 1.1);
     _spring(_route, _steps.length <= 1 ? 0 : _index / (_steps.length - 1));
     _flight.forward(from: 0).whenComplete(() {
       if (!mounted || _flight.value < 1) return;
+      _away.value = false;
       setState(() {
         _previous = null;
         _swoop = null;
@@ -529,100 +485,85 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   }
 
   void _flightTick() {
-    final s = _flight.value * _flightSeconds;
-    _shift.value = flightMorph(s);
-    if (s >= _swoopSeconds && _beats.add('dock')) {
+    final s = _flight.value * _times.total;
+    _shift.value = flightMorph(s, _times);
+    if (s >= _times.swoop && _beats.add('dock')) {
       // It docks: the picture has become the arrow.
       widget.feel('detent');
       widget.sounds.play('dock');
     }
-    if (s >= _beatTo && _beats.add('unfold')) {
+    if (s >= _times.beatTo && _beats.add('unfold')) {
       widget.sounds.play('step-${_index.clamp(1, 6)}');
     }
-    if (s >= _arriveFrom && _beats.add('arrive')) _rollIn();
   }
 
-  /// Straight to step [index], the stage morphing on its own: going back,
-  /// with Reduce Motion, and for the tests.
+  /// To step [index], the stage morphing on its own: the object folds into
+  /// the arrow and unfolds as the next. Forward from an object that is not
+  /// an arrow, back, with Reduce Motion, and for the tests.
   void _goTo(int index) {
     if (index < 0 || index >= _steps.length || index == _index) return;
     final from = _step;
+    _away.value = false;
     setState(() {
       _previous = from;
       _index = index;
-      _done = false;
       _busy = false;
       _ghost = false;
       _swoop = null;
-      _wordsDelay = Duration.zero;
-      _outcome = ValueNotifier<bool?>(
-          _step.access == null ? null : _answered[_step.access]);
+      // The words follow the object as it changes.
+      _wordsDelay = _still ? Duration.zero : const Duration(milliseconds: 460);
     });
-    widget.sounds.play('step-${index.clamp(1, 6)}');
+    _beats.clear();
+    _morphing = true;
     _shift.duration = Duration(milliseconds: _still ? 240 : 1050);
     _shift.forward(from: 0).whenComplete(() {
+      _morphing = false;
       if (mounted && _shift.value >= 1) setState(() => _previous = null);
     });
     _spring(_drift, index.toDouble(), response: 0.9);
     _spring(_route, _steps.length <= 1 ? 0 : index / (_steps.length - 1));
   }
 
-  // Boarding.
-
-  /// The pass's two notches and the stage's middle, in the overlay's points.
-  (Offset, Offset)? _notches() {
-    final stage = _box(_stageKey);
-    final centre = _stageCentre;
-    if (stage == null || centre == null) return null;
-    final s = passScale(stage.size);
-    final y = centre.dy - passHeight * s / 2 + passTearY * s;
-    final half = passWidth * s / 2;
-    return (Offset(centre.dx - half + 16 * s, y), Offset(centre.dx + half - 16 * s, y));
+  void _shiftTick() {
+    // As the arrow unfolds into the next object, the step's note.
+    if (_morphing && _shift.value >= arrowLeaves && _beats.add('unfold')) {
+      widget.sounds.play('step-${_index.clamp(1, 6)}');
+    }
   }
 
-  /// The student boards: by the runway ([zip], the arrow cuts the stub off)
-  /// or by tearing the stub off themselves.
-  Future<void> _boardNow({required bool zip}) async {
+  // Boarding.
+
+  /// The stub is off: the student boards.
+  void _boardNow() {
     if (_leaving) return;
     setState(() {
       _leaving = true;
       _busy = true;
     });
-    Rect? mark;
-    Future<Rect?> find() async {
-      try {
-        return await widget.findMark?.call();
-      } catch (_) {
-        return null;
-      }
-    }
-
-    final finding = _still
-        ? Future<Rect?>.value()
-        : find().timeout(const Duration(milliseconds: 600),
-            onTimeout: () => null);
-    if (!_still) {
-      await _takeOff();
-      if (!mounted) return;
-      // It waits over the runway for as long as the page takes to answer.
-      setState(() {
-        _holding = true;
-        _heldSince = _clock.value;
-      });
-    }
-    try {
-      mark = await finding;
-    } catch (_) {}
-    if (!mounted) return;
     widget.sounds.endBed();
+    _beats.clear();
+    _boardCentre = _stageCentre;
     if (_still) {
-      _passKey.currentState?.tearQuietly();
-      widget.sounds.play('tear');
       widget.sounds.play('board');
       _exit.duration = const Duration(milliseconds: 320);
-      _exit.forward().whenComplete(widget.onFinished);
+      _exit.forward();
       return;
     }
+    unawaited(_findMark());
+    _exit.duration = Duration(milliseconds: (_boardTotal * 1000).round());
+    _exit.forward();
+  }
+
+  Future<void> _findMark() async {
+    // Typed here: a Future<Rect> handed in as a Future<Rect?> would refuse a
+    // null from its timeout.
+    Future<Rect?> find() async => widget.findMark?.call();
+    Rect? mark;
+    try {
+      mark = await find()
+          .timeout(const Duration(milliseconds: 900), onTimeout: () => null);
+    } catch (_) {}
+    if (!mounted) return;
     final overlay = _box(_overlayKey);
     if (mark != null && overlay != null) {
       final topLeft = overlay.globalToLocal(mark.topLeft);
@@ -632,92 +573,45 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
           width: mark.width * 712 / 757,
           height: mark.height * 712 / 757);
     }
-    final lift = _liftPose();
-    final centre = _stageCentre;
-    final notches = _notches();
-    _board = zip && notches != null
-        ? const _BoardTimes.zip()
-        : const _BoardTimes.straight();
-    if (lift != null && centre != null) {
-      if (_board.zips) {
-        _notchFrom = notches!.$1;
-        _notchTo = notches.$2;
-        // Up and across under the pass, in at the left notch, levelling off
-        // onto the perforation.
-        _boardSwoop = Swoop(
-            from: lift.at,
-            fromHeading: lift.heading,
-            fromHeight: liftArrowHeight,
-            to: _notchFrom!,
-            toHeading: 0,
-            toHeight: 28,
-            speed: 1.5,
-            launch: const Offset(-0.45, -1),
-            approach: const Offset(1, -1));
-        // From the right notch, a short climb round into the middle.
-        _riseSwoop = Swoop(
-            from: _notchTo!,
-            fromHeading: 0,
-            fromHeight: 28,
-            to: centre,
-            toHeight: stageArrowHeight,
-            speed: 1.2,
-            launch: const Offset(0.35, -1),
-            approach: const Offset(-0.6, -1));
-      } else {
-        _riseSwoop = Swoop.intoStage(
-            from: lift.at,
-            fromHeading: lift.heading,
-            fromHeight: liftArrowHeight,
-            to: centre,
-            speed: 1.5);
-      }
+    _markKnown = true;
+    if (_waitingForMark) {
+      _waitingForMark = false;
+      _exit.forward();
     }
-    _beats.clear();
-    setState(() => _holding = false);
-    widget.sounds.play('swoop');
-    _exit.duration = Duration(milliseconds: (_board.total * 1000).round());
-    _exit.forward().whenComplete(widget.onFinished);
   }
 
   void _exitTick() {
     if (_still) {
-      if (_exit.value >= 0 && _beats.add('boarded')) widget.onBoarded?.call();
+      if (_beats.add('boarded')) widget.onBoarded?.call();
+      if (_exit.value >= 1 && _beats.add('finished')) widget.onFinished();
       return;
     }
-    final s = _exit.value * _board.total;
-    final pass = _passKey.currentState;
-    if (_board.zips) {
-      if (s >= _board.toNotch && _beats.add('cut')) {
-        widget.sounds.play('tear');
-      }
-      if (s >= _board.toNotch && s < _board.zipEnd) {
-        // The stub comes away behind the arrow (and is felt doing so).
-        final p = (s - _board.toNotch) / (_board.zipEnd - _board.toNotch);
-        pass?.peel(Curves.easeInOut.transform(p));
-      }
-      if (s >= _board.zipEnd && _beats.add('drop')) {
-        pass?.tearQuietly();
-        widget.feel('release');
-      }
-    }
-    if (s >= _board.dock && _beats.add('dock')) {
+    final s = _exit.value * _boardTotal;
+    if (s >= _boardDock && _beats.add('dock')) {
+      // What is left of the pass is the arrow.
       widget.feel('detent');
       widget.sounds.play('dock');
     }
-    if (s >= _board.shineEnd && _beats.add('board')) {
+    if (s >= _boardShineEnd && !_markKnown) {
+      // It shines on until the page says where its arrow is.
+      _waitingForMark = true;
+      _exit.stop();
+      return;
+    }
+    if (s >= _boardShineEnd && _beats.add('board')) {
       widget.sounds.play('board');
     }
     // The arrow is on the sign-in's: the page may show itself.
-    if (s >= _board.markEnd - 0.1 && _beats.add('boarded')) {
+    if (s >= _boardMarkEnd - 0.1 && _beats.add('boarded')) {
       widget.feel('land');
       widget.onBoarded?.call();
     }
+    if (_exit.value >= 1 && _beats.add('finished')) widget.onFinished();
   }
 
   /// Android's back: one step back, out of the app from the welcome.
   void back() {
-    if (_leaving || _busy) return;
+    if (_leaving || _busy || _previous != null) return;
     if (!_introDone) {
       _skipIntro();
       return;
@@ -729,33 +623,72 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     _goTo(_index - 1);
   }
 
-  void _toggleSound() {
-    widget.feel('press');
-    setState(() => widget.sounds.muted = !widget.sounds.muted);
+  Widget _scene(BoardingStep step) {
+    final copy = copyFor(step);
+    final armed = _armed && step == _step;
+    return switch (step) {
+      BoardingStep.welcome => _contentShown
+          ? WelcomeScene(
+              still: _still,
+              feel: _feel,
+              armed: armed,
+              hint: copy.hint,
+              label: copy.action,
+              onAct: _act,
+              onFlip: () => widget.sounds.play('flap'))
+          : const SizedBox.shrink(),
+      BoardingStep.notifications => NotificationsScene(
+          still: _still,
+          feel: _feel,
+          outcome: _outcomeOf(step),
+          armed: armed,
+          label: copy.action,
+          hint: copy.hint,
+          onAct: _act),
+      BoardingStep.camera => ScanScene(
+          still: _still,
+          feel: _feel,
+          outcome: _outcomeOf(step),
+          armed: armed,
+          label: copy.action,
+          hint: copy.hint,
+          onAct: _act),
+      BoardingStep.microphone => VoiceScene(
+          still: _still,
+          feel: _feel,
+          outcome: _outcomeOf(step),
+          armed: armed,
+          label: copy.action,
+          hint: copy.hint,
+          onAct: _act),
+      BoardingStep.location => LocationScene(
+          still: _still,
+          feel: _feel,
+          outcome: _outcomeOf(step),
+          away: _away,
+          armed: armed,
+          label: copy.action,
+          hint: copy.hint,
+          onAct: _act),
+      BoardingStep.tracking => TrackingScene(
+          still: _still,
+          feel: _feel,
+          outcome: _outcomeOf(step),
+          armed: armed,
+          label: copy.action,
+          hint: copy.hint,
+          onAct: _act),
+      BoardingStep.boarding => BoardingPassScene(
+          still: _still,
+          feel: _feel,
+          armed: armed,
+          label: copy.action,
+          hint: copy.hint,
+          onTear: () => widget.sounds.play('tear'),
+          onTorn: _boardNow,
+        ),
+    };
   }
-
-  Widget _scene(BoardingStep step) => switch (step) {
-        BoardingStep.welcome => _contentShown
-            ? DeparturesScene(
-                still: _still,
-                feel: widget.feel,
-                onFlip: () => widget.sounds.play('flap'))
-            : const SizedBox.shrink(),
-        BoardingStep.notifications => NotificationsScene(
-            still: _still, feel: widget.feel, outcome: _outcome),
-        BoardingStep.camera => ScanScene(still: _still, feel: widget.feel),
-        BoardingStep.microphone => VoiceScene(still: _still, feel: widget.feel),
-        BoardingStep.location =>
-          LocationScene(still: _still, feel: widget.feel),
-        BoardingStep.tracking => TrackingScene(still: _still),
-        BoardingStep.boarding => BoardingPassScene(
-            key: _passKey,
-            still: _still,
-            feel: widget.feel,
-            onTear: () => widget.sounds.play('tear'),
-            onTorn: () => _boardNow(zip: false),
-          ),
-      };
 
   @override
   Widget build(BuildContext context) {
@@ -771,10 +704,11 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
             // and the same night, with the same arrow, is the sign-in.
             final fade = _still
                 ? _exit.value
-                : ((_exit.value * _board.total - _board.markEnd) /
-                        (_board.total - _board.markEnd))
+                : ((_exit.value * _boardTotal - _boardMarkEnd) /
+                        (_boardTotal - _boardMarkEnd))
                     .clamp(0.0, 1.0);
-            if (fade <= 0) return child!;
+            // Always the same tree, so nothing under it is rebuilt as the
+            // fade starts.
             return Opacity(
                 opacity: 1 - Curves.easeInOut.transform(fade), child: child);
           },
@@ -797,7 +731,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
               child: IgnorePointer(
                 child: AnimatedBuilder(
                   key: _overlayKey,
-                  animation: Listenable.merge([_flight, _exit, _clock]),
+                  animation: Listenable.merge([_flight, _exit]),
                   builder: (context, _) => CustomPaint(
                     painter: _PilotPainter(_pilot()),
                   ),
@@ -819,69 +753,41 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     );
   }
 
-  /// What the overlay draws this frame: the arrow hovering, swooping, cutting
-  /// along the pass or flying to the sign-in.
+  /// What the overlay draws this frame: the arrow swooping into the picture,
+  /// or, boarding, shining and flying to the sign-in.
   _Pilot? _pilot() {
     if (_still) return null;
-    if (_holding) {
-      final pose = _liftPose();
-      return pose == null ? null : _Pilot(pose);
-    }
     if (_leaving && _exit.value > 0) return _boardingPilot();
     final swoop = _swoop;
     if (swoop != null && _flight.isAnimating) {
-      final s = _flight.value * _flightSeconds;
-      if (s >= _swoopSeconds) return null;
-      final t = s / _swoopSeconds;
-      final (pose, bank) = swoop.at(t, glowFrom: 0.9);
+      final s = _flight.value * _times.total;
+      if (s >= _times.swoop) return null;
+      final t = s / _times.swoop;
+      final (pose, bank) = swoop.at(t, glowFrom: 0.8);
       return _Pilot(pose,
           bank: bank,
           trail: swoop.trail(t),
-          trailStrength: 1 - _smooth((t - 0.7) / 0.3));
+          trailStrength: _smooth(t / 0.15) * (1 - _smooth((t - 0.7) / 0.3)));
     }
     return null;
   }
 
   _Pilot? _boardingPilot() {
-    final s = _exit.value * _board.total;
-    final b = _board;
-    if (b.zips && s < b.toNotch && _boardSwoop != null) {
-      final t = s / b.toNotch;
-      final (pose, bank) = _boardSwoop!.at(t, glowFrom: 0.9, glowTo: 0.9);
-      return _Pilot(pose,
-          bank: bank,
-          trail: _boardSwoop!.trail(t),
-          trailStrength: 1 - _smooth((t - 0.75) / 0.25));
-    }
-    if (b.zips && s < b.zipEnd && _notchFrom != null && _notchTo != null) {
-      final p = Curves.easeInOut.transform((s - b.toNotch) / (b.zipEnd - b.toNotch));
-      final at = Offset.lerp(_notchFrom, _notchTo, p)!;
-      return _Pilot(ArrowPose(at, 0, 28, glow: 1), cut: (_notchFrom!, at));
-    }
-    if (s < b.dock && _riseSwoop != null) {
-      final from = b.zips ? b.zipEnd : 0.0;
-      final t = ((s - from) / (b.dock - from)).clamp(0.0, 1.0);
-      final (pose, bank) = _riseSwoop!.at(t, glowFrom: 0.9);
-      return _Pilot(pose,
-          bank: bank,
-          trail: _riseSwoop!.trail(t),
-          trailStrength: 1 - _smooth((t - 0.7) / 0.3),
-          cut: b.zips && _notchFrom != null && _notchTo != null
-              ? (_notchFrom!, _notchTo!)
-              : null,
-          cutFade: 1 - _smooth(t / 0.5));
-    }
-    final centre = _riseSwoop?.to ?? _stageCentre;
+    final s = _exit.value * _boardTotal;
+    // Until then, the stage folds the pass into the arrow.
+    if (s < _boardDock) return null;
+    final centre = _boardCentre;
     if (centre == null) return null;
-    if (s < b.shineEnd) {
-      final shine = (s - b.dock) / (b.shineEnd - b.dock);
-      return _Pilot(
-          ArrowPose(centre, restHeading, stageArrowHeight, glow: 0.8),
+    if (s < _boardShineEnd || !_markKnown) {
+      final shine =
+          ((s - _boardDock) / (_boardShineEnd - _boardDock)).clamp(0.0, 0.999);
+      return _Pilot(ArrowPose(centre, restHeading, stageArrowHeight, glow: 0.8),
           shine: shine);
     }
     final mark = _mark;
-    final go = Curves.easeInOutCubic
-        .transform(((s - b.shineEnd) / (b.markEnd - b.shineEnd)).clamp(0.0, 1.0));
+    final go = Curves.easeInOutCubic.transform(
+        ((s - _boardShineEnd) / (_boardMarkEnd - _boardShineEnd))
+            .clamp(0.0, 1.0));
     final at = mark == null ? centre : Offset.lerp(centre, mark.center, go)!;
     final height = mark == null
         ? stageArrowHeight
@@ -890,7 +796,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   }
 
   /// The smallest a scene may be. Below it the screen scrolls instead.
-  static const _minScene = 200.0;
+  static const _minScene = 220.0;
 
   /// The words never run wider than this, so they break like a headline.
   static const _measure = 340.0;
@@ -912,15 +818,14 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                   : media.textScaler;
               final measure = math.min(_measure, constraints.maxWidth);
               final copyHeight = _copyHeight(context, measure, scaler);
-              final gap = compact ? 20.0 : 28.0;
-              final fixed =
-                  8 + 36 + 12 + gap + copyHeight + gap + runwayHeight + 12;
+              final gap = compact ? 18.0 : 26.0;
+              final fixed = 8 + 36 + gap + copyHeight + 12;
               final room = constraints.maxHeight - fixed;
 
               final top = SizedBox(
                 height: 36,
-                child: Stack(alignment: Alignment.center, children: [
-                  AnimatedSwitcher(
+                child: Center(
+                  child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 420),
                     child: _step == BoardingStep.welcome
                         ? const FoorsaWordmark(
@@ -930,16 +835,11 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                         : RouteProgress(
                             key: const ValueKey('route'), progress: _route),
                   ),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: _SoundToggle(
-                        muted: widget.sounds.muted, onTap: _toggleSound),
-                  ),
-                ]),
+                ),
               );
 
               // The scenes are illustrations at a fixed size: the words
-              // under them follow the phone's text size.
+              // above them follow the phone's text size.
               final scene = MediaQuery.withNoTextScaling(
                 child: LayoutBuilder(builder: (context, box) {
                   final light = math.max(box.maxWidth, box.maxHeight) * 0.62;
@@ -959,7 +859,8 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                           child: AnimatedBuilder(
                             animation: Listenable.merge([_shift, _exit]),
                             builder: (context, _) => _leaving
-                                ? _boardingStage(Size(box.maxWidth, box.maxHeight))
+                                ? _boardingStage(
+                                    Size(box.maxWidth, box.maxHeight))
                                 : _stage(Size(box.maxWidth, box.maxHeight),
                                     _shift.value),
                           ),
@@ -976,16 +877,20 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 520),
                     reverseDuration: const Duration(milliseconds: 200),
-                    // Anchored to the runway, so the space above it is the
-                    // same on every step.
+                    // Hung from the top, so the headline is in the same
+                    // place on every step.
                     layoutBuilder: (current, previous) => Stack(
-                      alignment: Alignment.bottomCenter,
+                      alignment: Alignment.topCenter,
                       children: [...previous, if (current != null) current],
                     ),
-                    transitionBuilder: (child, animation) =>
-                        child.key == ValueKey(_step)
-                            ? child
-                            : FadeTransition(opacity: animation, child: child),
+                    // The same widget either way, so the words going out
+                    // keep their state and simply fade; the words coming in
+                    // bring themselves in.
+                    transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: child.key == ValueKey(_step)
+                            ? kAlwaysCompleteAnimation
+                            : animation,
+                        child: child),
                     child: _Copy(
                         key: ValueKey(_step),
                         copy: copy,
@@ -995,35 +900,23 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                 ),
               );
 
-              final action = Runway(
-                key: _runwayKey,
-                label: copy.action,
-                phase: _runway,
-                depart: _depart,
-                arrive: _arrive,
-                press: _press,
-                clock: _clock,
-                done: _done,
-                still: _still,
-                onDown: _pressDown,
-                onUp: _pressUp,
-                onPressed: _plan == null ? null : _continue,
-              );
-
               List<Widget> parts(Widget sceneSlot) => [
                     const SizedBox(height: 8),
                     FadeTransition(opacity: _chromeFade, child: top),
-                    const SizedBox(height: 12),
-                    sceneSlot,
                     SizedBox(height: gap),
                     FadeTransition(opacity: _chromeFade, child: words),
-                    SizedBox(height: gap),
-                    FadeTransition(opacity: _chromeFade, child: action),
+                    sceneSlot,
                     const SizedBox(height: 12),
                   ];
 
               if (room >= _minScene) {
-                return Column(children: parts(Expanded(child: scene)));
+                // On a tall phone the stage leaves some of the extra height
+                // under it, so the object is not far below the words.
+                final stage = room <= 460 ? room : 460 + (room - 460) * 0.4;
+                return Column(children: [
+                  ...parts(SizedBox(height: stage, child: scene)),
+                  const Spacer(),
+                ]);
               }
               // Too short for everything: the scene keeps its size and the
               // screen scrolls.
@@ -1076,12 +969,12 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     return Stack(children: layers);
   }
 
-  /// Boarding on the stage: the pass, then what is left of it folding into
-  /// an arrow of light for the flying arrow to dock in.
+  /// Boarding on the stage: the pass, its stub falling away, then what is
+  /// left of it folding into the arrow.
   Widget _boardingStage(Size stage) {
-    final s = _exit.value * _board.total;
+    final s = _exit.value * _boardTotal;
     final layers = <Widget>[];
-    final fold = ((s - _board.foldFrom) / (_board.dock - _board.foldFrom));
+    final fold = (s - _boardFoldFrom) / (_boardDock - _boardFoldFrom);
     if (!_still && fold > 0 && fold < 1) {
       final pass = formOf(BoardingStep.boarding, stage);
       final outer = pass.shape.outerRect;
@@ -1100,7 +993,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
             to: upper,
             progress: AlwaysStoppedAnimation(fold),
             toArrow: true,
-            ghost: true,
           ),
         ),
       ));
@@ -1115,7 +1007,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     return Stack(children: layers);
   }
 
-  /// One height for the words on every step, so the scene above them never
+  /// One height for the words on every step, so the scene under them never
   /// changes size between steps.
   double _copyHeight(BuildContext context, double width, TextScaler scaler) {
     final base = DefaultTextStyle.of(context).style;
@@ -1126,7 +1018,9 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
         textAlign: TextAlign.center,
         textScaler: scaler,
       )..layout(maxWidth: width);
-      return painter.height;
+      final height = painter.height;
+      painter.dispose();
+      return height;
     }
 
     var tallest = 0.0;
@@ -1141,16 +1035,13 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   }
 }
 
-/// The words, the progress and the runway leave as the student boards, once
-/// the arrow has left the runway.
+/// The words and the progress leave as the student boards.
 class _ChromeFade extends Animatable<double> {
-  _ChromeFade(this.page);
-  final FirstLaunchOnboardingState page;
+  const _ChromeFade();
 
   @override
   double transform(double t) {
-    final total = page._board.total;
-    final s = t * total;
+    final s = t * _boardTotal;
     return 1 - Curves.easeOut.transform((s / 0.32).clamp(0.0, 1.0));
   }
 }
@@ -1161,18 +1052,12 @@ class _Pilot {
       {this.bank = 0,
       this.trail = const [],
       this.trailStrength = 0,
-      this.shine = -1,
-      this.cut,
-      this.cutFade = 1});
+      this.shine = -1});
   final ArrowPose pose;
   final double bank;
   final List<Offset> trail;
   final double trailStrength;
   final double shine;
-
-  /// The perforation, lit where the arrow has cut it.
-  final (Offset, Offset)? cut;
-  final double cutFade;
 }
 
 class _PilotPainter extends CustomPainter {
@@ -1183,21 +1068,6 @@ class _PilotPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final p = pilot;
     if (p == null) return;
-    final cut = p.cut;
-    if (cut != null && p.cutFade > 0) {
-      final (from, to) = cut;
-      canvas.drawLine(
-          from,
-          to,
-          Paint()
-            ..strokeWidth = 2
-            ..strokeCap = StrokeCap.round
-            ..shader = ui.Gradient.linear(from, to, [
-              const Color(0x00EAF4FF),
-              Color.fromRGBO(234, 244, 255, 0.9 * p.cutFade),
-            ])
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.5));
-    }
     if (p.shine >= 0) {
       canvas.save();
       canvas.translate(p.pose.at.dx, p.pose.at.dy);
@@ -1212,50 +1082,6 @@ class _PilotPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_PilotPainter old) => true;
-}
-
-/// The sound, in the corner: on unless the student turns it off.
-class _SoundToggle extends StatelessWidget {
-  const _SoundToggle({required this.muted, required this.onTap});
-  final bool muted;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: muted ? 'Sound off' : 'Sound on',
-      hint: muted ? 'Turns the sound on' : 'Turns the sound off',
-      excludeSemantics: true,
-      child: Pressable(
-        onTap: onTap,
-        scale: 0.92,
-        child: SizedBox.square(
-          // A 44 pt target round a 34 pt glass button.
-          dimension: 44,
-          child: Center(
-            child: SizedBox.square(
-              dimension: 34,
-              child: GlassPane(
-                glass: Glass.tile,
-                circle: true,
-                child: Center(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: Lucide(muted ? LucideIcons.volumeOff : LucideIcons.volume,
-                        key: ValueKey(muted),
-                        size: 16,
-                        color: Boarding.ink.withValues(alpha: 0.9),
-                        strokeWidth: 1.9),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// One step's object on the stage, faded by [opacity].
@@ -1283,7 +1109,7 @@ class _Copy extends StatefulWidget {
   final BoardingCopy copy;
   final bool still;
 
-  /// On a flight the words wait for the picture to unfold.
+  /// The words wait for the picture to change.
   final Duration delay;
 
   static const gap = 12.0;
@@ -1356,7 +1182,12 @@ class _CopyState extends State<_Copy> with SingleTickerProviderStateMixin {
 extension OnboardingProbe on FirstLaunchOnboardingState {
   BoardingStep get currentStep => _step;
   List<BoardingStep> get plannedSteps => _steps;
-  RunwayPhase get runwayPhase => _runway;
+
+  /// Whether the student may act on the object now.
+  bool get armed => _armed;
+
+  /// Where the flying arrow is, in the onboarding's points, while one flies.
+  Offset? get pilotAt => _pilot()?.pose.at;
 
   void debugJumpTo(BoardingStep step) {
     _skipIntro();

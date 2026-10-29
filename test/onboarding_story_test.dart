@@ -6,7 +6,9 @@ import 'package:foorsa_student/src/onboarding/arrow_flight.dart';
 import 'package:foorsa_student/src/onboarding/glass.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_flow.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_page.dart';
-import 'package:foorsa_student/src/onboarding/runway.dart';
+import 'package:foorsa_student/src/onboarding/scene_hint.dart';
+import 'package:foorsa_student/src/onboarding/scene_location.dart';
+import 'package:foorsa_student/src/onboarding/scene_welcome.dart';
 import 'package:foorsa_student/src/onboarding/shape_morph.dart';
 import 'package:foorsa_student/src/onboarding/stage_forms.dart';
 import 'package:foorsa_student/src/onboarding/stage_morph.dart';
@@ -82,33 +84,47 @@ void main() {
     }
   });
 
-  test('the runway\'s arrow leaves the runway where the page flies it from',
-      () {
-    const size = Size(342, runwayHeight);
-    final parked = runwayArrow(size, RunwayPhase.parked, still: true)!;
-    expect(parked.at, runwayGate(size));
-    expect(parked.heading, 0, reason: 'it waits pointing down the runway');
-    final lifted = runwayArrow(size, RunwayPhase.departing, depart: 1)!;
-    expect((lifted.at - runwayLiftOff(size)).distance, lessThan(0.001));
-    expect(lifted.heading, closeTo(restHeading, 1e-9));
-    expect(lifted.height, liftArrowHeight);
-    // It rolls forward the whole way, never back.
-    var x = -1.0;
-    for (var t = 0.0; t <= 1.0; t += 0.05) {
-      final pose = runwayArrow(size, RunwayPhase.departing, depart: t)!;
-      expect(pose.at.dx, greaterThanOrEqualTo(x - 1e-9));
-      x = pose.at.dx;
+  test('a thrown arrow carries on into its flight, and never overshoots', () {
+    // Faster throws carry on faster, up to what the curve takes without
+    // going past the dock and back.
+    expect(throwSpeed(const Offset(0, -300), 150),
+        lessThan(throwSpeed(const Offset(0, -900), 150)));
+    expect(throwSpeed(const Offset(0, -9000), 150), 2.4);
+    expect(throwSpeed(Offset.zero, 150), 0);
+    for (final v0 in [0.0, 1.0, 2.4]) {
+      var last = -1.0;
+      for (var t = 0.0; t <= 1.0001; t += 0.01) {
+        final s = launchCurve(t, v0);
+        expect(s, greaterThanOrEqualTo(last - 1e-9), reason: 'v0 $v0 at $t');
+        expect(s, lessThanOrEqualTo(1 + 1e-9));
+        last = s;
+      }
     }
-    expect(runwayArrow(size, RunwayPhase.away), isNull);
-    final arrived = runwayArrow(size, RunwayPhase.arriving, arrive: 1)!;
-    expect(arrived.at, parked.at);
+  });
+
+  test('the map\'s arrow is on the lens\'s edge, low on the right', () {
+    for (final r in [100.0, 116.0]) {
+      final at = locateOffset(r);
+      expect(at.distance, closeTo(r, 1e-9));
+      expect(at.dx, greaterThan(0));
+      expect(at.dy, greaterThan(0), reason: 'below the middle, near a thumb');
+    }
+  });
+
+  test('an object waits a moment before it shows it can be acted on', () {
+    expect(idleNudge(0), 0);
+    expect(idleNudge(2.3), 0);
+    expect(idleNudge(2.4 + 0.45), closeTo(1, 1e-9));
+    expect(idleNudge(2.4 + 1.5), 0);
+    // And again, every few seconds.
+    expect(idleNudge(2.4 + 4.2 + 0.45), closeTo(1, 1e-9));
   });
 
   test('a swoop ends on the stage\'s arrow, the size and way round it is', () {
     final swoop = Swoop.intoStage(
         from: const Offset(336, 718),
         fromHeading: restHeading,
-        fromHeight: liftArrowHeight,
+        fromHeight: launchArrowHeight,
         to: const Offset(195, 324),
         speed: 1.5);
     final (start, _) = swoop.at(0);
@@ -127,21 +143,54 @@ void main() {
   });
 
   test('the picture folds as the arrow arrives, and unfolds after', () {
-    var last = -1.0;
-    for (var s = 0.0; s <= 1.5; s += 0.01) {
-      final m = flightMorph(s);
-      expect(m, greaterThanOrEqualTo(last));
-      last = m;
+    for (final times in [FlightTimes.lifted, FlightTimes.thrown]) {
+      var last = -1.0;
+      for (var s = 0.0; s <= times.total + 0.1; s += 0.01) {
+        final m = flightMorph(s, times);
+        expect(m, greaterThanOrEqualTo(last));
+        last = m;
+      }
+      expect(flightMorph(0, times), 0);
+      // Docked: the morph is exactly at the arrow when the swoop ends.
+      expect(flightMorph(times.swoop, times), closeTo(arrowAt, 1e-9));
+      expect(flightMorph(times.total, times), 1);
+      expect(times.wordsFrom, greaterThan(times.beatTo));
     }
-    expect(flightMorph(0), 0);
-    // Docked: the morph is exactly at the arrow when the swoop ends.
-    expect(flightMorph(0.6), closeTo(arrowAt, 1e-9));
-    expect(flightMorph(1.5), 1);
+    // Thrown, it is in the picture sooner than one lifted out of a button.
+    expect(FlightTimes.thrown.swoop, lessThan(FlightTimes.lifted.swoop));
+  });
+
+  test('a lifted arrow glides in level, pointing its own way', () {
+    final glide = Swoop(
+        from: const Offset(277, 612),
+        fromHeading: restHeading,
+        fromHeight: 19,
+        to: const Offset(195, 530),
+        toHeight: stageArrowHeight,
+        follow: false,
+        launch: const Offset(0.2, -1),
+        approach: const Offset(-0.5, -1));
+    for (var t = 0.0; t <= 1.0; t += 0.05) {
+      final (pose, bank) = glide.at(t);
+      expect(pose.heading, closeTo(restHeading, 1e-9));
+      expect(bank, 0);
+    }
+    final (end, _) = glide.at(1);
+    expect((end.at - const Offset(195, 530)).distance, lessThan(0.001));
+    expect(end.height, stageArrowHeight);
+  });
+
+  test('the welcome\'s arrow turns to the way it is drawn up', () {
+    expect(launchAim(Offset.zero), restHeading);
+    expect(launchAim(const Offset(0, 20)), restHeading);
+    expect(launchAim(const Offset(0, -90)), closeTo(-math.pi / 2, 1e-9));
+    final half = launchAim(const Offset(0, -45));
+    expect(half, lessThan(restHeading));
+    expect(half, greaterThan(-math.pi / 2));
   });
 
   test('glass grows and shrinks along its outline for a shadow\'s spread', () {
-    final disc = outlineOf(
-        Path()..addOval(const Rect.fromLTWH(0, 0, 100, 100)),
+    final disc = outlineOf(Path()..addOval(const Rect.fromLTWH(0, 0, 100, 100)),
         count: 160);
     for (final (d, r) in [(10.0, 60.0), (-10.0, 40.0)]) {
       for (final p in offsetOutline(disc, d)) {
@@ -158,8 +207,13 @@ void main() {
   });
 
   test('every glass mixes into every other, the paper ones too', () {
-    final all = [Glass.pane, Glass.tile, Glass.pearl, lensGlass,
-      Glass.solid(pagePaper)];
+    final all = [
+      Glass.pane,
+      Glass.tile,
+      Glass.pearl,
+      lensGlass,
+      Glass.solid(pagePaper)
+    ];
     for (final a in all) {
       for (final b in all) {
         final half = Glass.lerp(a, b, 0.5);

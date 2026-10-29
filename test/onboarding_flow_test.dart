@@ -78,23 +78,26 @@ void main() {
   });
 
   test(
-      'a screen before a permission prompt says Continue, never Allow, and has nothing else to press',
+      'a screen before a permission prompt leads on as Continue, never Allow, and offers no way round it',
       () {
     for (final step in BoardingStep.values) {
       final copy = copyFor(step);
-      expect(copy.action.toLowerCase(), isNot(contains('allow')),
-          reason: step.name);
-      expect(
-          copy.action.toLowerCase(),
-          isNot(
-              anyOf(contains('skip'), contains('not now'), contains('later'))));
+      for (final words in [copy.action, copy.hint, copy.body]) {
+        expect(words.toLowerCase(), isNot(contains('allow')),
+            reason: step.name);
+        expect(
+            words.toLowerCase(),
+            isNot(anyOf(
+                contains('skip'), contains('not now'), contains('later'))),
+            reason: step.name);
+      }
       if (step.access != null) {
         expect(copy.action, 'Continue', reason: step.name);
       }
     }
   });
 
-  test('every screen is one headline, one line under it and one button', () {
+  test('every screen is one headline, one line under it and one gesture', () {
     for (final step in BoardingStep.values) {
       final copy = copyFor(step);
       expect(copy.headline.endsWith('.'), isTrue,
@@ -103,6 +106,9 @@ void main() {
       expect(copy.headline.length, lessThanOrEqualTo(36), reason: step.name);
       expect(copy.body.length, lessThanOrEqualTo(72), reason: step.name);
       expect(copy.body.contains('\n'), isFalse, reason: step.name);
+      // The gesture is said in a few words, as a phone says it.
+      expect(copy.hint.length, lessThanOrEqualTo(32), reason: step.name);
+      expect(copy.hint.endsWith('.'), isFalse, reason: step.name);
     }
   });
 

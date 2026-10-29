@@ -2,10 +2,14 @@
 /// words. Pure, so the tests can pin it (test/onboarding_flow_test.dart).
 ///
 /// App Review (guideline 5.1.1(iv), as reviewers apply it): a screen shown
-/// before a permission request must lead to the request. Its one button says
-/// Continue, never Allow, and there is no Not now, Skip or close beside it.
-/// Whatever the student answers in the system prompt, the next step follows;
-/// nothing on the way promises a reward for allowing (ATT forbids that too).
+/// before a permission request must lead to the request. There is no button
+/// to press: the student does the one thing the screen shows (taps the
+/// notification, puts the page in the scanner's frame, taps the mic, taps the
+/// arrow on the map), and that leads to the prompt. Nothing says Allow, and
+/// there is no Not now, Skip or close. For a screen reader the object is a
+/// button named Continue. Whatever the student answers in the system prompt,
+/// the next step follows; nothing on the way promises a reward for allowing
+/// (ATT forbids that too).
 library;
 
 /// Phone access the onboarding can ask for.
@@ -110,19 +114,25 @@ Future<BoardingPlan> planBoarding(
   return BoardingPlan(steps, states);
 }
 
-/// The words of one screen: a headline, one line under it, one button.
+/// The words of one screen: a headline, one line under it, and what to do
+/// with the object.
 class BoardingCopy {
   const BoardingCopy({
     required this.headline,
     required this.body,
     required this.action,
+    required this.hint,
   });
 
   final String headline;
   final String body;
 
-  /// The one button.
+  /// What a screen reader calls the object the student acts on: it is the
+  /// screen's one way on.
   final String action;
+
+  /// The gesture, said quietly under the object.
+  final String hint;
 }
 
 BoardingCopy copyFor(BoardingStep step) => switch (step) {
@@ -130,38 +140,46 @@ BoardingCopy copyFor(BoardingStep step) => switch (step) {
           headline: 'Your journey to China starts here.',
           body: 'Let’s get your phone ready. It takes a minute.',
           action: 'Get started',
+          hint: 'Swipe up to begin',
         ),
       BoardingStep.notifications => const BoardingCopy(
           headline: 'Never miss a moment.',
           body: 'Replies from your adviser and news about your file, '
               'as they happen.',
           action: 'Continue',
+          hint: 'Tap the notification',
         ),
       BoardingStep.camera => const BoardingCopy(
           headline: 'Scan papers in seconds.',
           body: 'Hold a paper up to the camera. The app does the rest.',
           action: 'Continue',
+          hint: 'Drag the page into the frame',
         ),
       BoardingStep.microphone => const BoardingCopy(
           headline: 'Talk to your adviser.',
           body: 'Answer calls and send voice notes, right in the app.',
           action: 'Continue',
+          hint: 'Tap the mic',
         ),
       BoardingStep.location => const BoardingCopy(
           headline: 'Feel at home in China.',
           body: 'Prayer times, the weather and places nearby, '
               'while you use the app.',
           action: 'Continue',
+          hint: 'Tap the arrow to find yourself',
         ),
       BoardingStep.tracking => const BoardingCopy(
           headline: 'Help others find Foorsa.',
           body: 'Let Foorsa see which of its ads brought you here. '
               'Nothing more.',
           action: 'Continue',
+          hint: 'Tap the shield',
         ),
       BoardingStep.boarding => const BoardingCopy(
           headline: 'You’re ready to board.',
-          body: 'Tear off the stub, or tap Board.',
+          body: 'Tear off the stub to sign in.',
           action: 'Board',
+          // Printed on the stub itself.
+          hint: 'Pull to board',
         ),
     };

@@ -125,18 +125,22 @@ final submission.
 
 A first-time downloader boards through a native onboarding before the
 sign-in, told with one object: the launch screen is Foorsa's arrow alone, in
-pearl glass, and it becomes the journey's airliner. After that the arrow is
-the button: parked at the gate of a glass runway, it taxis, lifts off and
-swoops into each picture, which folds into it and unfolds as the next. One
-screen asks for each phone access (notifications, camera, microphone,
-location), each a single object in the portal's glass, a headline and the
-runway; sounds you can hear (a soft music bed, a glass note per step) with a
-speaker to turn them off; the first real notification when they are turned
-on. At the end the arrow cuts the boarding pass's stub off and lands on the
-sign-in's own arrow while the portal fades in on the same night. Updates skip
-it. Each screen's one control says Continue and always leads to the system
-prompt (App Review 5.1.1(iv)); tracking is built but off, because the app
-does not track. See `docs/first-launch-onboarding.md`.
+pearl glass, and it becomes the journey's airliner. There are no buttons: on
+each screen the student acts on the object itself, wherever it stands. They
+throw the arrow up into the departures board, tap the notification, drag the
+passport page into the scanner's frame, tap the mic, tap the map's locate
+arrow (Foorsa's own), and tear the boarding pass's stub off, each with a quiet
+line under it saying what to do. Between screens the object folds into the
+arrow and unfolds as the next. One screen asks for each phone access
+(notifications, camera, microphone, location), each a single object in the
+portal's glass; sounds you can hear (a soft music bed, a glass note per step),
+set by the phone's volume buttons; the first real notification when they are
+turned on. At the end what is left of the pass folds into the arrow, which
+lands on the sign-in's own arrow while the portal fades in on the same
+night. Updates skip it. Acting on an object always leads straight to the
+system prompt, nothing on screen says Allow, and for a screen reader each
+object is a button named Continue (App Review 5.1.1(iv)); tracking is built
+but off, because the app does not track. See `docs/first-launch-onboarding.md`.
 
 ## What the portal tells the app
 

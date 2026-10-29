@@ -7,8 +7,8 @@
 /// stream, which most phones keep near zero, and students heard nothing. So
 /// they play as media: on an iPhone the playback session, mixed with whatever
 /// else is playing (never stopping the student's music), and on Android the
-/// media stream. The speaker in the onboarding's corner turns them off, and
-/// nothing plays while the app is in the background.
+/// media stream, so the phone's volume buttons set how loud they are. Nothing
+/// plays while the app is in the background.
 library;
 
 import 'dart:async';
@@ -29,7 +29,7 @@ abstract class BoardingSounds {
   /// Boarding: the music fades as the onboarding does.
   void endBed() {}
 
-  /// The student turned the sound off (the speaker in the corner).
+  /// The sound is off.
   bool get muted => false;
   set muted(bool value) {}
 }
@@ -46,10 +46,9 @@ class SilentSounds extends BoardingSounds {
 const onboardingCues = <String>[
   'intro',
   'tap',
-  'takeoff',
+  'shutter',
   'swoop',
   'dock',
-  'park',
   'granted',
   'flap',
   'tear',
@@ -63,7 +62,7 @@ const onboardingCues = <String>[
 ];
 
 /// The short ones, where Android starts a sound soonest.
-const _quick = {'tap', 'park', 'flap'};
+const _quick = {'tap', 'shutter', 'flap'};
 
 /// The longest cue, so the last one is never cut off when the onboarding
 /// lets go of its players.
@@ -119,8 +118,9 @@ class OnboardingSounds extends BoardingSounds with WidgetsBindingObserver {
       for (final cue in onboardingCues) {
         if (_released) break;
         final player = AudioPlayer(playerId: 'onboarding-$cue');
-        await player.setPlayerMode(
-            _quick.contains(cue) ? PlayerMode.lowLatency : PlayerMode.mediaPlayer);
+        await player.setPlayerMode(_quick.contains(cue)
+            ? PlayerMode.lowLatency
+            : PlayerMode.mediaPlayer);
         await player.setReleaseMode(ReleaseMode.stop);
         await player.setSource(AssetSource('sounds/onboarding/$cue.m4a'));
         _players[cue] = player;

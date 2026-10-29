@@ -1,21 +1,61 @@
-/// Location: a quiet night map seen through a glass lens, the phone's blue
-/// dot in the middle with its heading, and the one thing it gives a student
-/// in a new city: the next prayer.
+/// Location: a quiet night map seen through a glass lens, and on the lens's
+/// edge the map's locate button, which is Foorsa's arrow: the same shape as
+/// the phone's own location arrow. Tapping it is how the student turns
+/// location on. Then the phone's blue dot drops onto the map with its
+/// heading, and the one thing it gives a student in a new city: the next
+/// prayer. The arrow then leaves the button for the middle of the map, and
+/// the story goes on from there.
 library;
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import 'arrow_flight.dart';
 import 'boarding_style.dart';
 import 'glass.dart';
+import 'scene_hint.dart';
 import 'stage_forms.dart';
 
+/// The locate button: a disc of the portal's lit glass on the lens's edge.
+const locateSide = 46.0;
+
+/// The arrow in it.
+const locateArrowHeight = 19.0;
+
+/// Where the locate button sits, from the lens's middle: on its edge, low on
+/// the right, where a thumb is.
+Offset locateOffset(double lensRadius) =>
+    Offset(math.cos(math.pi / 4), math.sin(math.pi / 4)) * lensRadius;
+
 class LocationScene extends StatefulWidget {
-  const LocationScene({super.key, required this.still, required this.feel});
+  const LocationScene({
+    super.key,
+    required this.still,
+    required this.feel,
+    required this.armed,
+    required this.label,
+    required this.hint,
+    required this.onAct,
+    required this.outcome,
+    required this.away,
+  });
   final bool still;
   final Feel feel;
+  final bool armed;
+  final String label;
+  final String hint;
+
+  /// Tapped: the arrow, where it is on the screen, for the flight on.
+  final SceneAct onAct;
+
+  /// null until the student answers; then whether location is on.
+  final ValueListenable<bool?> outcome;
+
+  /// The arrow has left the button (the page flies it on).
+  final ValueListenable<bool> away;
 
   @override
   State<LocationScene> createState() => _LocationSceneState();
@@ -23,43 +63,210 @@ class LocationScene extends StatefulWidget {
 
 class _LocationSceneState extends State<LocationScene>
     with SingleTickerProviderStateMixin, SceneClock<LocationScene> {
+  final GlobalKey _button = GlobalKey();
+  double _idleFrom = 0;
+
+  /// When the button was tapped, the map was tapped (the button answers,
+  /// to show it is the one), and the dot was found.
+  double _pressedAt = -1;
+  double _pokedAt = -1;
+  double _foundAt = -1;
+
   @override
   void initState() {
     super.initState();
+    widget.outcome.addListener(_answered);
     startClock(still: widget.still);
+    if (widget.outcome.value == true) _foundAt = 0;
+  }
+
+  @override
+  void didUpdateWidget(LocationScene old) {
+    super.didUpdateWidget(old);
+    if (old.outcome != widget.outcome) {
+      old.outcome.removeListener(_answered);
+      widget.outcome.addListener(_answered);
+    }
+    if (widget.armed && !old.armed) _idleFrom = clock.value;
+  }
+
+  @override
+  void dispose() {
+    widget.outcome.removeListener(_answered);
+    super.dispose();
+  }
+
+  void _answered() {
+    if (widget.outcome.value != true || !mounted) return;
+    setState(() => _foundAt = clock.value);
+  }
+
+  void _locate() {
+    if (!widget.armed || _pressedAt >= 0) return;
+    final box = _button.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    setState(() => _pressedAt = clock.value);
+    final at = box.localToGlobal(box.size.center(Offset.zero));
+    widget.onAct(
+        arrow: ArrowPose(at, restHeading, locateArrowHeight, glow: 0.9));
+  }
+
+  void _poke() {
+    if (!widget.armed || _pressedAt >= 0) return;
+    widget.feel('detent');
+    setState(() => _pokedAt = clock.value);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      label: 'Your location on a map, with the next prayer time',
-      excludeSemantics: true,
-      child: Center(
-        child: SizedBox(
-          width: lensBox,
-          height: lensBox,
-          child: Stack(alignment: Alignment.center, children: [
-            Positioned.fill(
-              child:
-                  CustomPaint(painter: _MapPainter(clock, still: widget.still)),
+    return LayoutBuilder(builder: (context, box) {
+      final stage = box.biggest;
+      final r = lensRadius(stage);
+      final middle = stage.center(Offset.zero);
+      final button = middle + locateOffset(r);
+      return Stack(clipBehavior: Clip.none, children: [
+        Positioned.fill(
+          child: ExcludeSemantics(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _poke,
+              child: CustomPaint(
+                painter: _MapPainter(clock,
+                    still: widget.still, radius: r, found: _foundAt),
+              ),
             ),
-            // The label floats above the dot once the map is there.
-            ValueListenableBuilder<double>(
+          ),
+        ),
+        // The prayer floats in above the dot once the phone knows where it
+        // is.
+        Positioned(
+          left: 0,
+          right: 0,
+          top: middle.dy - 64,
+          child: Center(
+            child: ValueListenableBuilder<double>(
               valueListenable: clock,
               builder: (context, t, child) {
-                final v = widget.still ? 1.0 : easeOut(t, 0.5, 1.2);
+                final v = _foundAt < 0
+                    ? 0.0
+                    : widget.still
+                        ? 1.0
+                        : easeOut(t - _foundAt, 0.3, 0.95);
+                if (v <= 0) return const SizedBox.shrink();
                 return Transform.translate(
-                  offset: Offset(0, -50 + 8 * (1 - v)),
+                  offset: Offset(0, 8 * (1 - v)),
                   child: Opacity(opacity: v, child: child),
                 );
               },
               child: const _PrayerLabel(),
             ),
-          ]),
+          ),
         ),
-      ),
-    );
+        Positioned(
+          left: button.dx - 32,
+          top: button.dy - 32,
+          width: 64,
+          height: 64,
+          child: Semantics(
+            button: true,
+            enabled: widget.armed,
+            label: widget.label,
+            excludeSemantics: true,
+            onTap: widget.armed ? _locate : null,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: widget.armed ? (_) => widget.feel('press') : null,
+              onTap: _locate,
+              child: Center(
+                child: SizedBox.square(
+                  key: _button,
+                  dimension: locateSide,
+                  child: GlassPane(
+                    glass: Glass.tile,
+                    circle: true,
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: widget.away,
+                      builder: (context, away, _) => away
+                          ? const SizedBox.expand()
+                          : CustomPaint(
+                              painter: _LocateArrowPainter(clock,
+                                  still: widget.still,
+                                  idleFrom: () => widget.armed ? _idleFrom : -1,
+                                  pressedAt: _pressedAt,
+                                  pokedAt: _pokedAt),
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          top: middle.dy + r + 26,
+          child: GestureHint(widget.hint,
+              still: widget.still, shown: widget.armed && _pressedAt < 0),
+        ),
+      ]);
+    });
   }
+}
+
+/// The arrow in the locate button: it hops along its own way now and then
+/// while it waits, answers when the map is tapped, and lights once pressed.
+class _LocateArrowPainter extends CustomPainter {
+  _LocateArrowPainter(this.clock,
+      {required this.still,
+      required this.idleFrom,
+      required this.pressedAt,
+      required this.pokedAt})
+      : super(repaint: clock);
+  final ValueNotifier<double> clock;
+  final bool still;
+  final double Function() idleFrom;
+  final double pressedAt;
+  final double pokedAt;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = clock.value;
+    final from = idleFrom();
+    final hop = still || from < 0 || pressedAt >= 0
+        ? 0.0
+        : idleNudge(t - from, after: 1.4, length: 0.7);
+    final poke = pokedAt < 0 || still
+        ? 0.0
+        : math.sin(math.pi * ((t - pokedAt) / 0.5).clamp(0.0, 1.0));
+    final lift = math.max(hop, poke);
+    final lit =
+        pressedAt < 0 ? 0.0 : (still ? 1.0 : ease(t - pressedAt, 0, 0.25));
+    // Pressed, it lights the phone's blue, as the phone's own button does.
+    if (lit > 0) {
+      final middle = size.center(Offset.zero);
+      canvas.drawCircle(
+          middle,
+          size.width / 2,
+          Paint()
+            ..shader = ui.Gradient.radial(middle, size.width / 2, [
+              Boarding.here.withValues(alpha: 0.42 * lit),
+              Boarding.here.withValues(alpha: 0.16 * lit),
+            ]));
+    }
+    const way = Offset(0.7071, -0.7071);
+    paintArrowAt(
+        canvas,
+        ArrowPose(size.center(Offset.zero) + way * (2.6 * lift), restHeading,
+            locateArrowHeight,
+            glow: 0.25 + 0.4 * lift + 0.65 * lit));
+  }
+
+  @override
+  bool shouldRepaint(_LocateArrowPainter old) =>
+      old.still != still ||
+      old.pressedAt != pressedAt ||
+      old.pokedAt != pokedAt;
 }
 
 class _PrayerLabel extends StatelessWidget {
@@ -73,19 +280,19 @@ class _PrayerLabel extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
         child: Text.rich(
-        TextSpan(children: [
-          TextSpan(
-              text: 'Asr  ',
-              style: TextStyle(
-                  color: Boarding.muted.withValues(alpha: 0.95),
-                  fontWeight: FontWeight.w500)),
-          const TextSpan(
-              text: '15:42',
-              style: TextStyle(
-                  color: Boarding.heading,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: [FontFeature.tabularFigures()])),
-        ]),
+          TextSpan(children: [
+            TextSpan(
+                text: 'Asr  ',
+                style: TextStyle(
+                    color: Boarding.muted.withValues(alpha: 0.95),
+                    fontWeight: FontWeight.w500)),
+            const TextSpan(
+                text: '15:42',
+                style: TextStyle(
+                    color: Boarding.heading,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()])),
+          ]),
           style:
               const TextStyle(fontSize: 13.5, height: 1.2, letterSpacing: -0.1),
         ),
@@ -105,9 +312,17 @@ final Glass _lensFrame = Glass(
 );
 
 class _MapPainter extends CustomPainter {
-  _MapPainter(this.clock, {required this.still}) : super(repaint: clock);
+  _MapPainter(this.clock,
+      {required this.still, required this.radius, required this.found})
+      : super(repaint: clock);
   final ValueNotifier<double> clock;
   final bool still;
+
+  /// The lens's radius (stage_forms.dart's lensRadius).
+  final double radius;
+
+  /// When the phone found where it is; below 0 while it does not know.
+  final double found;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -115,8 +330,8 @@ class _MapPainter extends CustomPainter {
     final centre = size.center(Offset.zero);
     final appear = still ? 1.0 : easeOut(t, 0, 0.9);
 
-    // The map, through the lens (stage_forms.dart's lensRadius).
-    final r = size.width * 0.4;
+    // The map, through the lens.
+    final r = radius;
     final circle = Rect.fromCircle(center: centre, radius: r);
     canvas.save();
     canvas.clipPath(Path()..addOval(circle));
@@ -142,25 +357,47 @@ class _MapPainter extends CustomPainter {
         ]),
     );
     canvas.restore();
-    final lens = GlassShape.rrect(
-        RRect.fromRectAndRadius(circle, Radius.circular(r)));
+    final lens =
+        GlassShape.rrect(RRect.fromRectAndRadius(circle, Radius.circular(r)));
     paintGlassBody(canvas, lens, _lensFrame, opacity: appear);
 
+    if (found >= 0) _here(canvas, centre, t, still ? 99 : clock.value - found);
+    paintGlassRim(canvas, lens, _lensFrame, opacity: appear);
+  }
+
+  /// The phone's blue dot, [since] seconds after it was found: it drops onto
+  /// the map with a ring going out from it, then breathes, its heading lit.
+  void _here(Canvas canvas, Offset centre, double t, double since) {
+    final drop = Curves.easeOutBack.transform(ease(since, 0, 0.42));
+    final appear = ease(since, 0, 0.22);
+    if (appear <= 0) return;
+    // Found: one ring goes out over the map.
+    if (since < 1.1) {
+      final k = (since / 1.1).clamp(0.0, 1.0);
+      canvas.drawCircle(
+          centre,
+          12 + 70 * Curves.easeOut.transform(k),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.6
+            ..color = Boarding.here.withValues(alpha: 0.55 * (1 - k)));
+    }
+    final cone = ease(since, 0.35, 0.9);
     // Where the phone is pointing.
     final heading =
         -math.pi / 2 + 0.75 + (still ? 0 : 0.12 * math.sin(t * 0.8));
     const reach = 64.0, spread = 0.5;
-    final cone = Path()
+    final beam = Path()
       ..moveTo(centre.dx, centre.dy)
       ..arcTo(Rect.fromCircle(center: centre, radius: reach), heading - spread,
           spread * 2, false)
       ..close();
     canvas.drawPath(
-      cone,
+      beam,
       Paint()
         ..shader = ui.Gradient.radial(centre, reach, [
-          Boarding.here.withValues(alpha: 0.5 * appear),
-          Boarding.here.withValues(alpha: 0.16 * appear),
+          Boarding.here.withValues(alpha: 0.5 * cone),
+          Boarding.here.withValues(alpha: 0.16 * cone),
           Boarding.here.withValues(alpha: 0),
         ], const [
           0.15,
@@ -176,19 +413,23 @@ class _MapPainter extends CustomPainter {
         centre,
         12 + 26 * Curves.easeOut.transform(pulse),
         Paint()
-          ..color =
-              Boarding.here.withValues(alpha: 0.22 * (1 - pulse) * appear));
+          ..color = Boarding.here.withValues(alpha: 0.22 * (1 - pulse) * cone));
+    canvas.save();
+    canvas.translate(centre.dx, centre.dy);
+    // It comes down onto the map: larger and lighter first.
+    final s = 1.9 - 0.9 * drop;
+    canvas.scale(s);
     canvas.drawCircle(
-        centre,
+        Offset.zero,
         11,
         Paint()
           ..color = Color.fromRGBO(0, 0, 0, 0.35 * appear)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
-    canvas.drawCircle(
-        centre, 10.5, Paint()..color = Color.fromRGBO(255, 255, 255, appear));
-    canvas.drawCircle(
-        centre, 7.5, Paint()..color = Boarding.here.withValues(alpha: appear));
-    paintGlassRim(canvas, lens, _lensFrame, opacity: appear);
+    canvas.drawCircle(Offset.zero, 10.5,
+        Paint()..color = Color.fromRGBO(255, 255, 255, appear));
+    canvas.drawCircle(Offset.zero, 7.5,
+        Paint()..color = Boarding.here.withValues(alpha: appear));
+    canvas.restore();
   }
 
   /// A part of a city at night, in a 290 pt square: a river, avenues, a
@@ -247,5 +488,6 @@ class _MapPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_MapPainter old) => old.still != still;
+  bool shouldRepaint(_MapPainter old) =>
+      old.still != still || old.radius != radius || old.found != found;
 }

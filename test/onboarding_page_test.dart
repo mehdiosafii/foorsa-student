@@ -7,7 +7,9 @@ import 'package:foorsa_student/src/onboarding/onboarding_gate.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_page.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_sound.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_store.dart';
-import 'package:foorsa_student/src/onboarding/runway.dart';
+import 'package:foorsa_student/src/onboarding/scene_location.dart';
+import 'package:foorsa_student/src/onboarding/scene_scan.dart';
+import 'package:foorsa_student/src/onboarding/stage_forms.dart';
 
 class _Phone implements BoardingPermissions {
   _Phone({this.answers = const {}, this.start = const {}});
@@ -40,6 +42,13 @@ Widget _phone(Widget child,
       child: MaterialApp(home: child),
     );
 
+/// The same phone with motion on.
+Widget _moving(Widget child) => MediaQuery(
+      data: const MediaQueryData(
+          size: Size(390, 844), padding: EdgeInsets.only(top: 47, bottom: 34)),
+      child: MaterialApp(home: child),
+    );
+
 void _screen(WidgetTester tester, Size size) {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -53,18 +62,23 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
-/// The runway, by the word on it.
-Finder _runway(String label) => find.widgetWithText(Runway, label).last;
+/// The object on the screen that is its control, by what a screen reader
+/// calls it.
+Finder _object(String label) => find
+    .byWidgetPredicate((w) =>
+        w is Semantics &&
+        w.properties.label == label &&
+        w.properties.button == true)
+    .last;
 
-Future<void> _press(WidgetTester tester, String label) async {
-  await tester.tap(_runway(label));
+Future<void> _act(WidgetTester tester, String label) async {
+  await tester.tap(_object(label));
   await _settle(tester);
 }
 
 class _Heard extends BoardingSounds {
   final cues = <String>[];
   var bed = false;
-  var _muted = false;
   @override
   void play(String cue) => cues.add(cue);
   @override
@@ -73,23 +87,21 @@ class _Heard extends BoardingSounds {
   void startBed() => bed = true;
   @override
   void endBed() => bed = false;
-  @override
-  bool get muted => _muted;
-  @override
-  set muted(bool value) => _muted = value;
 }
 
 /// Frames, at the phone's rate, for animations that are not stilled.
 Future<void> _frames(WidgetTester tester, Duration length) async {
-  for (var t = Duration.zero; t < length; t += const Duration(milliseconds: 16)) {
+  for (var t = Duration.zero;
+      t < length;
+      t += const Duration(milliseconds: 16)) {
     await tester.pump(const Duration(milliseconds: 16));
   }
 }
 
 void main() {
   testWidgets(
-      'the onboarding walks a new phone through every access, one Continue each',
-      (tester) async {
+      'the onboarding walks a new phone through every access, one gesture on '
+      'each object', (tester) async {
     final semantics = tester.ensureSemantics();
     _screen(tester, const Size(390, 844));
     final phone =
@@ -107,8 +119,11 @@ void main() {
     await _settle(tester);
 
     expect(find.text('Your journey to China starts here.'), findsOneWidget);
-    expect(find.text('Get started'), findsOneWidget);
-    await _press(tester, 'Get started');
+    // No button: the arrow is thrown, and the screen says so under it.
+    expect(find.text('Swipe up to begin'), findsOneWidget);
+    expect(find.byType(ElevatedButton), findsNothing);
+    expect(find.bySemanticsLabel('Get started'), findsOneWidget);
+    await _act(tester, 'Get started');
 
     final expected = [
       (
@@ -130,20 +145,21 @@ void main() {
     ];
     for (final (step, access, headline) in expected) {
       expect(key.currentState!.currentStep, step);
+      expect(key.currentState!.armed, isTrue);
       expect(find.text(headline), findsOneWidget);
-      // Review: the only way on is Continue, which shows the system prompt.
-      expect(find.text('Continue'), findsOneWidget);
-      for (final exit in ['Not now', 'Skip', 'Later', 'Allow']) {
+      expect(find.text(copyFor(step).hint), findsOneWidget);
+      // Review: the only way on is the object, named Continue, which shows
+      // the system prompt. Nothing on screen says Allow, or offers a way out.
+      expect(find.bySemanticsLabel('Continue'), findsOneWidget);
+      for (final exit in ['Not now', 'Skip', 'Later', 'Allow', 'Continue']) {
         expect(find.text(exit), findsNothing, reason: '$exit on ${step.name}');
       }
       final before = phone.asked.length;
-      await tester.tap(_runway('Continue'));
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(_object('Continue'));
+      await tester.pump(const Duration(milliseconds: 50));
+      // The prompt comes the moment the object is touched.
       expect(phone.asked.length, before + 1);
       expect(phone.asked.last, access);
-      // A yes shows on the runway for a moment; a no simply moves on.
-      expect(find.bySemanticsLabel('Continue, turned on'),
-          access == BoardingAccess.microphone ? findsNothing : findsOneWidget);
       // Granted or not, the next step follows by itself.
       await tester.pump(const Duration(milliseconds: 1200));
       await _settle(tester);
@@ -152,11 +168,11 @@ void main() {
     expect(key.currentState!.currentStep, BoardingStep.boarding);
     expect(find.text('You’re ready to board.'), findsOneWidget);
     expect(find.text('FOORSA STUDENT'), findsOneWidget);
+    expect(find.text('PULL TO BOARD'), findsOneWidget);
     expect(
         find.bySemanticsLabel(RegExp('^Your boarding pass')), findsOneWidget);
 
-    await _press(tester, 'Board');
-    await tester.pump(const Duration(milliseconds: 400));
+    await _act(tester, 'Board');
     expect(finished, isTrue);
     await tester.pumpWidget(const SizedBox());
     semantics.dispose();
@@ -178,13 +194,14 @@ void main() {
       asksToTrack: true,
     )));
     await _settle(tester);
-    await _press(tester, 'Get started');
+    await _act(tester, 'Get started');
     expect(key.currentState!.currentStep, BoardingStep.boarding);
     expect(phone.asked, isEmpty);
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('back goes one step back, and Continue there does not ask twice',
+  testWidgets(
+      'back goes one step back, and the object there does not ask twice',
       (tester) async {
     _screen(tester, const Size(390, 844));
     final phone = _Phone();
@@ -198,8 +215,8 @@ void main() {
       asksToTrack: false,
     )));
     await _settle(tester);
-    await _press(tester, 'Get started');
-    await _press(tester, 'Continue');
+    await _act(tester, 'Get started');
+    await _act(tester, 'Continue');
     await tester.pump(const Duration(milliseconds: 1200));
     await _settle(tester);
     expect(key.currentState!.currentStep, BoardingStep.camera);
@@ -207,7 +224,7 @@ void main() {
     key.currentState!.back();
     await _settle(tester);
     expect(key.currentState!.currentStep, BoardingStep.notifications);
-    await _press(tester, 'Continue');
+    await _act(tester, 'Continue');
     expect(phone.asked, [BoardingAccess.notifications]);
     expect(key.currentState!.currentStep, BoardingStep.camera);
     await tester.pumpWidget(const SizedBox());
@@ -239,6 +256,10 @@ void main() {
         key.currentState!.debugJumpTo(step);
         await _settle(tester);
         expect(tester.takeException(), isNull, reason: '${step.name} on $name');
+        if (step != BoardingStep.boarding) {
+          expect(find.text(copyFor(step).hint), findsOneWidget,
+              reason: step.name);
+        }
       }
       await tester.pumpWidget(const SizedBox());
     });
@@ -257,150 +278,216 @@ void main() {
       sounds: heard,
     )));
     await _settle(tester);
-    await _press(tester, 'Get started');
+    await _act(tester, 'Get started');
     for (var i = 0; i < 4; i++) {
-      await _press(tester, 'Continue');
+      await _act(tester, 'Continue');
       await tester.pump(const Duration(milliseconds: 1200));
       await _settle(tester);
     }
-    await _press(tester, 'Board');
+    await tester.tap(_object('Board'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(heard.cues.where((c) => c.startsWith('step-')),
         ['step-1', 'step-2', 'step-3', 'step-4', 'step-5']);
     // Three yeses (the camera was refused), one chime each.
     expect(heard.cues.where((c) => c == 'granted'), hasLength(3));
+    // The scanner took the page, and every press was heard.
+    expect(heard.cues.where((c) => c == 'shutter'), hasLength(1));
+    expect(heard.cues.where((c) => c == 'tap').length, greaterThanOrEqualTo(5));
     expect(heard.cues.contains('flap'), isTrue);
     expect(heard.cues.sublist(heard.cues.length - 2), ['tear', 'board']);
     await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets(
-      'boarding lands the arrow on the sign-in\'s, then lets the sign-in show',
-      (tester) async {
+      'tearing the stub lands the arrow on the sign-in\'s, then lets the '
+      'sign-in show', (tester) async {
     _screen(tester, const Size(390, 844));
     final key = GlobalKey<FirstLaunchOnboardingState>();
+    final heard = _Heard();
     var asked = 0;
     var boarded = 0;
     var finished = false;
-    await tester.pumpWidget(MediaQuery(
-      data: const MediaQueryData(
-          size: Size(390, 844), padding: EdgeInsets.only(top: 47, bottom: 34)),
-      child: MaterialApp(
-        home: FirstLaunchOnboarding(
-          key: key,
-          permissions: _Phone(start: {
-            for (final a in BoardingAccess.values) a: AccessState.granted
-          }),
-          feel: (_, [__ = 1]) {},
-          onFinished: () => finished = true,
-          isIOS: true,
-          asksToTrack: false,
-          findMark: () async {
-            asked++;
-            return const Rect.fromLTWH(163, 127, 64, 64);
-          },
-          onBoarded: () => boarded++,
-        ),
-      ),
-    ));
+    await tester.pumpWidget(_moving(FirstLaunchOnboarding(
+      key: key,
+      permissions: _Phone(start: {
+        for (final a in BoardingAccess.values) a: AccessState.granted
+      }),
+      feel: (_, [__ = 1]) {},
+      onFinished: () => finished = true,
+      isIOS: true,
+      asksToTrack: false,
+      sounds: heard,
+      findMark: () async {
+        asked++;
+        return const Rect.fromLTWH(163, 127, 64, 64);
+      },
+      onBoarded: () => boarded++,
+    )));
     await tester.pump();
     key.currentState!.debugJumpTo(BoardingStep.boarding);
-    for (var i = 0; i < 90; i++) {
+    await _frames(tester, const Duration(milliseconds: 1500));
+    expect(key.currentState!.armed, isTrue);
+
+    // Pulled down by hand, past the point where the paper gives.
+    final stub = tester.getCenter(_object('Board'));
+    await tester.dragFrom(stub, const Offset(0, 140));
+    for (var i = 0; i < 320 && boarded == 0; i++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
-    await tester.tap(_runway('Board'));
+    // As the sign-in shows, the arrow is on the sign-in's own.
+    expect(boarded, 1);
+    expect((key.currentState!.pilotAt! - const Offset(195, 159)).distance,
+        lessThan(16));
     for (var i = 0; i < 320 && !finished; i++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(asked, 1);
     expect(boarded, 1);
     expect(finished, isTrue);
+    expect(heard.cues.where((c) => c == 'tear'), hasLength(1));
+    expect(heard.cues, containsAllInOrder(['tear', 'dock', 'board']));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets(
-      'the runway\'s arrow carries the student on, and lifts off before the '
-      'phone asks', (tester) async {
+      'the welcome\'s arrow is thrown up into the board, and only a real '
+      'throw sends it', (tester) async {
     _screen(tester, const Size(390, 844));
-    final phone = _Phone();
     final heard = _Heard();
     final key = GlobalKey<FirstLaunchOnboardingState>();
-    await tester.pumpWidget(MediaQuery(
-      data: const MediaQueryData(
-          size: Size(390, 844), padding: EdgeInsets.only(top: 47, bottom: 34)),
-      child: MaterialApp(
-        home: FirstLaunchOnboarding(
-          key: key,
-          permissions: phone,
-          feel: (_, [__ = 1]) {},
-          onFinished: () {},
-          isIOS: false,
-          asksToTrack: false,
-          sounds: heard,
-        ),
-      ),
-    ));
+    await tester.pumpWidget(_moving(FirstLaunchOnboarding(
+      key: key,
+      permissions: _Phone(),
+      feel: (_, [__ = 1]) {},
+      onFinished: () {},
+      isIOS: false,
+      asksToTrack: false,
+      sounds: heard,
+    )));
     await tester.pump();
     key.currentState!.debugJumpTo(BoardingStep.welcome);
-    await _frames(tester, const Duration(milliseconds: 1300));
-    expect(key.currentState!.runwayPhase, RunwayPhase.parked);
+    await _frames(tester, const Duration(milliseconds: 1000));
+    expect(key.currentState!.armed, isTrue);
     expect(heard.bed, isTrue);
 
-    // The arrow rolls down the runway, lifts off and flies into the board.
-    await tester.tap(_runway('Get started'));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(key.currentState!.runwayPhase, RunwayPhase.departing);
-    await _frames(tester, const Duration(milliseconds: 600));
-    expect(key.currentState!.runwayPhase, RunwayPhase.away);
-    expect(key.currentState!.currentStep, BoardingStep.notifications);
-    await _frames(tester, const Duration(milliseconds: 1700));
-    expect(key.currentState!.runwayPhase, RunwayPhase.parked);
-    expect(find.text('Continue'), findsOneWidget);
-
-    // On a step that asks, the phone asks once the arrow is in the air.
-    await tester.tap(_runway('Continue'));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(phone.asked, isEmpty);
-    await _frames(tester, const Duration(milliseconds: 700));
-    expect(phone.asked, [BoardingAccess.notifications]);
-    await tester.pump();
-    expect(find.bySemanticsLabel('Continue, turned on'), findsOneWidget);
-    await _frames(tester, const Duration(milliseconds: 2600));
-    expect(key.currentState!.currentStep, BoardingStep.camera);
-    expect(key.currentState!.runwayPhase, RunwayPhase.parked);
-
-    for (final cue in ['tap', 'takeoff', 'swoop', 'dock', 'step-1', 'park',
-        'granted', 'step-2']) {
-      expect(heard.cues, contains(cue));
+    // A small, slow push up: it springs back and waits.
+    final arrow = tester.getCenter(_object('Get started'));
+    final gesture = await tester.startGesture(arrow);
+    for (var i = 0; i < 10; i++) {
+      await gesture.moveBy(const Offset(0, -3));
+      await tester.pump(const Duration(milliseconds: 40));
     }
+    await tester.pump(const Duration(milliseconds: 400));
+    await gesture.up();
+    await _frames(tester, const Duration(milliseconds: 600));
+    expect(key.currentState!.currentStep, BoardingStep.welcome);
+    expect(heard.cues, isNot(contains('swoop')));
+
+    // Thrown: it flies into the board, which becomes the next picture.
+    await tester.fling(_object('Get started'), const Offset(0, -160), 1400);
+    await tester.pump();
+    expect(key.currentState!.currentStep, BoardingStep.notifications);
+    expect(heard.cues, contains('swoop'));
+    await _frames(tester, const Duration(milliseconds: 1500));
+    expect(key.currentState!.armed, isTrue);
+    expect(heard.cues, containsAllInOrder(['swoop', 'dock', 'step-1']));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('the speaker in the corner turns the sound off and on',
-      (tester) async {
-    final semantics = tester.ensureSemantics();
+  testWidgets(
+      'the passport page put back in the frame is taken, and the phone asks '
+      'for the camera then', (tester) async {
     _screen(tester, const Size(390, 844));
+    final phone = _Phone();
     final heard = _Heard();
-    await tester.pumpWidget(_phone(FirstLaunchOnboarding(
-      permissions: _Phone(),
+    final key = GlobalKey<FirstLaunchOnboardingState>();
+    await tester.pumpWidget(_moving(FirstLaunchOnboarding(
+      key: key,
+      permissions: phone,
       feel: (_, [__ = 1]) {},
       onFinished: () {},
-      isIOS: true,
+      isIOS: false,
       asksToTrack: false,
       sounds: heard,
     )));
-    await _settle(tester);
-    await tester.tap(find.bySemanticsLabel('Sound on'));
-    await _settle(tester);
-    expect(heard.muted, isTrue);
-    expect(find.bySemanticsLabel('Sound off'), findsOneWidget);
-    await tester.tap(find.bySemanticsLabel('Sound off'));
-    await _settle(tester);
-    expect(heard.muted, isFalse);
+    await tester.pump();
+    key.currentState!.debugJumpTo(BoardingStep.camera);
+    await _frames(tester, const Duration(milliseconds: 2400));
+    expect(key.currentState!.armed, isTrue);
+
+    final stage = tester.getRect(find.byType(ScanScene));
+    final width = pageWidth(stage.width);
+    final rest = Offset(width * 0.13, width * 0.704 * 0.27);
+    // Moved about in the hand, away from the frame, and let go: it goes
+    // back to the hand and nothing is asked.
+    final away = await tester.startGesture(stage.center + rest);
+    for (var i = 0; i < 6; i++) {
+      await away.moveBy(const Offset(3, 4));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    await away.up();
+    await _frames(tester, const Duration(milliseconds: 700));
+    expect(phone.asked, isEmpty);
+
+    // Into the frame: the scanner takes it and the phone asks.
+    final gesture = await tester.startGesture(stage.center + rest);
+    for (var i = 0; i < 12; i++) {
+      await gesture.moveBy(-rest / 12);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await _frames(tester, const Duration(milliseconds: 700));
+    expect(phone.asked, [BoardingAccess.camera]);
+    expect(heard.cues, containsAllInOrder(['shutter', 'granted']));
+    await _frames(tester, const Duration(milliseconds: 2200));
+    expect(key.currentState!.currentStep, BoardingStep.microphone);
     await tester.pumpWidget(const SizedBox());
-    semantics.dispose();
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets(
+      'the map\'s arrow finds the student, then flies on into the next '
+      'picture', (tester) async {
+    _screen(tester, const Size(390, 844));
+    final phone = _Phone();
+    final heard = _Heard();
+    final key = GlobalKey<FirstLaunchOnboardingState>();
+    await tester.pumpWidget(_moving(FirstLaunchOnboarding(
+      key: key,
+      permissions: phone,
+      feel: (_, [__ = 1]) {},
+      onFinished: () {},
+      isIOS: false,
+      asksToTrack: false,
+      sounds: heard,
+    )));
+    await tester.pump();
+    key.currentState!.debugJumpTo(BoardingStep.location);
+    await _frames(tester, const Duration(milliseconds: 1500));
+    expect(key.currentState!.armed, isTrue);
+
+    // A tap on the map is not the arrow: nothing is asked.
+    await tester.tapAt(tester.getRect(find.byType(LocationScene)).center);
+    await _frames(tester, const Duration(milliseconds: 300));
+    expect(phone.asked, isEmpty);
+
+    await tester.tap(_object('Continue'));
+    await tester.pump();
+    expect(phone.asked, [BoardingAccess.location]);
+    // The dot drops in while the arrow waits in its button, then it flies.
+    await _frames(tester, const Duration(milliseconds: 600));
+    expect(key.currentState!.currentStep, BoardingStep.location);
+    expect(heard.cues.last, 'granted');
+    await _frames(tester, const Duration(milliseconds: 500));
+    expect(key.currentState!.currentStep, BoardingStep.boarding);
+    expect(heard.cues, containsAllInOrder(['granted', 'swoop']));
+    await _frames(tester, const Duration(milliseconds: 1500));
+    expect(heard.cues, containsAllInOrder(['swoop', 'dock', 'step-5']));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
   });
 
   group('the gate', () {
@@ -445,8 +532,8 @@ void main() {
       expect(find.byType(FirstLaunchOnboarding), findsOneWidget);
       expect(active.last, isTrue);
 
-      await _press(tester, 'Get started');
-      await _press(tester, 'Board');
+      await _act(tester, 'Get started');
+      await _act(tester, 'Board');
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump();
       expect(find.byType(FirstLaunchOnboarding), findsNothing);

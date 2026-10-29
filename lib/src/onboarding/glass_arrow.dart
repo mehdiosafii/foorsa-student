@@ -1,8 +1,8 @@
 /// Foorsa's arrow as a piece of pearl glass, lit from the upper left. It is
 /// the app's first picture (the native splash is rendered from this painter,
-/// scripts/onboarding_splash/render_splash_test.dart), the arrow parked on
-/// the runway, the one that flies between the objects, and the one that
-/// lands on the sign-in.
+/// scripts/onboarding_splash/render_splash_test.dart), the arrow the student
+/// throws into the welcome's board, the map's locate arrow, the one that
+/// flies between the objects, and the one that lands on the sign-in.
 library;
 
 import 'dart:ui' as ui;

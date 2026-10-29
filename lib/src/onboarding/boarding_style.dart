@@ -1,8 +1,8 @@
 /// The onboarding's look. It is the portal's dark theme pared down to what a
-/// first screen needs: one ground, one light behind one object, a headline,
-/// one line under it and one control, the runway (portal.css and
-/// portalMaterials.css in foorsa-reward: the dark ink, the muted text, the
-/// glass; glass.dart has the material).
+/// first screen needs: one ground, one light behind one object, a headline
+/// and one line over it, and the object itself as the control (portal.css
+/// and portalMaterials.css in foorsa-reward: the dark ink, the muted text,
+/// the glass; glass.dart has the material).
 /// The onboarding is always the night the native splash opens on, so these are
 /// the dark values only.
 library;
@@ -11,7 +11,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/physics.dart';
 import 'package:flutter/widgets.dart';
-
 
 /// A touch by the shell's texture names (shell_haptics.dart): `press`,
 /// `detent`, `land`, `grain` (with a level), `release`, `unfold`, `arrive`.

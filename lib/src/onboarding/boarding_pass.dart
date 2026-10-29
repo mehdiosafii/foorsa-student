@@ -1,21 +1,25 @@
 /// The last screen: a boarding pass on the portal's paper (FlightPass,
 /// flightPass.css), the perforation with its two punched notches, and a stub
-/// that tears off under the finger, which is how the student boards. "Board"
-/// tears it for them.
+/// that tears off under the finger, which is how the student boards. A tap on
+/// the stub tears it too. Now and then, while it waits, the stub gives a
+/// little tug at the perforation.
 library;
 
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/physics.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import 'airliner.dart';
 import 'boarding_style.dart';
 import 'brand_marks.dart';
+import 'scene_hint.dart';
 import 'stage_forms.dart';
 
 const _passWidth = passWidth;
+
 /// The perforation's band, its middle at [passTearY].
 const _tearHeight = 20.0;
 const _passHeight = passHeight;
@@ -27,11 +31,23 @@ class BoardingPassScene extends StatefulWidget {
     required this.still,
     required this.feel,
     required this.onTorn,
+    this.armed = true,
+    this.label = 'Board',
+    this.hint = 'Pull to board',
     this.onTear,
   });
 
   final bool still;
   final Feel feel;
+
+  /// The student may tear it (nothing else is moving).
+  final bool armed;
+
+  /// What a screen reader calls the stub.
+  final String label;
+
+  /// Printed on the stub.
+  final String hint;
 
   /// The paper gives: its sound.
   final VoidCallback? onTear;
@@ -52,7 +68,15 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   late final AnimationController _fall = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 900));
   bool _torn = false;
+  bool _ripped = false;
+  Timer? _boarding;
   int _lastNotch = 0;
+
+  /// Seconds since the pass appeared, for the stub's tug.
+  late final Ticker _ticker;
+  final ValueNotifier<double> _clock = ValueNotifier<double>(0);
+  double _idleFrom = 0;
+  bool _touched = false;
 
   static const _tearAt = 110.0;
 
@@ -60,6 +84,15 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   void initState() {
     super.initState();
     _pull.addListener(_pullFeel);
+    _ticker =
+        createTicker((elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
+    if (!widget.still) _ticker.start();
+  }
+
+  @override
+  void didUpdateWidget(BoardingPassScene oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.armed && !oldWidget.armed) _idleFrom = _clock.value;
   }
 
   void _pullFeel() {
@@ -72,49 +105,65 @@ class BoardingPassSceneState extends State<BoardingPassScene>
 
   @override
   void dispose() {
+    _boarding?.cancel();
+    _ticker.dispose();
+    _clock.dispose();
     _pull.dispose();
     _fall.dispose();
     super.dispose();
   }
 
-  /// The arrow is cutting along the perforation, [p] of the way: the stub
-  /// comes away behind it.
-  void peel(double p) {
-    if (_torn) return;
-    _pull.value = p.clamp(0.0, 1.0) * _tearAt;
+  /// The paper starts to give: its sound, once.
+  void _rip() {
+    if (_ripped) return;
+    _ripped = true;
+    widget.onTear?.call();
   }
 
-  /// The stub falls away, cut by the arrow rather than torn by hand.
-  void tearQuietly() {
-    if (_torn) return;
-    setState(() => _torn = true);
-    if (!widget.still) _fall.forward();
+  /// A tap on the stub: it is pulled off for the student, quickly, the paper
+  /// giving all the way.
+  void _tearByTap() {
+    if (_torn || !widget.armed) return;
+    _touched = true;
+    widget.feel('press');
+    _rip();
+    if (widget.still) {
+      _complete();
+      return;
+    }
+    _pull
+        .animateTo(_tearAt,
+            duration: const Duration(milliseconds: 300), curve: Curves.easeIn)
+        .whenComplete(_complete);
   }
 
   void _complete() {
     if (_torn) return;
     setState(() => _torn = true);
     widget.feel('release');
-    widget.onTear?.call();
+    _rip();
     if (widget.still) {
       widget.onTorn();
       return;
     }
     _fall.forward();
-    Timer(const Duration(milliseconds: 260), widget.onTorn);
+    _boarding = Timer(const Duration(milliseconds: 260), widget.onTorn);
   }
 
   void _drag(DragUpdateDetails details) {
-    if (_torn) return;
+    if (_torn || !widget.armed) return;
+    _touched = true;
     _pull.value = math.max(
         0,
         _pull.value +
             details.delta.dy * (_pull.value > _tearAt * 0.7 ? 0.8 : 1));
+    // Past this it will come off whatever the finger does next.
+    if (_pull.value > _tearAt * 0.7) _rip();
     if (_pull.value >= _tearAt) _complete();
   }
 
   void _release(DragEndDetails details) {
-    if (_torn) return;
+    if (_torn || !widget.armed) return;
     final velocity = details.velocity.pixelsPerSecond.dy;
     if (_pull.value > _tearAt * 0.55 || velocity > 750) {
       _complete();
@@ -132,7 +181,7 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   Widget build(BuildContext context) {
     return Semantics(
       container: true,
-      label: 'Your boarding pass. Tear off the stub, or tap Board.',
+      label: 'Your boarding pass, from Casablanca to China.',
       child: LayoutBuilder(builder: (context, constraints) {
         // The pass is drawn at its own size, fitted to the stage and
         // centred, where the transition leaves it.
@@ -147,7 +196,7 @@ class BoardingPassSceneState extends State<BoardingPassScene>
                 width: _passWidth,
                 height: _passHeight,
                 child: AnimatedBuilder(
-                  animation: Listenable.merge([_pull, _fall]),
+                  animation: Listenable.merge([_pull, _fall, _clock]),
                   builder: (context, _) => _pass(),
                 ),
               ),
@@ -159,7 +208,11 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   }
 
   Widget _pass() {
-    final pull = _pull.value.clamp(0.0, _tearAt + 30);
+    // While it waits, the stub tugs at the perforation now and then.
+    final tug = widget.still || _touched || _torn || !widget.armed
+        ? 0.0
+        : 7 * idleNudge(_clock.value - _idleFrom, after: 2.2, length: 0.8);
+    final pull = (_pull.value + tug).clamp(0.0, _tearAt + 30);
     final fall = _fall.value;
     final tearAngle = (pull / _tearAt) * 0.1 + fall * 0.5;
     final stubDrop = pull * 0.32 + fall * fall * 420;
@@ -185,11 +238,19 @@ class BoardingPassSceneState extends State<BoardingPassScene>
             child: Transform.rotate(
               angle: tearAngle,
               alignment: Alignment.topRight,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onVerticalDragUpdate: _drag,
-                onVerticalDragEnd: _release,
-                child: _Piece(top: false, child: _stub()),
+              child: Semantics(
+                button: true,
+                enabled: widget.armed && !_torn,
+                label: widget.label,
+                excludeSemantics: true,
+                onTap: widget.armed && !_torn ? _tearByTap : null,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _tearByTap,
+                  onVerticalDragUpdate: _drag,
+                  onVerticalDragEnd: _release,
+                  child: _Piece(top: false, child: _stub()),
+                ),
               ),
             ),
           ),
@@ -235,7 +296,7 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   }
 
   Widget _stub() {
-    final hint = widget.still ? 0.0 : (1 - _pull.value / 36).clamp(0.0, 1.0);
+    final hint = (1 - _pull.value / 36).clamp(0.0, 1.0);
     return Container(
       color: Boarding.paper,
       child: Column(children: [
@@ -269,7 +330,7 @@ class BoardingPassSceneState extends State<BoardingPassScene>
                 if (hint > 0)
                   Opacity(
                     opacity: hint,
-                    child: Text('PULL TO BOARD',
+                    child: Text(widget.hint.toUpperCase(),
                         style: Boarding.caption(
                             color: Boarding.passInk, size: 8.5, spacing: 1.6)),
                   ),

@@ -26,7 +26,6 @@ class StageForm {
   Path get path => Path()..addRRect(shape);
 }
 
-
 /// The passport page's paper, and the boarding pass's.
 const pagePaper = Color(0xFFF2EFE7);
 const passPaper = Color(0xFFFBFAF6);
@@ -103,8 +102,7 @@ StageForm formOf(BoardingStep step, Size stage) {
       final r = lensRadius(stage);
       return StageForm(box(r * 2, r * 2, r), lensGlass);
     case BoardingStep.tracking:
-      return StageForm(
-          box(shieldSide, shieldSide, shieldSide / 2), Glass.tile);
+      return StageForm(box(shieldSide, shieldSide, shieldSide / 2), Glass.tile);
     case BoardingStep.boarding:
       final s = passScale(stage);
       return StageForm(

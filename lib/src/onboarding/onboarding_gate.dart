@@ -46,7 +46,8 @@ Future<void> showFirstNotification() async {
     await FlutterLocalNotificationsPlugin().show(
       id: 20261029,
       title: 'Foorsa',
-      body: 'Notifications are on. Replies from your adviser will show up here.',
+      body:
+          'Notifications are on. Replies from your adviser will show up here.',
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails('student_updates', 'Foorsa updates',
             importance: Importance.high,

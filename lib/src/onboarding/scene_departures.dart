@@ -103,7 +103,8 @@ class _DeparturesSceneState extends State<DeparturesScene> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () {
-            widget.feel('press');
+            // A flap turning over: a detent, and the flaps' own sound.
+            widget.feel('detent');
             widget.onFlip?.call();
             _next();
             _schedule();

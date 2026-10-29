@@ -1,8 +1,8 @@
-/// The arrow's flight from the runway into the picture: it leaves where it
-/// lifted off, banks round in one swoop, and arrives in the middle of the
-/// stage the size and the way round the stage's own arrow is
-/// (stage_morph.dart), docking into the arrow-shaped light the picture has
-/// folded into. A light trail follows it, as the runway's lights did.
+/// The arrow's flights into the picture: from where the student threw it
+/// (the welcome) or tapped it (the map's arrow), it banks round in one swoop
+/// and arrives in the middle of the stage the size and the way round the
+/// stage's own arrow is (stage_morph.dart), docking into the arrow-shaped
+/// light the picture has folded into. A light trail follows it.
 library;
 
 import 'dart:math' as math;
@@ -10,7 +10,40 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 
-import 'runway.dart';
+import 'glass_arrow.dart';
+
+/// Where the arrow is, in the coordinates of whoever paints it.
+@immutable
+class ArrowPose {
+  const ArrowPose(this.at, this.heading, this.height,
+      {this.opacity = 1, this.glow = 0});
+
+  final Offset at;
+
+  /// The way it points: 0 is right, -π/4 its own up and to the right.
+  final double heading;
+  final double height;
+  final double opacity;
+  final double glow;
+
+  /// The canvas turn that points the arrow (drawn up and to the right) along
+  /// [heading].
+  double get turn => heading + math.pi / 4;
+
+  ArrowPose shift(Offset by) =>
+      ArrowPose(at + by, heading, height, opacity: opacity, glow: glow);
+}
+
+/// Draws the glass arrow at [pose].
+void paintArrowAt(Canvas canvas, ArrowPose pose, {double lift = 1}) {
+  if (pose.opacity <= 0) return;
+  canvas.save();
+  canvas.translate(pose.at.dx, pose.at.dy);
+  canvas.rotate(pose.turn);
+  paintGlassArrow(canvas,
+      height: pose.height, opacity: pose.opacity, glow: pose.glow, lift: lift);
+  canvas.restore();
+}
 
 /// The way the stage's arrow points.
 const restHeading = -math.pi / 4;
@@ -39,6 +72,7 @@ class Swoop {
     required this.toHeight,
     this.toHeading = restHeading,
     this.speed = 0,
+    this.follow = true,
     Offset? launch,
     Offset? approach,
     double launchReach = 0.25,
@@ -51,8 +85,8 @@ class Swoop {
     _p2 = to - into / into.distance * (reach * approachReach);
   }
 
-  /// Up from the runway and round into the stage from below: one arc, and the
-  /// arrow rights itself as it docks.
+  /// Up and round into the stage from below: one arc, and the arrow rights
+  /// itself as it docks.
   factory Swoop.intoStage({
     required Offset from,
     required double fromHeading,
@@ -81,6 +115,11 @@ class Swoop {
   /// How fast it is already going as the swoop starts (see [launchCurve]).
   final double speed;
 
+  /// It points the way it flies, and banks as it turns. Otherwise it glides,
+  /// turning only from [fromHeading] to [toHeading], level: for a short hop
+  /// whose way would turn it round.
+  final bool follow;
+
   late final Offset _p1, _p2;
 
   (Offset, Offset) _bezier(double s) {
@@ -103,9 +142,16 @@ class Swoop {
 
   /// Where it is at [t] (0 to 1 of the swoop's time), and how hard it is
   /// banking (-1 to 1).
-  (ArrowPose, double) at(double t, {double glowFrom = 0.6, double glowTo = 0.8}) {
+  (ArrowPose, double) at(double t,
+      {double glowFrom = 0.6, double glowTo = 0.8}) {
     final s = launchCurve(t, speed);
     final (point, _) = _bezier(s);
+    final height = ui.lerpDouble(fromHeight, toHeight, _smooth(s))!;
+    final glow = ui.lerpDouble(glowFrom, glowTo, s)!;
+    if (!follow) {
+      final heading = _blendAngle(fromHeading, toHeading, _smooth(s));
+      return (ArrowPose(point, heading, height, glow: glow), 0.0);
+    }
     var heading = _headingAt(s);
     // Its heading eases in from the one it left with and out to the one it
     // arrives with, so the ends never snap.
@@ -116,11 +162,7 @@ class Swoop {
     final behind = _headingAt(math.max(0, s - 0.02));
     final turn = _angleBetween(behind, ahead) / 0.04;
     final bank = (turn / 6).clamp(-1.0, 1.0) * math.sin(math.pi * s);
-    return (
-      ArrowPose(point, heading, ui.lerpDouble(fromHeight, toHeight, _smooth(s))!,
-          glow: ui.lerpDouble(glowFrom, glowTo, s)!),
-      bank,
-    );
+    return (ArrowPose(point, heading, height, glow: glow), bank);
   }
 
   /// Points behind it, newest first, for its light trail.
@@ -153,7 +195,9 @@ double _blendAngle(double a, double b, double t) => a + _angleBetween(a, b) * t;
 
 /// Paints the flying arrow, banked, with its trail.
 void paintFlight(Canvas canvas, ArrowPose pose,
-    {double bank = 0, List<Offset> trail = const [], double trailStrength = 1}) {
+    {double bank = 0,
+    List<Offset> trail = const [],
+    double trailStrength = 1}) {
   if (trail.length > 1 && trailStrength > 0) {
     // The trail leaves from the arrow's tail, not its middle.
     final back = Offset(math.cos(pose.heading), math.sin(pose.heading)) *

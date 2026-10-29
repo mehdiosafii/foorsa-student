@@ -19,15 +19,17 @@ The cues, and where the onboarding plays them (onboarding_page.dart):
 
   intro      the arrow catching the light, becoming the plane, its lights,
              its climb; started with the intro, timed to its beats
-  tap        the runway pressed: a glass tick
-  takeoff    the arrow rolling down the runway and lifting off (0.52 s)
-  swoop      its flight up into the picture (0.6 s)
-  dock       the moment it docks in the picture's arrow of light
+  tap        an object pressed: a glass tick
+  shutter    the scanner taking the passport page: its corners closing, a
+             soft double click and a breath of light
+  swoop      the arrow's flight up into the picture (0.6 s), thrown on the
+             welcome or lifted out of the map's locate button
+  dock       the moment it docks in the picture's arrow of light, or what is
+             left of the boarding pass becomes the arrow
   step-1..6  the picture unfolding as the next one, one note higher a step
-  park       the next arrow rolling in to the gate
   granted    two rising notes when an access is turned on
   flap       the departures board turning over
-  tear       the arrow cutting the stub off along the perforation
+  tear       the stub coming off the boarding pass
   board      the arrival chord as the sign-in opens
   bed        forty seconds of night music under the steps, looped by
              crossfading two players (onboarding_sound.dart)
@@ -60,11 +62,10 @@ LIGHTS_ON = 1.95
 CLIMB_STARTS = 2.42
 INTRO_SECONDS = 3.4
 
-# The runway (runway.dart, onboarding_page.dart).
-DEPART = 0.52
-LIFT_OFF = 0.41
+# The flight into the picture, and the stub's tear (onboarding_page.dart,
+# boarding_pass.dart).
 SWOOP = 0.60
-ZIP = 0.46
+RIP = 0.24
 
 rng = np.random.default_rng(2026)
 
@@ -347,40 +348,34 @@ def compose_tap():
     return master(hall(x, 0.4, wet=0.12), -9, squeeze=False)
 
 
-def compose_takeoff():
-    """The roll down the runway, faster and faster, and the lift."""
-    track = silence(DEPART + 1.2)
-    roll = shaped_noise(
-        DEPART + 0.05,
-        lambda t: 700 + 2600 * min(t / DEPART, 1) ** 2,
-        lambda t: 300 + 900 * min(t / DEPART, 1),
-        lambda t: min(t / DEPART, 1) ** 1.6 * (1 if t < DEPART else 0.4))
-    place(track, pan_sweep(roll, -0.45, 0.55), 0.0, 0.5)
-    # A soft whirr, rising with the speed.
-    n = int((DEPART + 0.05) * SR)
-    t = np.arange(n) / SR
-    glide = 340 * (1 + 1.6 * np.clip(t / DEPART, 0, 1) ** 2)
-    whirr = np.sin(2 * np.pi * np.cumsum(glide) / SR) * np.clip(t / DEPART, 0, 1) ** 2
-    whirr *= np.exp(-np.clip(t - DEPART, 0, None) / 0.05)
-    place(track, whirr, 0.0, 0.08, pan=0.2)
-    # The lift: air flicked upwards, and a high glint.
-    lift = shaped_noise(
-        0.45, lambda t: 2400 + 6000 * min(t / 0.3, 1), lambda t: 900 + 1500 * t,
-        lambda t: np.exp(-((t - 0.09) / 0.07) ** 2))
-    place(track, lift, LIFT_OFF - 0.06, 0.55, pan=0.5)
-    place(track, bell('B6', 1.2, bright=0.6), LIFT_OFF + 0.02, 0.22, pan=0.55)
-    return master(hall(track, 1.4, wet=0.22), -3)
+def compose_shutter():
+    """The scanner takes the page: its corners close (a soft glass click, then
+    a second a little higher), and a breath of light over it."""
+    track = silence(0.9)
+    for k, (low, high, at, gain) in enumerate([(1650, 2950, 0.0, 0.85),
+                                               (2230, 3940, 0.072, 0.62)]):
+        n = int(0.06 * SR)
+        t = np.arange(n) / SR
+        tick = (np.sin(2 * np.pi * low * t) + 0.45 * np.sin(2 * np.pi * high * t)) * envelope(
+            n, 0.0003, 0.009)
+        click = highpass(rng.standard_normal(n), 2600) * envelope(n, 0.0002, 0.0012)
+        place(track, tick + 0.32 * click, at, gain, pan=-0.12 + 0.24 * k)
+    light = shaped_noise(0.32, lambda t: 5600, lambda t: 2600,
+                         lambda t: np.exp(-((t - 0.05) / 0.05) ** 2))
+    place(track, light, 0.06, 0.16)
+    place(track, bell('B6', 0.8, soft=0.6, bright=0.4), 0.08, 0.07, pan=0.2)
+    return master(hall(track, 0.7, wet=0.16), -3.5, squeeze=False)
 
 
 def compose_swoop():
-    """Its flight into the picture: air passing, from the right to the middle."""
+    """Its flight into the picture: air passing, settling on the middle."""
     track = silence(SWOOP + 1.0)
     air = shaped_noise(
         SWOOP + 0.2,
         lambda t: 1300 + 2600 * np.sin(np.pi * min(t / SWOOP, 1)) ** 1.2,
         lambda t: 700 + 900 * np.sin(np.pi * min(t / SWOOP, 1)),
         lambda t: np.sin(np.pi * min(t / (SWOOP + 0.1), 1)) ** 1.5)
-    place(track, pan_sweep(air, 0.6, -0.05), 0.0, 0.6)
+    place(track, pan_sweep(air, 0.3, 0.0), 0.0, 0.6)
     return master(hall(track, 1.2, wet=0.24), -5)
 
 
@@ -423,17 +418,6 @@ def compose_step(index):
     return master(hall(track, 2.0, wet=0.28), -3)
 
 
-def compose_park():
-    """The next arrow comes to a stop at the gate: a soft glass tock."""
-    track = silence(0.6)
-    n = int(0.12 * SR)
-    t = np.arange(n) / SR
-    tock = (np.sin(2 * np.pi * 1180 * t) + 0.4 * np.sin(2 * np.pi * 2510 * t)) * envelope(
-        n, 0.0006, 0.018)
-    place(track, tock, 0.0, 1.0, pan=-0.4)
-    return master(hall(track, 0.6, wet=0.18), -7, squeeze=False)
-
-
 def compose_granted():
     track = silence(2.4)
     place(track, bell('B5', 1.6, bright=1.1), 0.0, 0.7, pan=-0.15)
@@ -463,19 +447,19 @@ def compose_flap():
 
 
 def compose_tear():
-    """The arrow cutting along the perforation: a run of small rips that
-    follow it across, and the stub's soft give."""
-    track = silence(ZIP + 0.8)
+    """The stub coming off: a quick run of small rips, faster as the paper
+    gives, and its soft give at the end."""
+    track = silence(RIP + 0.8)
     at = 0.0
-    while at < ZIP:
-        n = int(rng.uniform(0.004, 0.012) * SR)
+    while at < RIP:
+        n = int(rng.uniform(0.004, 0.011) * SR)
         rip = rng.standard_normal(n) * envelope(n, 0.0005, n / SR / 3)
         rip = highpass(rip, 900)
-        speed = np.sin(np.pi * min(at / ZIP, 1))
-        place(track, rip, at, 0.35 + 0.45 * speed, pan=-0.6 + 1.2 * at / ZIP)
-        at += rng.uniform(0.006, 0.016) / (0.6 + 0.6 * speed)
+        speed = min(at / RIP, 1)
+        place(track, rip, at, 0.3 + 0.55 * speed, pan=-0.35 + 0.7 * at / RIP)
+        at += rng.uniform(0.005, 0.014) / (0.6 + 0.9 * speed)
     give = shaped_noise(0.3, lambda t: 1000, lambda t: 600, lambda t: np.exp(-t / 0.07))
-    place(track, give, ZIP - 0.02, 0.35, pan=0.5)
+    place(track, give, RIP - 0.02, 0.4, pan=0.3)
     return master(hall(track, 0.8, wet=0.14), -2)
 
 
@@ -567,10 +551,9 @@ def main():
     cues = {
         'intro': compose_intro(),
         'tap': compose_tap(),
-        'takeoff': compose_takeoff(),
+        'shutter': compose_shutter(),
         'swoop': compose_swoop(),
         'dock': compose_dock(),
-        'park': compose_park(),
         'granted': compose_granted(),
         'flap': compose_flap(),
         'tear': compose_tear(),

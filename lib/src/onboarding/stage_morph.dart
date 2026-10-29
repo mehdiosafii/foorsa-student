@@ -4,9 +4,10 @@
 /// arrow's pearl at the middle, so the old object and the new one are the
 /// same thing changing.
 ///
-/// When the runway's arrow flies in ([ghost]), the object folds into an
-/// arrow made of light, only its edge and a breath of its face, and the
-/// flying arrow docks into it: from then on the arrow is solid pearl.
+/// When an arrow flies in ([ghost]: the one the student throws on the
+/// welcome, the map's locate arrow), the object folds into an arrow made of
+/// light, only its edge and a breath of its face, and the flying arrow docks
+/// into it: from then on the arrow is solid pearl.
 library;
 
 import 'dart:math' as math;
@@ -157,9 +158,11 @@ class StageMorphPainter extends CustomPainter {
     if (toArrow || m < arrowAt) {
       // A breath before it moves, while the old object fades over it.
       final a = toArrow ? _inOut(m) : _inOut((m - 0.05) / (arrowAt - 0.05));
-      main = a >= 1 ? plan.arrowIn : lerpOutlinePoints(plan.fromOutline, plan.arrowIn, a);
-      glass = Glass.lerp(from.glass, ghost ? _ghost : arrowGlass,
-          _smooth(a * 1.25));
+      main = a >= 1
+          ? plan.arrowIn
+          : lerpOutlinePoints(plan.fromOutline, plan.arrowIn, a);
+      glass = Glass.lerp(
+          from.glass, ghost ? _ghost : arrowGlass, _smooth(a * 1.25));
       steps = _smooth((a - 0.55) / 0.45);
       change = math.sin(math.pi * a);
       scale = ui.lerpDouble(1, stageArrowHeight / 100, a)!;
@@ -173,7 +176,9 @@ class StageMorphPainter extends CustomPainter {
       glow = 0.8;
     } else {
       final b = _inOut((m - arrowLeaves) / (1 - arrowLeaves - 0.06));
-      main = b >= 1 ? plan.toOutline : lerpOutlinePoints(plan.arrowOut, plan.toOutline, b);
+      main = b >= 1
+          ? plan.toOutline
+          : lerpOutlinePoints(plan.arrowOut, plan.toOutline, b);
       glass = Glass.lerp(arrowGlass, to.glass, _smooth(b * 1.2 - 0.1));
       steps = 1 - _smooth(b / 0.4);
       change = math.sin(math.pi * b);
