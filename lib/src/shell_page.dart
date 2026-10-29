@@ -35,17 +35,28 @@ import 'shell_screens.dart';
 import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
+import 'onboarding/onboarding_gate.dart';
+import 'portal_handover.dart';
 import 'trusted_portal.dart';
 import 'student_push.dart';
 import 'student_calls.dart';
 import 'chat_viewport.dart';
 
 class ShellPage extends StatefulWidget {
-  const ShellPage({super.key, this.appearance});
+  const ShellPage({
+    super.key,
+    this.appearance,
+    this.webViewDelay = const Duration(milliseconds: 300),
+  });
 
   /// The theme the portal last said the student chose (read before the first
   /// frame, main.dart); null follows the phone.
   final ShellAppearance? appearance;
+
+  /// When the WebView is created. Its platform-view set-up holds the UI
+  /// thread for a moment, so a first launch waits until the onboarding's
+  /// takeoff has flown (onboarding/onboarding_gate.dart).
+  final Duration webViewDelay;
 
   @override
   State<ShellPage> createState() => _ShellPageState();
@@ -149,7 +160,7 @@ class _ShellPageState extends State<ShellPage> {
     });
     // Let the loading screen paint its first frame before the WebView's
     // platform-view init grabs the UI thread.
-    Timer(const Duration(milliseconds: 300), () {
+    Timer(widget.webViewDelay, () {
       if (mounted) setState(() => _bootWebView = true);
     });
     PackageInfo.fromPlatform().then((v) => _packageInfo = v);
@@ -641,12 +652,33 @@ class _ShellPageState extends State<ShellPage> {
     if (c == null || c == _chromeColor || !mounted) return;
     final picked = c;
     setState(() => _chromeColor = picked);
-    final lightBg = picked.computeLuminance() > 0.5;
+    _chromeReported = true;
+    _applyStatusBar();
+  }
+
+  bool _chromeReported = false;
+
+  /// The status bar for the page's colour. While the first-launch onboarding
+  /// is over the portal its night owns the status bar, so the colour waits.
+  void _applyStatusBar() {
+    if (OnboardingScope.isActive(context)) return;
+    final lightBg = _chromeColor.computeLuminance() > 0.5;
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: lightBg ? Brightness.dark : Brightness.light,
       statusBarBrightness: lightBg ? Brightness.light : Brightness.dark,
     ));
+  }
+
+  bool _onboardingShown = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final onboarding = OnboardingScope.activeOf(context);
+    // The onboarding has just gone: the portal's colour takes the bar back.
+    if (_onboardingShown && !onboarding && _chromeReported) _applyStatusBar();
+    _onboardingShown = onboarding;
   }
 
   Future<Map<String, dynamic>> _handleBridgeCall(List<dynamic> args) async {
@@ -751,13 +783,16 @@ class _ShellPageState extends State<ShellPage> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _handleBack();
+        // The first-launch onboarding answers the back button while it is up.
+        if (!didPop && !OnboardingScope.isActive(context)) _handleBack();
       },
       child: Scaffold(
         backgroundColor: _chromeColor,
         body: Stack(
           children: [
             SafeArea(
+              // The onboarding finds the sign-in's arrow through it.
+              key: PortalHandover.instance.webViewArea,
               // Chat owns its top inset through viewport-fit=cover and CSS
               // env(safe-area-inset-top), including the translucent backdrop.
               top: !_chatUnderStatusBar,
@@ -798,6 +833,7 @@ class _ShellPageState extends State<ShellPage> {
                 ),
                 onWebViewCreated: (controller) {
                   _controller = controller;
+                  PortalHandover.instance.controller = controller;
                   controller.addJavaScriptHandler(
                     handlerName: AppConfig.bridgeName,
                     callback: _handleBridgeCall,

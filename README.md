@@ -121,6 +121,27 @@ completed successfully on 5 October 2026. Analysis reports five existing
 informational lints. Physical-device permission testing is still required before
 final submission.
 
+## First launch
+
+A first-time downloader boards through a native onboarding before the
+sign-in, told with one object: the launch screen is Foorsa's arrow alone, in
+pearl glass, and it becomes the journey's airliner. There are no buttons: on
+each screen the student acts on the object itself, wherever it stands. They
+throw the arrow up into the departures board, tap the notification, drag the
+passport page into the scanner's frame, tap the mic, tap the map's locate
+arrow (Foorsa's own), and tear the boarding pass's stub off, each with a quiet
+line under it saying what to do. Between screens the object folds into the
+arrow and unfolds as the next. One screen asks for each phone access
+(notifications, camera, microphone, location), each a single object in the
+portal's glass; sounds you can hear (a soft music bed, a glass note per step),
+set by the phone's volume buttons; the first real notification when they are
+turned on. At the end what is left of the pass folds into the arrow, which
+lands on the sign-in's own arrow while the portal fades in on the same
+night. Updates skip it. Acting on an object always leads straight to the
+system prompt, nothing on screen says Allow, and for a screen reader each
+object is a button named Continue (App Review 5.1.1(iv)); tracking is built
+but off, because the app does not track. See `docs/first-launch-onboarding.md`.
+
 ## What the portal tells the app
 
 The portal (student.foorsa.ma, `src/portal` in foorsa-reward) calls these

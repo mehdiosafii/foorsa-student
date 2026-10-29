@@ -10,8 +10,12 @@ const studentPermissions = [
 
 /// Reminds once per opening, not on every inactive/resumed system prompt.
 class DeviceAccess extends StatefulWidget {
-  const DeviceAccess({super.key, required this.child});
+  const DeviceAccess({super.key, required this.child, this.suppressed = false});
   final Widget child;
+
+  /// The first-launch onboarding has just asked for the same access, so the
+  /// reminder waits for the next opening.
+  final bool suppressed;
   @override
   State<DeviceAccess> createState() => _DeviceAccessState();
 }
@@ -38,7 +42,8 @@ class _DeviceAccessState extends State<DeviceAccess>
   }
 
   Future<void> _check() async {
-    if (_checking || !mounted || StudentCalls.instance.invite != null) return;
+    if (widget.suppressed || _checking || !mounted ||
+        StudentCalls.instance.invite != null) { return; }
     _checking = true;
     try {
       final statuses =
