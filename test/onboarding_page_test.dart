@@ -266,8 +266,9 @@ void main() {
     });
   }
 
-  testWidgets('each step sounds a note higher, and a yes has its own chime',
-      (tester) async {
+  testWidgets(
+      'only what the objects do makes a sound: no tick on a press, no note on '
+      'a step, one chime for each yes', (tester) async {
     _screen(tester, const Size(390, 844));
     final heard = _Heard();
     await tester.pumpWidget(_phone(FirstLaunchOnboarding(
@@ -287,13 +288,13 @@ void main() {
     }
     await tester.tap(_object('Board'));
     await tester.pump(const Duration(milliseconds: 400));
-    expect(heard.cues.where((c) => c.startsWith('step-')),
-        ['step-1', 'step-2', 'step-3', 'step-4', 'step-5']);
+    // Every sound is one the app ships; a press and a step have none.
+    expect(heard.cues.where((c) => !c.startsWith('stop ')),
+        everyElement(isIn(onboardingCues)));
     // Three yeses (the camera was refused), one chime each.
     expect(heard.cues.where((c) => c == 'granted'), hasLength(3));
-    // The scanner took the page, and every press was heard.
+    // The scanner took the page; the board turned over.
     expect(heard.cues.where((c) => c == 'shutter'), hasLength(1));
-    expect(heard.cues.where((c) => c == 'tap').length, greaterThanOrEqualTo(5));
     expect(heard.cues.contains('flap'), isTrue);
     expect(heard.cues.sublist(heard.cues.length - 2), ['tear', 'board']);
     await tester.pumpWidget(const SizedBox());
@@ -399,7 +400,7 @@ void main() {
     expect(heard.cues, contains('swoop'));
     await _frames(tester, const Duration(milliseconds: 1500));
     expect(key.currentState!.armed, isTrue);
-    expect(heard.cues, containsAllInOrder(['swoop', 'dock', 'step-1']));
+    expect(heard.cues, containsAllInOrder(['swoop', 'dock']));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
   });
@@ -493,7 +494,7 @@ void main() {
     expect(key.currentState!.currentStep, BoardingStep.boarding);
     expect(heard.cues, containsAllInOrder(['granted', 'swoop']));
     await _frames(tester, const Duration(milliseconds: 1500));
-    expect(heard.cues, containsAllInOrder(['swoop', 'dock', 'step-5']));
+    expect(heard.cues, containsAllInOrder(['swoop', 'dock']));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
   });

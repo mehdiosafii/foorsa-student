@@ -117,7 +117,7 @@ few seconds an object that has been waiting shows it can be acted on with one
 small movement (`idleNudge`): the arrow hops, the page drifts towards the
 frame, a ring goes out from the mic, the map's arrow hops along its own way,
 the stub tugs at the perforation. A tap on the map, rather than its arrow,
-makes the arrow answer. Every press is felt and heard alike (a glass tick).
+makes the arrow answer. Every press is felt; it makes no sound of its own.
 
 **Glass** (`glass.dart`). The portal's material, ported from its CSS: clear,
 not frosted, a smoked face, a rim that is hot where it faces the light at the
@@ -163,8 +163,8 @@ the next object's outline, over which the new object fades in, and the words
 follow. The thrown arrow points the way it flies and banks as it turns; the
 map's arrow, whose way to the middle would turn it round, glides in level,
 still pointing its own way (`Swoop.follow`). Where no arrow flies, the object
-itself folds into the arrow and unfolds as the next one, its note sounding as
-it unfolds. Each object keeps its own glass until it is the arrow's pearl.
+itself folds into the arrow and unfolds as the next one. Each object keeps its
+own glass until it is the arrow's pearl.
 Going back (Android), the same, the other way.
 
 **The scanner** (`scene_scan.dart`). The page arrives in the frame, as the
@@ -202,37 +202,68 @@ notification comes down from the top (`showFirstNotification`,
 are on. Replies from your adviser will show up here."
 
 **Sound** (`onboarding_sound.dart`, composed by
-`scripts/onboarding_sounds/compose.py`): one family of glass bells in E
-major, air and paper, synthesized from nothing and passed through one
-synthetic hall, so nothing is sampled or licensed, and a forty-second bed of
-night music (a slow pad through E major's chords, a glass note now and then)
-under the steps from the welcome until boarding, looped by starting a second
-copy as the first fades. The intro is one file timed to its beats (a shimmer
-as the arrow catches the light, a chord swelling as it becomes the plane, its
-chime, two ticks for the strobes, air rising and passing to the right as it
-climbs). Every press on an object is a glass tick; the scanner taking the
-page a soft double click and a breath of light; a flying arrow a swoop of
-air and a bright ring as it docks; then the next picture's note, one higher
-each step (E, F sharp, G sharp, B, C sharp, E). A yes has two rising notes;
-the board its flaps; the stub a quick tear as the paper gives; boarding an
-arrival chord.
+`scripts/onboarding_sounds/compose.py`): few sounds, and quiet. The first
+versions were glass bells synthesized from nothing and mastered almost to full
+scale, and nearly every touch rang: a tick on each press, a note on each step,
+a ring on each dock, over a loop of bells, 25 sounds in the first 43 seconds.
+It sounded like a toy. Now:
 
-They are meant to be heard, which the first version was not: its cues peaked
-at -13 dBFS, it played in iOS's ambient session (silenced by the ring/silent
-switch) and on Android's interface-sound stream (near zero on most phones).
-Now every cue lives above 180 Hz, where a phone's speaker plays, carries its
-bells' upper partials, and is mastered loud (main cues around -10 to -15
-LUFS, peaks a decibel or two under full scale, transients held down). They
-play as media: on an iPhone the playback session mixed with whatever else is
-playing (the student's music never stops), so the silent switch does not
-silence them and the phone's volume buttons set how loud they are; on
-Android the media stream, with no audio focus. There is no speaker button on
-the screen: the volume buttons are the control. Nothing plays while the app is in the background (the
-app has the audio background mode, which would otherwise keep the bed
-playing). The intro loads first, behind the native splash, and a late one
-starts where the picture has got to; the rest load behind it. Everything is
-let go six seconds after boarding, when the session goes back to iOS's
-default. To change one, edit the script and run it with `--encode`.
+- The music is played by sampled instruments (piano, harp, strings and
+  celesta, and in the bed a koto for a guzheng and a flute for a dizi, from
+  the MuseScore General soundfont, MIT licence), rendered by fluidsynth
+  through one soft hall. The cues are in E major; the bed is in its relative
+  minor.
+- What makes a sound in the story is a recording of a real thing, from
+  BigSoundBank under CC0 (`scripts/onboarding_sounds/foley/SOURCES.md`): the
+  departures board's flaps (a small ratchet's teeth, slowed into card and
+  re-timed into a row settling), the arrow's air (a rope swung through the
+  air), the scanner's shutter (a Kodak Instamatic), the stub (a sheet of
+  paper torn off) and a small temple gong.
+- A plain press and a step changing make no sound: the haptics carry them.
+
+The intro is one file timed to its beats: low strings as the arrow wakes, a
+celesta note as it catches the light, a harp running up as it becomes the
+plane, two piano notes for its lights, then a chord and the air rising as it
+climbs. After it: the flaps as the board turns over, the arrow's air as it
+flies (`swoop`) and a plucked E as it settles (`dock`), two rising piano notes
+for each yes (`granted`), the shutter as the scanner takes the page, the tear
+as the stub comes off, and the arrival chord as the sign-in opens (`board`).
+Under the steps, from the welcome until boarding, forty seconds of night music
+with something of a spell and something of China in it, played at 0.75 and
+looped by starting a second copy as the first fades. It is an original waltz
+(3/8, a bar a second) in C sharp minor. The celesta plays the theme over a
+harp, with a strings pad and a harmony that turns through A, D and G sharp
+the way film magic does. Then a bamboo flute (dizi) answers it over a
+guzheng, in the pentatonic mode the melody already moves in, with grace notes,
+a string pressed up a tone and a tremolo. Then the theme comes back with the
+guzheng playing the waltz under it. A small temple gong opens each loop. The
+first and last four seconds, where two copies overlap, keep no beat (a held
+C sharp minor seventh, the gong, a guzheng's run), so the timer's jitter
+cannot be heard. Every note of that chord is in E major, so the intro's last
+chord, a chime or the arrival never rubs against it. The tune is not Hedwig's
+Theme or any other film's: Foorsa has no licence to ship film music.
+
+The opening and the arrival are the two moments the music speaks up (about
+-20 LUFS, peaks at -6 dBFS). The cues between sit lower (-24 to -36 LUFS) and
+the bed lower still (-31 LUFS, then played at 0.75), so what the student does
+stands out of it. Each cue is brought to its loudness only as far as its peak
+allows, so nothing is squashed, and every file starts and ends in exact
+silence.
+
+They play as media, so they are heard: on an iPhone the playback session mixed
+with whatever else is playing (the student's music never stops), so the silent
+switch does not silence them and the phone's volume buttons set how loud they
+are; on Android the media stream, with no audio focus. (The first version
+played in iOS's ambient session, which the ring/silent switch silences, and on
+Android's interface-sound stream, near zero on most phones.) There is no
+speaker button on the screen: the volume buttons are the control. Nothing
+plays while the app is in the background (the app has the audio background
+mode, which would otherwise keep the bed playing). The intro loads first,
+behind the native splash, and a late one starts where the picture has got to;
+the rest load behind it. Everything is let go six seconds after boarding, when
+the session goes back to iOS's default. To change one, edit the script and run
+it with `--encode`; `test/onboarding_sound_test.dart` fails when a cue the
+onboarding plays ships no file, or a file ships that nothing plays.
 
 Touch stays for moments that mean something (`shell_haptics.dart`): `unfold`
 and `release` as the plane forms and leaves, `press` on every press, `grain`
@@ -287,8 +318,9 @@ goes one step back.
   flights, the locate arrow on the lens's edge, the idle nudge, every object
   inside its stage, the arrow's geometry, the whole walk through with fake
   permissions (one gesture per object, the prompt the moment it is touched,
-  no button and no Allow on screen, a chime per yes, the shutter), the page
-  dragged into the frame (and not taken when let go short), the map's arrow
+  no button and no Allow on screen, a chime per yes, the shutter, no sound on
+  a press or a step), every cue shipped as a file and no file left over, the
+  page dragged into the frame (and not taken when let go short), the map's arrow
   flying on once the dot is found, back, the stub torn by hand and the arrow
   landing on the sign-in's own, and every step on a 320 x 568 phone, an iPhone
   SE and a large phone with large text.
