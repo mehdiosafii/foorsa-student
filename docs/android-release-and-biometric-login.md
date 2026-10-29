@@ -23,10 +23,29 @@ chat:
 | `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
 | `ANDROID_KEY_ALIAS` | Upload key alias |
 | `ANDROID_KEY_PASSWORD` | Upload key password |
-| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Service-account JSON authorized for `ma.foorsa` releases in Play Console, with the Android Publisher API enabled |
 
-The upload key must match Play Console → App integrity. Do not create a new key
-as a substitute for the existing key. Play's app signing key remains managed
+Google Play API access is **keyless**. The foorsa.ma Google Cloud organization
+enforces `iam.disableServiceAccountKeyCreation`, so no service-account JSON key
+exists or is stored. The publish job exchanges its GitHub OIDC token through
+Workload Identity Federation:
+
+- Cloud project `foorsa-play-publishing` (number 1046359922746), Play Android
+  Developer, IAM Credentials and STS APIs enabled.
+- Pool `github-actions`, provider `foorsa-student` (issuer
+  `https://token.actions.githubusercontent.com`), attribute condition: repository
+  `mehdiosafii/foorsa-student`, ref `refs/heads/main`, workflow
+  `.github/workflows/google-play.yml` only.
+- Service account `play-publisher@foorsa-play-publishing.iam.gserviceaccount.com`:
+  no Cloud IAM roles; `roles/iam.workloadIdentityUser` granted only to
+  `principalSet://iam.googleapis.com/projects/1046359922746/locations/global/workloadIdentityPools/github-actions/attribute.repository/mehdiosafii/foorsa-student`.
+  In Play Console it has app-level access to Foorsa limited to releasing to
+  production and to testing tracks (plus the default read-only view).
+
+The upload key must match Play Console → App integrity. On 29 October 2026 the
+original upload key could not be recovered, so an upload-key reset was
+requested with a new key (SHA-1 `C5:23:BC:4A:D0:70:84:35:8F:F1:D0:63:D8:7E:9F:20:86:13:F0:FE`).
+Bundles signed with it are accepted only from the activation date Play shows.
+Google's app signing key is unchanged, so installed apps keep updating. Play's app signing key remains managed
 by Google. Complete any outstanding Play Console listing, app content, testing,
 and review requirements there; the publisher does not bypass them.
 

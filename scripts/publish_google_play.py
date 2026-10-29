@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import re
 
-from google.oauth2 import service_account
+import google.auth
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -17,10 +17,9 @@ def main():
     if not version:
         raise SystemExit('pubspec.yaml must contain a version name and numeric build number')
     name, number = version.groups()
-    credentials = service_account.Credentials.from_service_account_file(
-        Path(os.environ['RUNNER_TEMP']) / 'foorsa-play.json',
-        scopes=['https://www.googleapis.com/auth/androidpublisher'],
-    )
+    # Short-lived credentials from google-github-actions/auth (Workload Identity
+    # Federation impersonating the Play publisher service account). No key file.
+    credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/androidpublisher'])
     edits = build('androidpublisher', 'v3', credentials=credentials, cache_discovery=False).edits()
     edit = edits.insert(packageName=package, body={}).execute()['id']
     committed = False

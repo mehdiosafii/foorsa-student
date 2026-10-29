@@ -32,16 +32,15 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
           python3 - <<'PY'
           import os
-          names = ['ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD', 'GOOGLE_PLAY_SERVICE_ACCOUNT_JSON']
+          names = ['ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD']
           missing = [name for name in names if not os.environ.get(name)]
           if missing:
               print('::warning::Google Play publishing needs these Actions secrets: ' + ', '.join(missing))
           else:
-              print('All five release secrets are configured; Play validates key and account access during publication.')
+              print('All four signing secrets are configured. Play access uses keyless Workload Identity Federation; Play validates key and account access during publication.')
           PY
   version:
     if: github.event_name != 'pull_request'
@@ -78,8 +77,16 @@ jobs:
     if: github.ref == 'refs/heads/main' && needs.version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      # Short-lived GitHub OIDC token, exchanged for Google credentials below.
+      id-token: write
     env:
       PLAY_TRACK: ${{ inputs.track || vars.GOOGLE_PLAY_TRACK || 'internal' }}
+      # Not secrets: the Workload Identity provider only trusts this repository's
+      # main-branch google-play.yml, and the service account only has Play release access.
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/1046359922746/locations/global/workloadIdentityPools/github-actions/providers/foorsa-student
+      GOOGLE_PLAY_SERVICE_ACCOUNT: play-publisher@foorsa-play-publishing.iam.gserviceaccount.com
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -90,7 +97,6 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: python3 scripts/prepare_android_release.py
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
@@ -119,10 +125,15 @@ jobs:
           path: build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 30
+      - name: Authenticate to Google Play without a key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_PLAY_SERVICE_ACCOUNT }}
       - name: Install Play publisher
         run: python3 -m pip install 'google-api-python-client==2.187.0' 'google-auth==2.43.0'
       - name: Publish to Google Play
         run: python3 scripts/publish_google_play.py
       - name: Remove signing credentials
         if: always()
-        run: rm -f android/key.properties "$RUNNER_TEMP/foorsa-upload.jks" "$RUNNER_TEMP/foorsa-play.json"
+        run: rm -f android/key.properties "$RUNNER_TEMP/foorsa-upload.jks"

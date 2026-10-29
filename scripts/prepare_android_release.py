@@ -1,14 +1,14 @@
 """Fail before building if Play signing is incomplete. Never print secrets."""
 import base64
-import json
 import os
 from pathlib import Path
 
 REQUIRED = (
     'ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD',
     'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD',
-    'GOOGLE_PLAY_SERVICE_ACCOUNT_JSON',
 )
+# Play API access is keyless (GitHub OIDC -> Workload Identity Federation), so
+# no Google credential is stored as a repository secret.
 
 
 def property_value(value):
@@ -38,11 +38,7 @@ def main():
     os.umask(0o077)
     temp = Path(os.environ['RUNNER_TEMP'])
     keystore = temp / 'foorsa-upload.jks'
-    service_account = json.loads(os.environ['GOOGLE_PLAY_SERVICE_ACCOUNT_JSON'])
-    if service_account.get('type') != 'service_account':
-        raise SystemExit('GOOGLE_PLAY_SERVICE_ACCOUNT_JSON must contain a service account.')
     keystore.write_bytes(base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True))
-    (temp / 'foorsa-play.json').write_text(json.dumps(service_account))
     values = {
         'storeFile': str(keystore),
         'storePassword': os.environ['ANDROID_KEYSTORE_PASSWORD'],
