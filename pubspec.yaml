@@ -2,7 +2,7 @@ name: foorsa_student
 description: "Foorsa Student portal."
 publish_to: "none"
 
-version: 1.2.19+50
+version: 1.2.20+51
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -29,6 +29,8 @@ dependencies:
   flutter_callkit_incoming: 3.1.6
   http: 1.6.0
   audioplayers: 6.8.1
+  local_auth: 3.0.2
+  flutter_secure_storage: 10.3.4
 
 dev_dependencies:
   flutter_test:
@@ -42,6 +44,7 @@ flutter:
     enable-swift-package-manager: false
   uses-material-design: true
   assets:
+    - assets/biometric_session.js
     - assets/icons/
     - assets/images/
     - assets/sounds/onboarding/
