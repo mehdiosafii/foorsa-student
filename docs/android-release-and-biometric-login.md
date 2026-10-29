@@ -49,6 +49,16 @@ Google's app signing key is unchanged, so installed apps keep updating. Play's a
 by Google. Complete any outstanding Play Console listing, app content, testing,
 and review requirements there; the publisher does not bypass them.
 
+**The first production release is scheduled.** `production-release-schedule.yml`
+starts this workflow on `main` for the production track from 31 October 2026
+18:23 UTC, once an hour (every three hours after 1 November 09:23 UTC, until
+3 November). `scripts/scheduled_production_release.py` waits for each run: a
+refusal because the reset key is not valid yet waits for the next attempt;
+an accepted release, or any other failure, switches the schedule off so it
+never publishes twice or retries a real problem. It also switches itself off
+outside 2026. Running it by hand (Actions → Production release schedule →
+Run workflow) does the same thing now.
+
 A version change on `main` now triggers both TestFlight and Google Play. Play
 defaults to `internal`; use the `GOOGLE_PLAY_TRACK` repository variable to set
 the automatic track to `production` after device acceptance testing. Actions →
