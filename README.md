@@ -182,9 +182,8 @@ token registration, foreground/background delivery, notification taps, sign-out
 and account switching before publishing a signed release.
 
 Google Play distribution still needs the existing upload-signing configuration
-and a release build. This change keeps the version at `1.2.18+48`, so merging it
-does not trigger a new Apple release. Bump the version only when preparing the
-corresponding signed release.
+and a release build. Bump the version only when preparing a signed release: a
+new `version:` on `main` also uploads an iOS build to TestFlight.
 
 ### Registered Firebase clients
 
