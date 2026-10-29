@@ -209,14 +209,16 @@ a ring on each dock, over a loop of bells, 25 sounds in the first 43 seconds.
 It sounded like a toy. Now:
 
 - The music is played by sampled instruments (piano, harp, strings and
-  celesta, from the MuseScore General soundfont, MIT licence), rendered by
-  fluidsynth, all in E major, through one soft hall.
+  celesta, and in the bed a koto for a guzheng and a flute for a dizi, from
+  the MuseScore General soundfont, MIT licence), rendered by fluidsynth
+  through one soft hall. The cues are in E major; the bed is in its relative
+  minor.
 - What makes a sound in the story is a recording of a real thing, from
   BigSoundBank under CC0 (`scripts/onboarding_sounds/foley/SOURCES.md`): the
   departures board's flaps (a small ratchet's teeth, slowed into card and
   re-timed into a row settling), the arrow's air (a rope swung through the
-  air), the scanner's shutter (a Kodak Instamatic) and the stub (a sheet of
-  paper torn off).
+  air), the scanner's shutter (a Kodak Instamatic), the stub (a sheet of
+  paper torn off) and a small temple gong.
 - A plain press and a step changing make no sound: the haptics carry them.
 
 The intro is one file timed to its beats: low strings as the arrow wakes, a
@@ -227,9 +229,19 @@ flies (`swoop`) and a plucked E as it settles (`dock`), two rising piano notes
 for each yes (`granted`), the shutter as the scanner takes the page, the tear
 as the stub comes off, and the arrival chord as the sign-in opens (`board`).
 Under the steps, from the welcome until boarding, forty seconds of night music
-(strings, piano and harp through I, vi7, IV, Vsus4 to V, I), played at 0.75
-and looped by starting a second copy as the first fades. It starts and ends on
-the same open E, so the two copies agree where they overlap.
+with something of a spell and something of China in it, played at 0.75 and
+looped by starting a second copy as the first fades. It is an original waltz
+(3/8, a bar a second) in C sharp minor. The celesta plays the theme over a
+harp, with a strings pad and a harmony that turns through A, D and G sharp
+the way film magic does. Then a bamboo flute (dizi) answers it over a
+guzheng, in the pentatonic mode the melody already moves in, with grace notes,
+a string pressed up a tone and a tremolo. Then the theme comes back with the
+guzheng playing the waltz under it. A small temple gong opens each loop. The
+first and last four seconds, where two copies overlap, keep no beat (a held
+C sharp minor seventh, the gong, a guzheng's run), so the timer's jitter
+cannot be heard. Every note of that chord is in E major, so the intro's last
+chord, a chime or the arrival never rubs against it. The tune is not Hedwig's
+Theme or any other film's: Foorsa has no licence to ship film music.
 
 The opening and the arrival are the two moments the music speaks up (about
 -20 LUFS, peaks at -6 dBFS). The cues between sit lower (-24 to -36 LUFS) and

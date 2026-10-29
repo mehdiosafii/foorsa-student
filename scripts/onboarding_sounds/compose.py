@@ -5,11 +5,14 @@ scale, and nearly every touch rang. A tick on each press, a note on each step, a
 yes and a ring on each dock, four seconds apiece, over a loop of bells: 25 sounds in 43 seconds,
 and it sounded like a toy. Now:
 
-- The music is played by sampled instruments (piano, harp, strings, celesta) from the MuseScore
-  General soundfont (MIT licence), rendered by fluidsynth, all in E major (the key the portal's
-  admission score resolves to), through one soft hall.
+- The music is played by sampled instruments (piano, harp, strings, celesta, and for the bed a
+  koto standing in for a guzheng, a flute for a dizi, a glockenspiel and voices) from the
+  MuseScore General soundfont (MIT licence), rendered by fluidsynth through one soft hall. The
+  cues are in E major (the key the portal's admission score resolves to); the bed is a waltz in
+  its relative minor, C sharp minor, whose pentatonic mode is E major's own notes.
 - What makes a sound in the story is a recording (CC0, foley/SOURCES.md): the departures
-  board's flaps, the arrow's air, the camera, the boarding pass's stub.
+  board's flaps, the arrow's air, the camera, the boarding pass's stub, and the small temple
+  gong that opens each loop of the bed.
 - Few sounds, and quiet. A plain press and a step changing make no sound: the haptics carry
   them. The music sits under everything; the opening and the arrival are the two moments it
   speaks up. Nothing is squashed: each cue is brought to its loudness only as far as its peak
@@ -33,8 +36,9 @@ The cues, and where the onboarding plays them (onboarding_page.dart):
   tear     the stub coming off the boarding pass
   board    the arrival, as the sign-in opens
   bed      forty seconds of night music under the steps, looped by crossfading two players
-           (onboarding_sound.dart): it starts and ends on the same open E, so the overlap
-           of two copies is consonant
+           (onboarding_sound.dart): a celesta waltz with a guzheng and a bamboo flute in it,
+           opened by a temple gong; its seams hold one chord of E major's notes, so the
+           overlap of two copies, and every cue over it, is consonant
 """
 
 import os
@@ -73,7 +77,7 @@ CLIMB_STARTS = 2.42
 # The arrow's flight into the picture (onboarding_page.dart's FlightTimes.lifted.swoop).
 SWOOP = 0.60
 
-GM = dict(piano=0, celesta=8, harp=46, strings=48, strings_slow=49)
+GM = dict(piano=0, celesta=8, glock=9, harp=46, strings=48, strings_slow=49, oohs=53, flute=73, koto=107)
 
 # Every note from C1 to B8; sharps are written with an underscore (G_4).
 NAMES = ['C', 'C_', 'D', 'D_', 'E', 'F', 'F_', 'G', 'G_', 'A', 'A_', 'B']
@@ -92,7 +96,7 @@ class Part:
     def __init__(self, name, program, pan=0.0, gain=1.0, send=0.4, humanize=0.0, tone=None):
         self.name, self.program = name, program
         self.pan, self.gain, self.send, self.humanize, self.tone = pan, gain, send, humanize, tone
-        self.notes, self.cc = [], []
+        self.notes, self.cc, self.bends = [], [], []
 
     def n(self, t, pitch, dur, vel):
         pitch = N[pitch] if isinstance(pitch, str) else pitch
@@ -111,6 +115,16 @@ class Part:
             self.cc.append((t0 + (t1 - t0) * k, ctrl, v0 + (v1 - v0) * k))
         return self
 
+    def bend(self, t0, t1, s0, s1, step=0.01):
+        """The pitch sliding from `s0` to `s1` semitones (within the soundfont's two) as a
+        guzheng player presses a string or a flute scoops into a note. It bends every note
+        sounding on the part, so a slid note gets a part of its own."""
+        steps = max(1, int((t1 - t0) / step))
+        for i in range(steps + 1):
+            k = i / steps
+            self.bends.append((t0 + (t1 - t0) * k, s0 + (s1 - s0) * k * k * (3 - 2 * k)))
+        return self
+
 
 def write_midi(part, path, seed):
     rnd = random.Random(seed)
@@ -124,12 +138,26 @@ def write_midi(part, path, seed):
     for t, c, v in part.cc:
         events.append((ticks(t), 2, mido.Message('control_change', control=c,
                                                  value=int(max(0, min(127, round(v)))), channel=0)))
+    for t, s in part.bends:
+        events.append((ticks(t), 2, mido.Message('pitchwheel', pitch=int(max(-8192, min(8191, round(s / 2 * 8192)))),
+                                                 channel=0)))
+    notes = []
     for t, p, d, v in part.notes:
         jitter = rnd.uniform(-part.humanize, part.humanize) if part.humanize else 0.0
         vj = rnd.randint(-3, 3) if part.humanize else 0
         on = ticks(max(0.0, t + jitter))
-        events.append((on, 3, mido.Message('note_on', note=p, velocity=max(1, min(127, v + vj)), channel=0)))
-        events.append((max(on + 1, ticks(t + jitter + d)), 1, mido.Message('note_off', note=p, velocity=0, channel=0)))
+        notes.append([on, max(on + 1, ticks(t + jitter + d)), p, max(1, min(127, v + vj))])
+    # A note struck again while it still sounds ends where it is struck again: fluidsynth lets
+    # go of the first, and the first's note_off would otherwise silence the second.
+    sounding = {}
+    for note in sorted(notes):
+        prev = sounding.get(note[2])
+        if prev is not None and prev[1] > note[0]:
+            prev[1] = max(prev[0] + 1, note[0])
+        sounding[note[2]] = note
+    for on, off, p, v in notes:
+        events.append((on, 3, mido.Message('note_on', note=p, velocity=v, channel=0)))
+        events.append((off, 1, mido.Message('note_off', note=p, velocity=0, channel=0)))
     events.sort(key=lambda e: (e[0], e[1]))
     last = 0
     for tick, _, msg in events:
@@ -469,41 +497,176 @@ def cue_board():
     return master(y, -20, -6, fade_out=1.2)
 
 
+# The bed's waltz: 3/8, a bar a second. Its first and last BED_SEAM seconds are where two copies
+# crossfade (onboarding_sound.dart starts the next one 36 s in, give or take a timer's jitter), so
+# nothing in them keeps a beat: one held chord, the gong, a guzheng's run.
+BED_LENGTH = 40.0
+BED_SEAM = 4.0
+WALTZ_BAR = 1.0
+WALTZ_EIGHTH = WALTZ_BAR / 3
+
+
+def wb(bar, eighth=0.0):
+    """Where the waltz's bar `bar` (from 1) starts, plus `eighth` eighths."""
+    return BED_SEAM + (bar - 1) * WALTZ_BAR + eighth * WALTZ_EIGHTH
+
+
+def run(part, start, end, pitches, v0, v1, dur=1.4):
+    """A guzheng's (or a harp's) run across its strings, closing up as it speeds into its note."""
+    count = len(pitches)
+    for i, p in enumerate(pitches):
+        k = i / max(1, count - 1)
+        part.n(start + (end - start) * k ** 0.8, p, dur, v0 + (v1 - v0) * k)
+
+
+def hold(part, spans, vel):
+    """Chords one after another, (start, end, pitches) each: a note two of them share is held
+    over rather than bowed again, so the strings breathe with the harmony, not with the bar."""
+    sounding, until = {}, None
+    for start, end, pitches in spans:
+        if until is not None and start > until + 1e-6:
+            for p, t0 in sounding.items():
+                part.n(t0, p, until - t0, vel)
+            sounding = {}
+        kept = {p: sounding.pop(p, start) for p in pitches}
+        for p, t0 in sounding.items():
+            part.n(t0, p, start - t0, vel)
+        sounding, until = kept, end
+    for p, t0 in sounding.items():
+        part.n(t0, p, until - t0, vel)
+
+
 def cue_bed():
-    """Forty seconds of night: I, vi7, IV, Vsus4 to V, I, slow and spacious, no pulse."""
-    length = 40.0
-    strings = Part('strings', GM['strings_slow'], pan=0.0, gain=0.6, send=0.6, tone=4500)
-    piano = Part('piano', GM['piano'], pan=-0.15, gain=1.0, send=0.55, humanize=0.012, tone=4800)
-    harp = Part('harp', GM['harp'], pan=0.3, gain=0.6, send=0.6, humanize=0.008)
-    chords = [  # start, strings, bass, harp's fragment
-        (0.0, ['E2', 'B2', 'E3', 'B3'], 'E2', ['E4', 'G_4', 'B4', 'E5']),
-        (8.0, ['C_3', 'G_3', 'B3', 'E4'], 'C_3', ['C_4', 'E4', 'G_4', 'C_5']),
-        (16.0, ['A2', 'E3', 'B3', 'C_4'], 'A2', ['A3', 'C_4', 'E4', 'B4']),
-        (24.0, ['B2', 'F_3', 'B3', 'E4'], 'B2', ['B3', 'E4', 'F_4', 'B4']),
-        (32.0, ['E2', 'B2', 'E3', 'B3'], 'E3', None),
-    ]
-    for start, voicing, bass, fragment in chords:
-        strings.chord(start, voicing, 8.6, 44).ramp(start, start + 3.0, 34, 72).ramp(start + 5.0, start + 8.4, 72, 40)
-        piano.n(start + 0.4, bass, 6.0, 22)
-        if fragment:
-            for i, p in enumerate(fragment):
-                harp.n(start + 4.2 + i * 0.16, p, 2.4, 26 - i)
-    # The sus4 resolving: D# under the strings' E.
-    strings.n(28.0, 'D_4', 4.4, 36)
-    melody = [(1.0, 'B4', 3.0, 34), (3.6, 'G_4', 2.6, 30), (6.0, 'F_4', 2.2, 28),
-              (8.6, 'E5', 3.0, 34), (11.2, 'G_4', 2.8, 30), (13.6, 'B4', 2.4, 28),
-              (16.6, 'C_5', 3.0, 34), (19.2, 'E5', 2.8, 32), (21.6, 'B4', 2.4, 28),
-              (24.6, 'E5', 2.6, 32), (27.0, 'F_5', 2.6, 30), (29.6, 'D_5', 2.6, 30),
-              (32.6, 'E5', 3.6, 28), (35.4, 'B4', 3.6, 24)]
-    for t, p, d, v in melody:
-        piano.n(t, p, d, v)
-    y = mix([strings, piano, harp], length, 'bed', wet=0.62)
-    # A backdrop, well under the moments: the onboarding's sounds must stand out of it.
-    y = master(y, -31, -16, fade_in=0.0, fade_out=0.0)
-    fade = int(4.0 * SR)
+    """Forty seconds of night with a little magic and a little China in it: an original celesta
+    waltz in C sharp minor over a harp, then its answer on a bamboo flute (dizi) over a guzheng
+    (the koto), in the pentatonic mode the melody already moves in, then the theme again with
+    the guzheng playing the waltz under it. A small temple gong opens every loop.
+
+    The seams hold C sharp minor seventh (C sharp, E, G sharp, B), all of it E major's notes, so
+    the intro's last chord, a chime or the arrival chord never rubs against it."""
+    length = BED_LENGTH
+    cel = Part('celesta', GM['celesta'], pan=0.15, gain=1.0, send=0.55, humanize=0.006)
+    harp = Part('harp', GM['harp'], pan=-0.3, gain=0.9, send=0.5, humanize=0.008)
+    koto = Part('koto', GM['koto'], pan=0.3, gain=0.9, send=0.45, humanize=0.006)
+    koto_bend = Part('koto_bend', GM['koto'], pan=0.3, gain=0.9, send=0.45)
+    flute = Part('flute', GM['flute'], pan=-0.1, gain=0.55, send=0.55)
+    flute_scoop = Part('flute_scoop', GM['flute'], pan=-0.1, gain=0.55, send=0.55)
+    strings = Part('strings', GM['strings_slow'], pan=0.0, gain=1.0, send=0.6, tone=5000)
+    choir = Part('choir', GM['oohs'], pan=0.0, gain=0.8, send=0.65, tone=6000)
+    glock = Part('glock', GM['glock'], pan=0.25, gain=0.6, send=0.6)
+
+    # Each chord: the harp's bass, the two notes that answer it on the second and third beats,
+    # and the strings. B sharp is written C (G sharp's leading note, the spell in the harmony).
+    chords = {
+        'C#m': ('C_3', ['E4', 'G_4'], ['C_3', 'G_3', 'E4']),
+        'A': ('A2', ['E4', 'A4'], ['A2', 'E3', 'C_4']),
+        'F#m': ('F_2', ['F_4', 'A4'], ['F_2', 'C_3', 'A3']),
+        'G#': ('G_2', ['D_4', 'G_4'], ['G_2', 'D_3', 'C4']),
+        'D': ('D3', ['F_4', 'A4'], ['D3', 'F_3', 'A3']),
+        'G#7': ('G_2', ['D_4', 'F_4'], ['G_2', 'D_3', 'F_3', 'C4']),
+    }
+    phrase_a = ['C#m', 'A', 'F#m', 'G#', 'C#m', 'A', 'D', 'G#7']      # bars 1-8: to the dominant
+    phrase_a2 = ['C#m', 'A', 'F#m', 'G#', 'C#m', 'A', 'G#7', 'C#m']   # 9-16 and 25-32: home
+
+    # The theme, on the celesta: bar, eighth, pitch, eighths, velocity.
+    theme = [(1, 0, 'C_5', 1, 50), (1, 1, 'E5', 1, 52), (1, 2, 'G_5', 1, 55), (2, 0, 'A5', 3, 60),
+             (3, 0, 'F_5', 1, 52), (3, 1, 'A5', 1, 55), (3, 2, 'C_6', 1, 58), (4, 0, 'D_6', 2, 62), (4, 2, 'C6', 1, 54)]
+    melody = list(theme)
+    melody += [(5, 0, 'C_6', 2, 60), (5, 2, 'G_5', 1, 52), (6, 0, 'A5', 1, 52), (6, 1, 'C_6', 1, 56),
+               (6, 2, 'E6', 1, 60), (7, 0, 'F_6', 2, 62), (7, 2, 'D6', 1, 54), (8, 0, 'C6', 3, 56)]
+    melody += [(b + 8, e, p, n, v) for b, e, p, n, v in theme]
+    melody += [(13, 0, 'C_6', 1, 58), (13, 1, 'E6', 1, 62), (13, 2, 'G_6', 1, 66), (14, 0, 'A6', 2, 68),
+               (14, 2, 'G_6', 1, 60), (15, 0, 'F_6', 1, 60), (15, 1, 'E6', 1, 58), (15, 2, 'D_6', 1, 56),
+               (16, 0, 'C_6', 3, 58)]
+    melody += [(b + 24, e, p, n, v - 2) for b, e, p, n, v in theme]
+    melody += [(29, 0, 'E6', 2, 60), (29, 2, 'D_6', 1, 54), (30, 0, 'C_6', 1, 56), (30, 1, 'B5', 1, 52),
+               (30, 2, 'A5', 1, 50), (31, 0, 'G_5', 2, 52), (31, 2, 'C6', 1, 50)]
+    for bar, e, p, eighths, v in melody:
+        cel.n(wb(bar, e), p, eighths * WALTZ_EIGHTH + 0.8, v)
+    cel.n(wb(32), 'C_6', 3.6, 52)
+
+    # The waltz under it: the harp's bass and its answer; when the theme comes back the guzheng
+    # takes the answer.
+    def waltz(bar, name, answer):
+        bass, pair, _ = chords[name]
+        harp.n(wb(bar), bass, 1.3, 40)
+        for e, v in ((1, 30), (2, 27)):
+            answer.chord(wb(bar, e), pair, 0.6, v)
+
+    for i, name in enumerate(phrase_a):
+        waltz(1 + i, name, harp)
+    for i, name in enumerate(phrase_a2[:7]):
+        waltz(9 + i, name, harp)
+        waltz(25 + i, name, koto)
+    harp.n(wb(16), 'C_3', 1.4, 40)
+    harp.chord(wb(32), ['C_3', 'G_3', 'C_4', 'E4'], 3.6, 40, roll=0.05)
+
+    # The strings: the seam's chord opening the bed, a chord a bar, open fifths under the flute
+    # as a drone would be, and the seam's chord again to close it.
+    spans = [(0.0, wb(1), ['C_3', 'G_3', 'E4', 'B4'])]
+    spans += [(wb(1 + i), wb(2 + i), chords[name][2]) for i, name in enumerate(phrase_a + phrase_a2)]
+    for first, last, fifth in ((17, 20, ['E2', 'B2']), (21, 22, ['C_2', 'G_2']), (23, 23, ['F_2', 'C_3']),
+                               (24, 24, ['G_2', 'C_3'])):
+        spans.append((wb(first), wb(last + 1), fifth))
+    spans += [(wb(25 + i), wb(26 + i), chords[name][2]) for i, name in enumerate(phrase_a2[:7])]
+    spans.append((wb(32), length, ['C_3', 'G_3', 'E4', 'B4']))
+    hold(strings, spans, 46)
+    strings.ramp(0.0, 3.2, 30, 66).ramp(wb(13), wb(14), 66, 80).ramp(wb(15), wb(16, 2), 80, 62)
+    strings.ramp(wb(17), wb(17, 1), 62, 52).ramp(wb(24), wb(25), 52, 64)
+
+    # The flute (a dizi's part): its grace notes from a step above, and two notes scooped up into.
+    dizi = [(17, 0, 'B5', 2, 54, 'C_6'), (17, 2, 'G_5', 1, 48, None), (18, 0, 'E5', 3, 52, 'scoop'),
+            (19, 0, 'F_5', 1, 48, None), (19, 1, 'G_5', 1, 50, None), (19, 2, 'B5', 1, 52, None),
+            (20, 0, 'C_6', 3, 56, 'E6'), (21, 0, 'E6', 2, 58, 'F_6'), (21, 2, 'C_6', 1, 52, None),
+            (22, 0, 'B5', 1, 52, None), (22, 1, 'G_5', 1, 50, None), (22, 2, 'F_5', 1, 48, None),
+            (23, 0, 'E5', 2, 50, None), (23, 2, 'F_5', 1, 48, None), (24, 0, 'G_5', 3, 52, 'scoop')]
+    for bar, e, p, eighths, v, grace in dizi:
+        t, dur = wb(bar, e), eighths * WALTZ_EIGHTH * 0.96
+        if grace == 'scoop':
+            flute_scoop.n(t, p, dur, v)
+            flute_scoop.bend(t - 0.006, t - 0.001, 0, -1).bend(t + 0.03, t + 0.22, -1, 0)
+            flute_scoop.ramp(t, t + dur, 0, 34, ctrl=1)
+        else:
+            if grace:
+                flute.n(t - 0.07, grace, 0.065, v - 10)
+            flute.n(t, p, dur, v)
+            if eighths == 3:
+                flute.ramp(t + 0.3, t + dur, 0, 34, ctrl=1).ramp(t + dur, t + dur + 0.05, 34, 0, ctrl=1)
+
+    # The guzheng: rolling under the flute, a string pressed up a tone, a tremolo on the long note.
+    rolls = {17: ['E3', 'B3', 'G_4'], 18: ['E3', 'B3', 'E4'], 19: ['E3', 'B3'], 20: ['E3', 'B3', 'G_4'],
+             21: ['C_3', 'G_3', 'E4'], 22: ['C_3', 'G_3', 'C_4'], 23: ['F_2', 'C_3', 'E3'], 24: ['G_2', 'C_3']}
+    for bar, notes in rolls.items():
+        for e, (p, v) in enumerate(zip(notes, (46, 38, 36))):
+            koto.n(wb(bar, e), p, 1.2, v)
+    koto_bend.n(wb(19, 2), 'F_4', 1.3, 46).bend(wb(19, 2) + 0.1, wb(19, 2) + 0.4, 0, 2).bend(wb(21), wb(21) + 0.01, 2, 0)
+    for i in range(12):
+        koto.n(wb(20) + i / 12, 'C_5', 0.1, 32 + 12 * np.sin(np.pi * i / 11))
+
+    # Runs: into the waltz, into the flute's section, back into the theme, and away at the end.
+    run(koto, 3.3, 3.92, ['G_3', 'B3', 'C_4', 'E4', 'F_4', 'G_4', 'B4'], 30, 46)
+    run(koto, wb(16, 1.2), wb(17) - 0.03, ['C_6', 'B5', 'G_5', 'F_5', 'E5', 'C_5', 'B4', 'G_4', 'F_4', 'E4'], 44, 30)
+    run(koto, wb(24, 1.2), wb(25) - 0.04, ['G_3', 'B3', 'C_4', 'E4', 'F_4', 'G_4', 'B4'], 32, 46)
+    run(koto, wb(32) + 1.3, wb(32) + 2.4, ['G_5', 'F_5', 'E5', 'C_5', 'B4', 'G_4', 'F_4', 'E4', 'C_4'], 34, 24, dur=2.0)
+
+    # Light: a voice of air at each seam, a glockenspiel now and then.
+    choir.chord(0.4, ['E4', 'G_4', 'B4'], 4.4, 40).ramp(0.0, 3.0, 30, 70).ramp(3.0, 4.8, 70, 30)
+    choir.chord(wb(32), ['E4', 'G_4', 'B4'], length - wb(32), 40).ramp(wb(31), wb(32, 2), 30, 64)
+    for bar, notes, v in ((1, ['C_7'], 34), (9, ['G_6'], 32), (13, ['E7'], 36), (25, ['C_7'], 34),
+                          (32, ['C_7', 'G_6'], 30)):
+        glock.chord(wb(bar), notes, 1.8, v)
+
+    music = mix([cel, harp, koto, koto_bend, flute, flute_scoop, strings, choir, glock], length, 'bed', wet=0.6)
+    fade = int(BED_SEAM * SR)
     ramp = 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, fade))
-    y[:fade] *= ramp[:, None]
-    y[-fade:] *= ramp[::-1, None]
+    music[:fade] *= ramp[:, None]
+    music[-fade:] *= ramp[::-1, None]
+    # The gong opens each loop, outside the fade, its C sharp (a small gong, 20 cents sharp) tuned.
+    gong = stretch(recording('gong-sweet'), 1.01) * 0.05
+    y = music + mix([], length, 'bed-gong', wet=0.7, things=[(at(place(gong, -0.05), 0.15, length), 0.6)])
+    # A backdrop, well under the moments: the onboarding's sounds must stand out of it.
+    y = master(y, -31, -12, fade_in=0.0, fade_out=0.0)
+    y[-int(0.05 * SR):] *= np.linspace(1, 0, int(0.05 * SR))[:, None]
     y[0] = 0
     y[-1] = 0
     return y

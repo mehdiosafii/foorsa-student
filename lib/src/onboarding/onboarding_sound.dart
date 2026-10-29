@@ -1,8 +1,9 @@
 /// The onboarding's sounds (scripts/onboarding_sounds/compose.py): a few,
 /// and quiet. Music played by sampled instruments (piano, harp, strings,
 /// celesta) in one key, recordings of the things in the story (the board's
-/// flaps, the arrow's air, the camera, the stub), and a soft bed of night
-/// music under the steps. A plain press or a step changing makes no sound.
+/// flaps, the arrow's air, the camera, the stub), and under the steps a
+/// celesta waltz with a guzheng, a bamboo flute and a temple gong in it. A
+/// plain press or a step changing makes no sound.
 ///
 /// They are meant to be heard. The first version used iOS's ambient session,
 /// which the ring/silent switch silences, and Android's interface-sound
