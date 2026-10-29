@@ -8,6 +8,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
@@ -72,6 +73,10 @@ class _NightSkyState extends State<NightSky>
             drift: widget.drift,
             clock: _clock,
             still: widget.still,
+            // The sign-in's sky (NightStage.tsx) is laid out in the web view,
+            // which starts under the status bar: the stars are placed in that
+            // frame so both nights have them in the same places.
+            top: statusBarHeight(context),
           ),
         ),
       ),
@@ -134,13 +139,17 @@ class _StarsPainter extends CustomPainter {
       {required this.night,
       required this.drift,
       required this.clock,
-      required this.still})
+      required this.still,
+      required this.top})
       : super(repaint: Listenable.merge([night, drift, clock]));
 
   final Animation<double> night;
   final Animation<double> drift;
   final ValueNotifier<double> clock;
   final bool still;
+
+  /// Where the web view starts: the height of the status bar.
+  final double top;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -153,7 +162,7 @@ class _StarsPainter extends CustomPainter {
       final shift = drift.value * 14 * star.depth;
       var x = (star.x * size.width - shift) % size.width;
       if (x < 0) x += size.width;
-      final y = star.y * size.height;
+      final y = top + star.y * (size.height - top);
       final fade = 1 - (star.y / 0.46);
       final twinkle =
           still ? 1.0 : 0.7 + 0.3 * math.sin(t * star.speed + star.phase);
@@ -165,7 +174,7 @@ class _StarsPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_StarsPainter old) => old.still != still;
+  bool shouldRepaint(_StarsPainter old) => old.still != still || old.top != top;
 }
 
 /// The one light on the stage: a soft pool behind the object, breathing very
@@ -212,4 +221,58 @@ class _SpotlightPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_SpotlightPainter old) => old.clock != clock;
+}
+
+/// The height of the status bar, from the window itself: a SafeArea above a
+/// widget hides it from MediaQuery. The same inset the shell's SafeArea puts
+/// the web view under.
+double statusBarHeight(BuildContext context) {
+  final view = View.of(context);
+  return view.padding.top / view.devicePixelRatio;
+}
+
+/// Paints its child only below the status bar. The sign-in's light is cut
+/// where its web view starts, and the band above is the shell's flat colour,
+/// so the onboarding's light ends at the same line.
+class UnderStatusBar extends SingleChildRenderObjectWidget {
+  const UnderStatusBar({super.key, required Widget super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      RenderUnderStatusBar(statusBarHeight(context));
+
+  @override
+  void updateRenderObject(
+          BuildContext context, RenderUnderStatusBar renderObject) =>
+      renderObject.top = statusBarHeight(context);
+}
+
+/// [UnderStatusBar]'s render object.
+class RenderUnderStatusBar extends RenderProxyBox {
+  RenderUnderStatusBar(this._top);
+
+  double _top;
+  set top(double value) {
+    if (value == _top) return;
+    _top = value;
+    markNeedsPaint();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (child == null) return;
+    // Where the status bar ends, in this box's own points.
+    final edge = globalToLocal(Offset(0, _top)).dy;
+    if (edge <= 0) {
+      layer = null;
+      super.paint(context, offset);
+      return;
+    }
+    layer = context.pushClipRect(
+        needsCompositing,
+        offset,
+        Rect.fromLTRB(0, edge, size.width, math.max(edge, size.height)),
+        super.paint,
+        oldLayer: layer as ClipRectLayer?);
+  }
 }

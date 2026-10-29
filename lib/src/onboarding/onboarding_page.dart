@@ -550,8 +550,30 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       return;
     }
     unawaited(_findMark());
+    // The sky comes home as the student boards: the sign-in's stars have not
+    // drifted, so these settle back onto them before the two nights meet.
+    _spring(_drift, 0, response: 1.2);
     _exit.duration = Duration(milliseconds: (_boardTotal * 1000).round());
     _exit.forward();
+  }
+
+  /// Boarding: the stage's light goes with the arrow onto the sign-in's and
+  /// takes the size of the light behind it there (nightStage.css's
+  /// `.night-mark__light`: 540 across beside a 64 pt arrow, 420 beside a 48),
+  /// so the fade from one night to the other moves nothing. Returns how far
+  /// the light has moved from the stage's centre, and its radius.
+  (Offset, double) _boardingLight(double radius) {
+    final centre = _boardCentre, mark = _mark;
+    if (!_leaving || _still || centre == null || mark == null) {
+      return (Offset.zero, radius);
+    }
+    final s = _exit.value * _boardTotal;
+    final go = Curves.easeInOutCubic.transform(
+        ((s - _boardShineEnd) / (_boardMarkEnd - _boardShineEnd))
+            .clamp(0.0, 1.0));
+    final pageArrow = mark.height * 757 / 712;
+    final pageLight = pageArrow >= 56 ? 270.0 : 210.0;
+    return ((mark.center - centre) * go, ui.lerpDouble(radius, pageLight, go)!);
   }
 
   Future<void> _findMark() async {
@@ -847,13 +869,22 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                       key: _stageKey,
                       clipBehavior: Clip.none,
                       children: [
-                        Positioned(
-                          left: box.maxWidth / 2 - light,
-                          top: box.maxHeight / 2 - light,
-                          width: light * 2,
-                          height: light * 2,
+                        AnimatedBuilder(
+                          animation: _exit,
+                          builder: (context, child) {
+                            final (moved, radius) = _boardingLight(light);
+                            return Positioned(
+                              left: box.maxWidth / 2 + moved.dx - radius,
+                              top: box.maxHeight / 2 + moved.dy - radius,
+                              width: radius * 2,
+                              height: radius * 2,
+                              child: child!,
+                            );
+                          },
                           child: FadeTransition(
-                              opacity: _night, child: Spotlight(radius: light)),
+                              opacity: _night,
+                              child: UnderStatusBar(
+                                  child: Spotlight(radius: light))),
                         ),
                         Positioned.fill(
                           child: AnimatedBuilder(
@@ -1188,6 +1219,9 @@ extension OnboardingProbe on FirstLaunchOnboardingState {
 
   /// Where the flying arrow is, in the onboarding's points, while one flies.
   Offset? get pilotAt => _pilot()?.pose.at;
+
+  /// How far the stars have drifted, in steps.
+  double get skyDrift => _drift.value;
 
   void debugJumpTo(BoardingStep step) {
     _skipIntro();

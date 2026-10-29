@@ -6,6 +6,7 @@ import 'package:foorsa_student/src/onboarding/onboarding_flow.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_gate.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_page.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_sound.dart';
+import 'package:foorsa_student/src/onboarding/night_sky.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_store.dart';
 import 'package:foorsa_student/src/onboarding/scene_location.dart';
 import 'package:foorsa_student/src/onboarding/scene_scan.dart';
@@ -338,6 +339,13 @@ void main() {
     expect(boarded, 1);
     expect((key.currentState!.pilotAt! - const Offset(195, 159)).distance,
         lessThan(16));
+    // Its light came with it, at the size of the light behind the sign-in's
+    // arrow (nightStage.css), and the stars are back where the sign-in has
+    // them: the fade from one night to the other moves nothing.
+    final light = tester.getRect(find.byType(Spotlight));
+    expect((light.center - const Offset(195, 159)).distance, lessThan(16));
+    expect(light.width, closeTo(540, 12));
+    expect(key.currentState!.skyDrift.abs(), lessThan(0.05));
     for (var i = 0; i < 320 && !finished; i++) {
       await tester.pump(const Duration(milliseconds: 16));
     }

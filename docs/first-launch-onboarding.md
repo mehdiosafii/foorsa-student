@@ -185,6 +185,16 @@ answered by the time the arrow has shone, the arrow shines on until it does
 (0.9 s at most). A page with no arrow (not loaded, or already signed in) gets
 the fade alone.
 
+The fade moves nothing, because by then both nights are the same picture.
+The stage's light flies with the arrow and ends the size of the light behind
+the sign-in's (540 across beside a 64 pt arrow, 420 beside a 48). It is never
+drawn under the status bar (`UnderStatusBar`), where the shell paints the
+page's colour flat. The stars are placed in the web view's frame, under the
+status bar (`statusBarHeight`), as the page places its own. Their drift
+springs back to none as the stub comes off. Until then, the light stayed in
+the middle of the screen and the stars sat up to 46 pt higher and drifted
+sideways, so the fade swapped one sky for another.
+
 **The first real notification.** When the student turns notifications on,
 the front card of the stack flies up off the stage and the phone's own first
 notification comes down from the top (`showFirstNotification`,
