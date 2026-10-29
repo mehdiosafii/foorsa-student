@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'src/config.dart';
 import 'src/device_access.dart';
 import 'src/onboarding/onboarding_gate.dart';
+import 'src/onboarding/onboarding_sound.dart';
 import 'src/onboarding/onboarding_store.dart';
 import 'src/onboarding/splash_logo.dart';
 import 'src/student_calls.dart';
@@ -26,14 +27,29 @@ Future<void> main() async {
   final firstLaunch = await OnboardingStore().shouldShow();
   // Its first frame is the launch screen's: the roundel is decoded before it.
   final splash = firstLaunch ? await decodeSplashLogo() : null;
+  // And its sounds, behind the native splash, so the intro's starts with its
+  // first frame. Never more than a moment: without them it is silent.
+  final sounds = firstLaunch ? OnboardingSounds() : null;
+  if (sounds != null) {
+    await sounds
+        .prepare()
+        .timeout(const Duration(milliseconds: 700), onTimeout: () {});
+  }
   await StudentCalls.instance.start();
   runApp(FoorsaStudentApp(
-      appearance: appearance, firstLaunch: firstLaunch, splash: splash));
+      appearance: appearance,
+      firstLaunch: firstLaunch,
+      splash: splash,
+      sounds: sounds));
 }
 
 class FoorsaStudentApp extends StatelessWidget {
   const FoorsaStudentApp(
-      {super.key, this.appearance, this.firstLaunch = false, this.splash});
+      {super.key,
+      this.appearance,
+      this.firstLaunch = false,
+      this.splash,
+      this.sounds});
 
   final ShellAppearance? appearance;
 
@@ -42,6 +58,9 @@ class FoorsaStudentApp extends StatelessWidget {
 
   /// The splash's roundel, decoded, for the onboarding's first frame.
   final ui.Image? splash;
+
+  /// The onboarding's sounds, loaded before its first frame.
+  final OnboardingSounds? sounds;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +77,7 @@ class FoorsaStudentApp extends StatelessWidget {
       home: FirstLaunchGate(
         show: firstLaunch,
         splash: splash,
+        sounds: sounds,
         child: DeviceAccess(
           suppressed: firstLaunch,
           child: ShellPage(

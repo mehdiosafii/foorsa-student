@@ -13,12 +13,12 @@ import 'package:flutter/widgets.dart';
 import 'airliner.dart';
 import 'boarding_style.dart';
 import 'brand_marks.dart';
+import 'stage_forms.dart';
 
-const _passWidth = 300.0;
+const _passWidth = passWidth;
 const _upperHeight = 236.0;
 const _tearHeight = 20.0;
-const _stubHeight = 96.0;
-const _passHeight = _upperHeight + _tearHeight + _stubHeight;
+const _passHeight = passHeight;
 const _tearY = _upperHeight + _tearHeight / 2;
 
 class BoardingPassScene extends StatefulWidget {
@@ -27,10 +27,14 @@ class BoardingPassScene extends StatefulWidget {
     required this.still,
     required this.feel,
     required this.onTorn,
+    this.onTear,
   });
 
   final bool still;
   final Feel feel;
+
+  /// The paper gives: its sound.
+  final VoidCallback? onTear;
 
   /// The stub is off: board.
   final VoidCallback onTorn;
@@ -41,9 +45,6 @@ class BoardingPassScene extends StatefulWidget {
 
 class BoardingPassSceneState extends State<BoardingPassScene>
     with TickerProviderStateMixin {
-  // Arriving: 0 below and tipped back, 1 flat in place.
-  late final AnimationController _arrive =
-      AnimationController.unbounded(vsync: this);
   // How far the stub is pulled, in px.
   late final AnimationController _pull =
       AnimationController.unbounded(vsync: this);
@@ -58,15 +59,6 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   @override
   void initState() {
     super.initState();
-    if (widget.still) {
-      _arrive.value = 1;
-    } else {
-      _arrive.animateWith(SpringSimulation(
-          foorsaSpring(damping: 0.84, response: 0.7), 0, 1, 0));
-      Timer(const Duration(milliseconds: 520), () {
-        if (mounted) widget.feel('land');
-      });
-    }
     _pull.addListener(_pullFeel);
   }
 
@@ -80,7 +72,6 @@ class BoardingPassSceneState extends State<BoardingPassScene>
 
   @override
   void dispose() {
-    _arrive.dispose();
     _pull.dispose();
     _fall.dispose();
     super.dispose();
@@ -101,6 +92,7 @@ class BoardingPassSceneState extends State<BoardingPassScene>
     if (_torn) return;
     setState(() => _torn = true);
     widget.feel('release');
+    widget.onTear?.call();
     if (widget.still) {
       widget.onTorn();
       return;
@@ -139,22 +131,20 @@ class BoardingPassSceneState extends State<BoardingPassScene>
       container: true,
       label: 'Your boarding pass. Tear off the stub, or tap Board.',
       child: LayoutBuilder(builder: (context, constraints) {
-        // The pass is drawn at its own size and fitted to the screen.
-        final scale = math.min(
-            1.0,
-            math.min(constraints.maxWidth / (_passWidth + 8),
-                constraints.maxHeight / (_passHeight + 24)));
+        // The pass is drawn at its own size, fitted to the stage and
+        // centred, where the transition leaves it.
+        final scale = passScale(constraints.biggest);
         return Center(
           child: SizedBox(
             width: _passWidth * scale,
-            height: (_passHeight + 20) * scale,
+            height: _passHeight * scale,
             child: FittedBox(
               fit: BoxFit.contain,
               child: SizedBox(
                 width: _passWidth,
-                height: _passHeight + 20,
+                height: _passHeight,
                 child: AnimatedBuilder(
-                  animation: Listenable.merge([_arrive, _pull, _fall]),
+                  animation: Listenable.merge([_pull, _fall]),
                   builder: (context, _) => _pass(),
                 ),
               ),
@@ -166,64 +156,50 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   }
 
   Widget _pass() {
-    final a = _arrive.value;
     final pull = _pull.value.clamp(0.0, _tearAt + 30);
     final fall = _fall.value;
     final tearAngle = (pull / _tearAt) * 0.1 + fall * 0.5;
     final stubDrop = pull * 0.32 + fall * fall * 420;
-    // It comes up out of the dark and lies down flat, as a card does when
-    // Wallet adds it.
-    final arrival = Matrix4.identity()
-      ..setEntry(3, 2, 0.0012)
-      ..translateByDouble(0, (1 - a) * 90, 0, 1)
-      ..rotateX((1 - a) * 0.5);
-    return Opacity(
-      opacity: a.clamp(0.0, 1.0),
-      child: Transform(
-        transform: arrival,
-        alignment: Alignment.center,
-        child: Stack(clipBehavior: Clip.none, children: [
-          // The upper piece's shadow lies under everything, the stub too.
-          const Positioned(
-            left: 0,
-            top: 0,
-            width: _passWidth,
-            height: _tearY,
-            child: CustomPaint(painter: _PieceShadowPainter(true)),
-          ),
-          // The stub, its own piece below the perforation.
-          Positioned(
-            left: 0,
-            top: _tearY,
-            width: _passWidth,
-            height: _passHeight - _tearY,
-            child: Opacity(
-              opacity: (1 - fall * 1.3).clamp(0.0, 1.0),
-              child: Transform.translate(
-                offset: Offset(fall * 40, stubDrop),
-                child: Transform.rotate(
-                  angle: tearAngle,
-                  alignment: Alignment.topRight,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onVerticalDragUpdate: _drag,
-                    onVerticalDragEnd: _release,
-                    child: _Piece(top: false, child: _stub()),
-                  ),
-                ),
+    return Stack(clipBehavior: Clip.none, children: [
+      // The upper piece's shadow lies under everything, the stub too.
+      const Positioned(
+        left: 0,
+        top: 0,
+        width: _passWidth,
+        height: _tearY,
+        child: CustomPaint(painter: _PieceShadowPainter(true)),
+      ),
+      // The stub, its own piece below the perforation.
+      Positioned(
+        left: 0,
+        top: _tearY,
+        width: _passWidth,
+        height: _passHeight - _tearY,
+        child: Opacity(
+          opacity: (1 - fall * 1.3).clamp(0.0, 1.0),
+          child: Transform.translate(
+            offset: Offset(fall * 40, stubDrop),
+            child: Transform.rotate(
+              angle: tearAngle,
+              alignment: Alignment.topRight,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: _drag,
+                onVerticalDragEnd: _release,
+                child: _Piece(top: false, child: _stub()),
               ),
             ),
           ),
-          Positioned(
-            left: 0,
-            top: 0,
-            width: _passWidth,
-            height: _tearY,
-            child: _Piece(top: true, shadow: false, child: _upper()),
-          ),
-        ]),
+        ),
       ),
-    );
+      Positioned(
+        left: 0,
+        top: 0,
+        width: _passWidth,
+        height: _tearY,
+        child: _Piece(top: true, shadow: false, child: _upper()),
+      ),
+    ]);
   }
 
   Widget _upper() {
@@ -256,10 +232,7 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   }
 
   Widget _stub() {
-    final hint = widget.still
-        ? 0.0
-        : (1 - _pull.value / 36).clamp(0.0, 1.0) *
-            _arrive.value.clamp(0.0, 1.0);
+    final hint = widget.still ? 0.0 : (1 - _pull.value / 36).clamp(0.0, 1.0);
     return Container(
       color: Boarding.paper,
       child: Column(children: [

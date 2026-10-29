@@ -161,7 +161,7 @@ BoardingCopy copyFor(BoardingStep step) => switch (step) {
         ),
       BoardingStep.boarding => const BoardingCopy(
           headline: 'You’re ready to board.',
-          body: 'Sign in with the details your adviser sent you.',
+          body: 'Tear off the stub, or tap Board.',
           action: 'Board',
         ),
     };

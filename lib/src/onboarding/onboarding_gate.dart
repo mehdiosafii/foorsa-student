@@ -8,11 +8,13 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import '../portal_handover.dart';
 import '../shell_haptics.dart';
 import 'onboarding_config.dart';
 import 'onboarding_flow.dart';
 import 'onboarding_page.dart';
 import 'onboarding_permissions.dart';
+import 'onboarding_sound.dart';
 import 'onboarding_store.dart';
 
 /// Whether the onboarding is over the shell: the shell then leaves the back
@@ -44,15 +46,19 @@ class FirstLaunchGate extends StatefulWidget {
     this.haptics,
     this.asksToTrack = OnboardingConfig.asksToTrack,
     this.splash,
+    this.sounds,
   });
 
   /// When the shell may make its WebView on a first launch: after the
   /// takeoff (takeoff_intro.dart), which a platform view's set-up would
   /// stall. The portal still has the whole onboarding to load.
-  static const webViewDelay = Duration(milliseconds: 3500);
+  static const webViewDelay = Duration(milliseconds: 3600);
 
   /// The launch screen's roundel, decoded before the first frame.
   final ui.Image? splash;
+
+  /// Its sounds; silent when none are given (tests).
+  final OnboardingSounds? sounds;
 
   /// Decided before the first frame (OnboardingStore.shouldShow).
   final bool show;
@@ -74,6 +80,7 @@ class _FirstLaunchGateState extends State<FirstLaunchGate> {
 
   void _finish() {
     (widget.store ?? OnboardingStore()).markDone();
+    widget.sounds?.release();
     if (mounted) setState(() => _showing = false);
   }
 
@@ -93,6 +100,9 @@ class _FirstLaunchGateState extends State<FirstLaunchGate> {
               key: _onboarding,
               permissions: widget.permissions,
               feel: (touch, [level = 1]) => _haptics.play(touch, level),
+              sounds: widget.sounds ?? const SilentSounds(),
+              findMark: PortalHandover.instance.markRect,
+              onBoarded: PortalHandover.instance.boarded,
               onFinished: _finish,
               isIOS: defaultTargetPlatform == TargetPlatform.iOS,
               asksToTrack: widget.asksToTrack,

@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
 import 'split_flap.dart';
+import 'stage_forms.dart';
 
 const _cities = <String>[
   'BEIJING',
@@ -32,9 +33,14 @@ const _cities = <String>[
 ];
 
 class DeparturesScene extends StatefulWidget {
-  const DeparturesScene({super.key, required this.still, required this.feel});
+  const DeparturesScene(
+      {super.key, required this.still, required this.feel, this.onFlip});
   final bool still;
   final Feel feel;
+
+  /// The board turns over by the student's hand (and once as it appears):
+  /// its sound.
+  final VoidCallback? onFlip;
 
   @override
   State<DeparturesScene> createState() => _DeparturesSceneState();
@@ -48,6 +54,7 @@ class _DeparturesSceneState extends State<DeparturesScene> {
   void initState() {
     super.initState();
     _schedule();
+    widget.onFlip?.call();
   }
 
   void _schedule() {
@@ -68,18 +75,15 @@ class _DeparturesSceneState extends State<DeparturesScene> {
 
   @override
   Widget build(BuildContext context) {
-    const length = 9;
-    const gap = 4.0;
     return LayoutBuilder(builder: (context, constraints) {
-      final cell =
-          math.min(36.0, (constraints.maxWidth - (length - 1) * gap) / length);
+      final cell = boardCell(constraints.maxWidth);
       final height = cell * 1.44;
       Widget line() => SplitFlapLine(
-            text: _centred(_cities[_index], length),
-            length: length,
+            text: _centred(_cities[_index], boardCells),
+            length: boardCells,
             cellWidth: cell,
             cellHeight: height,
-            gap: gap,
+            gap: boardGap,
             fontSize: height * 0.56,
             weight: FontWeight.w600,
             color: Boarding.heading,
@@ -88,6 +92,8 @@ class _DeparturesSceneState extends State<DeparturesScene> {
             still: widget.still,
             seed: _index,
           );
+      // The line sits in the stage's middle, where the transitions leave it;
+      // its caption above it and its reflection below.
       return Semantics(
         button: true,
         label: 'Next departure, ${_cities[_index]}',
@@ -97,37 +103,44 @@ class _DeparturesSceneState extends State<DeparturesScene> {
           behavior: HitTestBehavior.opaque,
           onTap: () {
             widget.feel('press');
+            widget.onFlip?.call();
             _next();
             _schedule();
           },
-          child: Center(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('NEXT DEPARTURE', style: Boarding.caption()),
-              const SizedBox(height: 18),
-              line(),
-              const SizedBox(height: 3),
-              // The floor of the stage: the board again, upside down, fading.
-              SizedBox(
-                height: height * 0.62,
-                child: ClipRect(
-                  child: OverflowBox(
-                    alignment: Alignment.topCenter,
-                    maxHeight: height,
-                    child: ShaderMask(
-                      shaderCallback: (rect) => const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0x2EFFFFFF), Color(0x00FFFFFF)],
-                        stops: [0, 0.62],
-                      ).createShader(rect),
-                      blendMode: BlendMode.dstIn,
-                      child: Transform.flip(flipY: true, child: line()),
+          child: Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                line(),
+                Transform.translate(
+                  offset: Offset(0, -(height / 2 + 26)),
+                  child: Text('NEXT DEPARTURE', style: Boarding.caption()),
+                ),
+                Transform.translate(
+                  offset: Offset(0, height / 2 + 3 + height * 0.31),
+                  // The floor of the stage: the board again, upside down,
+                  // fading.
+                  child: SizedBox(
+                    height: height * 0.62,
+                    child: ClipRect(
+                      child: OverflowBox(
+                        alignment: Alignment.topCenter,
+                        maxHeight: height,
+                        child: ShaderMask(
+                          shaderCallback: (rect) => const LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Color(0x2EFFFFFF), Color(0x00FFFFFF)],
+                            stops: [0, 0.62],
+                          ).createShader(rect),
+                          blendMode: BlendMode.dstIn,
+                          child: Transform.flip(flipY: true, child: line()),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ]),
-          ),
+              ]),
         ),
       );
     });

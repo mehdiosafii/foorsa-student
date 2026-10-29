@@ -11,9 +11,10 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'stage_forms.dart';
 
 /// One pass of the scene, in seconds; it then starts again.
-const _cycle = 5.6;
+const _cycle = 6.0;
 
 class ScanScene extends StatefulWidget {
   const ScanScene({super.key, required this.still, required this.feel});
@@ -38,7 +39,7 @@ class _ScanSceneState extends State<ScanScene>
       label: 'A passport page being scanned and straightened',
       excludeSemantics: true,
       child: LayoutBuilder(builder: (context, constraints) {
-        final width = math.min(250.0, constraints.maxWidth * 0.78);
+        final width = pageWidth(constraints.maxWidth);
         return Center(
           child: CustomPaint(
             size: Size(width + 80, width * 0.71 + 110),
@@ -66,23 +67,26 @@ class _ScanPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final t = still ? 3.4 : clock.value % _cycle;
+    final clockNow = clock.value;
+    final t = still ? 4.2 : clockNow % _cycle;
+    final first = !still && clockNow < _cycle;
     final w = page, h = page * 0.704;
-    final centre = size.center(const Offset(0, -4));
+    final centre = size.center(Offset.zero);
 
-    // How far into the pass: found, flattened, read, gone.
-    final enter = easeOut(t, 0.0, 0.7);
-    final found = ease(t, 0.7, 1.5);
-    final flat = ease(t, 1.7, 2.6);
-    final sheen = ((t - 2.5) / 0.9).clamp(0.0, 1.0);
-    final leave = ease(t, _cycle - 0.6, _cycle);
-    final shown = enter * (1 - leave);
+    // The pass: the page lies flat where it arrived, is picked up and tipped
+    // (the corners lose it), is found again, laid flat and read. It ends
+    // flat and found, where the next pass starts.
+    final tip = ease(t, 0.6, 1.4) * (1 - ease(t, 2.5, 3.4));
+    final lost = ease(t, 0.5, 1.1);
+    final found = ease(t, 1.5, 2.2);
+    final sheen = ((t - 3.3) / 0.9).clamp(0.0, 1.0);
+    final corners0 = first ? ease(t, 0.15, 0.55) : 1.0;
 
     // The page in space: tipped back and turned, then flat and square.
-    final tilt = ui.lerpDouble(0.5, 0, flat)!;
-    final turn = ui.lerpDouble(-0.13, 0, flat)!;
-    final scale = ui.lerpDouble(0.9, 1, flat)! * (0.96 + 0.04 * enter);
-    final rise = ui.lerpDouble(8, 0, flat)! + (1 - enter) * 14;
+    final tilt = 0.5 * tip;
+    final turn = -0.13 * tip;
+    final scale = 1 - 0.1 * tip;
+    final rise = 8 * tip;
     final m = Matrix4.identity()
       ..translateByDouble(centre.dx, centre.dy + rise, 0, 1)
       ..multiply(Matrix4.identity()..setEntry(3, 2, 0.0017))
@@ -97,31 +101,22 @@ class _ScanPainter extends CustomPainter {
     final quad = [project(0, 0), project(w, 0), project(w, h), project(0, h)];
 
     // Its shadow on the stage.
-    if (shown > 0) {
-      final bottom = (quad[2].dy + quad[3].dy) / 2;
-      canvas.drawOval(
-        Rect.fromCenter(
-            center: Offset(centre.dx, bottom + 22),
-            width: w * 0.86,
-            height: 16),
-        Paint()
-          ..color = Color.fromRGBO(0, 0, 0, 0.5 * shown)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14),
-      );
-    }
+    final bottom = (quad[2].dy + quad[3].dy) / 2;
+    canvas.drawOval(
+      Rect.fromCenter(
+          center: Offset(centre.dx, bottom + 22), width: w * 0.86, height: 16),
+      Paint()
+        ..color = const Color.fromRGBO(0, 0, 0, 0.5)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14),
+    );
 
-    if (shown > 0.001) {
-      canvas.saveLayer(Offset.zero & size,
-          Paint()..color = Color.fromRGBO(255, 255, 255, shown));
-      canvas.save();
-      canvas.transform(m.storage);
-      _page(canvas, w, h, sheen);
-      canvas.restore();
-      canvas.restore();
-    }
+    canvas.save();
+    canvas.transform(m.storage);
+    _page(canvas, w, h, sheen);
+    canvas.restore();
 
-    // The scanner's corners: wide while looking, on the page once found,
-    // then just outside it as it lies flat.
+    // The scanner's corners: just outside the page while it has it, wide
+    // while it looks for it.
     final looking =
         Rect.fromCenter(center: centre, width: w + 54, height: h + 74);
     final wide = [
@@ -130,7 +125,8 @@ class _ScanPainter extends CustomPainter {
       looking.bottomRight,
       looking.bottomLeft
     ];
-    final breathe = still ? 0.0 : math.sin(t * 3.2) * 3 * (1 - found);
+    final searching = lost * (1 - found);
+    final breathe = still ? 0.0 : math.sin(t * 3.2) * 3 * searching;
     const outset = 9.0;
     final signs = const [
       Offset(-1, -1),
@@ -140,10 +136,10 @@ class _ScanPainter extends CustomPainter {
     ];
     final corners = [
       for (var i = 0; i < 4; i++)
-        Offset.lerp(
-            wide[i] + signs[i] * breathe, quad[i] + signs[i] * outset, found)!,
+        Offset.lerp(quad[i] + signs[i] * outset, wide[i] + signs[i] * breathe,
+            searching)!,
     ];
-    final ink = Color.fromRGBO(244, 247, 251, 0.95 * (1 - leave * 0.9));
+    final ink = Color.fromRGBO(244, 247, 251, 0.95 * corners0);
     final stroke = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.4

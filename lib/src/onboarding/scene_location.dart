@@ -9,6 +9,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'stage_forms.dart';
 
 class LocationScene extends StatefulWidget {
   const LocationScene({super.key, required this.still, required this.feel});
@@ -34,8 +35,8 @@ class _LocationSceneState extends State<LocationScene>
       excludeSemantics: true,
       child: Center(
         child: SizedBox(
-          width: 290,
-          height: 290,
+          width: lensBox,
+          height: lensBox,
           child: Stack(alignment: Alignment.center, children: [
             Positioned.fill(
               child:

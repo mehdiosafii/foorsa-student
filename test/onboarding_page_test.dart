@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_flow.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_gate.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_page.dart';
+import 'package:foorsa_student/src/onboarding/onboarding_sound.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_store.dart';
 
 class _Phone implements BoardingPermissions {
@@ -54,6 +55,14 @@ Future<void> _settle(WidgetTester tester) async {
 Future<void> _press(WidgetTester tester, String label) async {
   await tester.tap(find.text(label).last);
   await _settle(tester);
+}
+
+class _Heard implements BoardingSounds {
+  final cues = <String>[];
+  @override
+  void play(String cue) => cues.add(cue);
+  @override
+  void stop(String cue) => cues.add('stop $cue');
 }
 
 void main() {
@@ -213,6 +222,81 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+
+  testWidgets('each step sounds a note higher, and a yes has its own chime',
+      (tester) async {
+    _screen(tester, const Size(390, 844));
+    final heard = _Heard();
+    await tester.pumpWidget(_phone(FirstLaunchOnboarding(
+      permissions: _Phone(answers: {BoardingAccess.camera: AccessState.denied}),
+      feel: (_, [__ = 1]) {},
+      onFinished: () {},
+      isIOS: false,
+      asksToTrack: false,
+      sounds: heard,
+    )));
+    await _settle(tester);
+    await _press(tester, 'Get started');
+    for (var i = 0; i < 4; i++) {
+      await _press(tester, 'Continue');
+      await tester.pump(const Duration(milliseconds: 1200));
+      await _settle(tester);
+    }
+    await _press(tester, 'Board');
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(heard.cues.where((c) => c.startsWith('step-')),
+        ['step-1', 'step-2', 'step-3', 'step-4', 'step-5']);
+    // Three yeses (the camera was refused), one chime each.
+    expect(heard.cues.where((c) => c == 'granted'), hasLength(3));
+    expect(heard.cues.contains('flap'), isTrue);
+    expect(heard.cues.sublist(heard.cues.length - 2), ['tear', 'board']);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+      'boarding lands the arrow on the sign-in\'s, then lets the sign-in show',
+      (tester) async {
+    _screen(tester, const Size(390, 844));
+    final key = GlobalKey<FirstLaunchOnboardingState>();
+    var asked = 0;
+    var boarded = 0;
+    var finished = false;
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(
+          size: Size(390, 844), padding: EdgeInsets.only(top: 47, bottom: 34)),
+      child: MaterialApp(
+        home: FirstLaunchOnboarding(
+          key: key,
+          permissions: _Phone(start: {
+            for (final a in BoardingAccess.values) a: AccessState.granted
+          }),
+          feel: (_, [__ = 1]) {},
+          onFinished: () => finished = true,
+          isIOS: true,
+          asksToTrack: false,
+          findMark: () async {
+            asked++;
+            return const Rect.fromLTWH(163, 127, 64, 64);
+          },
+          onBoarded: () => boarded++,
+        ),
+      ),
+    ));
+    await tester.pump();
+    key.currentState!.debugJumpTo(BoardingStep.boarding);
+    for (var i = 0; i < 90; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.tap(find.text('Board'));
+    for (var i = 0; i < 200 && !finished; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(asked, 1);
+    expect(boarded, 1);
+    expect(finished, isTrue);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
 
   group('the gate', () {
     late Directory dir;

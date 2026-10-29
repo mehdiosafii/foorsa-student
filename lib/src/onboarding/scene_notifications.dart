@@ -11,6 +11,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'stage_forms.dart';
 
 class _Note {
   _Note(this.id, this.body);
@@ -65,8 +66,12 @@ class _NotificationsSceneState extends State<NotificationsScene>
       }
       return;
     }
+    // The first is already there: it is what the last object became.
+    _add(_bodies[0]);
+    _notes.forEach(_snap);
+    _next = 1;
     _ticker.start();
-    _timer = Timer(const Duration(milliseconds: 420), () {
+    _timer = Timer(const Duration(milliseconds: 1900), () {
       _arrive();
       _timer =
           Timer.periodic(const Duration(milliseconds: 2600), (_) => _arrive());
@@ -149,7 +154,7 @@ class _NotificationsSceneState extends State<NotificationsScene>
       label: 'Foorsa notifications arriving: ${_bodies.join(' ')}',
       excludeSemantics: true,
       child: LayoutBuilder(builder: (context, constraints) {
-        final width = math.min(340.0, constraints.maxWidth);
+        final width = cardWidth(constraints.maxWidth);
         return Center(
           child: SizedBox(
             width: width,
@@ -166,7 +171,7 @@ class _NotificationsSceneState extends State<NotificationsScene>
                         key: ValueKey(note.id),
                         left: 0,
                         right: 0,
-                        top: 12 + note.y,
+                        top: (120 - cardHeight) / 2 + note.y,
                         child: Opacity(
                           opacity: note.alpha.clamp(0.0, 1.0),
                           child: Transform.scale(
@@ -195,7 +200,7 @@ class _Card extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 78,
+      height: cardHeight,
       padding: const EdgeInsets.fromLTRB(14, 0, 16, 0),
       decoration: BoxDecoration(
         color: const Color(0xFF1A2633),

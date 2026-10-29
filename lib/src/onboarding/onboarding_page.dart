@@ -1,7 +1,8 @@
 /// The first-launch onboarding: the takeoff, the welcome board, a step for
-/// each phone access that can still be asked for, and the boarding pass. It
-/// sits over the shell while the portal loads underneath, so when the student
-/// boards, the sign-in is already there and opens through a widening circle.
+/// each phone access that can still be asked for, and the boarding pass, one
+/// object becoming the next through the arrow. It sits over the shell while
+/// the portal loads underneath, so when the student boards, the pass becomes
+/// the arrow, lands on the sign-in's own, and the onboarding fades onto it.
 library;
 
 import 'dart:async';
@@ -17,6 +18,7 @@ import 'boarding_style.dart';
 import 'brand_marks.dart';
 import 'night_sky.dart';
 import 'onboarding_flow.dart';
+import 'onboarding_sound.dart';
 import 'route_progress.dart';
 import 'scene_departures.dart';
 import 'scene_location.dart';
@@ -24,6 +26,8 @@ import 'scene_notifications.dart';
 import 'scene_scan.dart';
 import 'scene_tracking.dart';
 import 'scene_voice.dart';
+import 'stage_forms.dart';
+import 'stage_morph.dart';
 import 'takeoff_intro.dart';
 
 class FirstLaunchOnboarding extends StatefulWidget {
@@ -35,7 +39,19 @@ class FirstLaunchOnboarding extends StatefulWidget {
     required this.isIOS,
     required this.asksToTrack,
     this.splash,
+    this.sounds = const SilentSounds(),
+    this.findMark,
+    this.onBoarded,
   });
+
+  final BoardingSounds sounds;
+
+  /// Where the sign-in's arrow is on the screen (portal_handover.dart): the
+  /// onboarding's own lands on it.
+  final Future<Rect?> Function()? findMark;
+
+  /// The onboarding is fading onto the sign-in.
+  final VoidCallback? onBoarded;
 
   /// The launch screen's roundel, decoded before the first frame.
   final ui.Image? splash;
@@ -66,8 +82,22 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       AnimationController.unbounded(vsync: this);
   late final AnimationController _content = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 700));
+
+  /// Boarding: the pass becomes the arrow, the arrow goes to the sign-in's
+  /// own, and the onboarding fades onto it.
   late final AnimationController _exit = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 900));
+      vsync: this, duration: const Duration(milliseconds: 1600));
+
+  /// Where the sign-in's arrow is, from the stage's middle, and how tall.
+  (Offset, double)? _markTarget;
+  final GlobalKey _stageKey = GlobalKey();
+  bool _feltBoarded = false;
+
+  /// Between two steps: the old object becomes the arrow, the arrow the new.
+  late final AnimationController _shift = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1050));
+  BoardingStep? _previous;
+  bool _feltArrow = false;
 
   BoardingPlan? _plan;
   int _index = 0;
@@ -79,10 +109,12 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
 
   /// The student just said yes: the button shows a check for a moment.
   bool _done = false;
-  Offset? _revealCentre;
   final GlobalKey<BoardingPassSceneState> _passKey =
       GlobalKey<BoardingPassSceneState>();
-  final GlobalKey _buttonKey = GlobalKey();
+
+  /// The progress, the words and the button step aside as the student boards.
+  late final Animation<double> _chromeFade = ReverseAnimation(CurvedAnimation(
+      parent: _exit, curve: const Interval(0, 0.22, curve: Curves.easeOut)));
   bool _feltUnfold = false;
 
   /// The welcome's board flips when it appears, not while the plane flies.
@@ -107,6 +139,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     super.initState();
     unawaited(_load());
     _intro.addListener(_introTick);
+    _shift.addListener(_shiftTick);
   }
 
   @override
@@ -132,6 +165,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       _content.value = 1;
       return;
     }
+    widget.sounds.play('intro');
     _intro.forward().whenComplete(() {
       if (mounted) setState(() => _introDone = true);
     });
@@ -147,20 +181,21 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   void _introTick() {
     final s = _introSeconds.value;
     _night.value = takeoffNight(s);
-    if (!_feltUnfold && s > 0.95) {
+    if (!_feltUnfold && s > morphStarts + 0.05) {
       _feltUnfold = true;
       widget.feel('unfold');
     }
-    if (!_feltRelease && s > 2.2) {
+    if (!_feltRelease && s > climbStarts) {
       _feltRelease = true;
       widget.feel('release');
     }
     // The welcome comes once the plane has cleared it.
-    if (s > 2.82) _showContent();
+    if (s > takeoffSeconds - 0.2) _showContent();
   }
 
   void _skipIntro() {
     if (_introDone) return;
+    widget.sounds.stop('intro');
     _intro.stop();
     _intro.value = 1;
     _night.animateTo(1, duration: const Duration(milliseconds: 300));
@@ -176,6 +211,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     _route.dispose();
     _content.dispose();
     _exit.dispose();
+    _shift.dispose();
     _outcome.dispose();
     super.dispose();
   }
@@ -194,16 +230,33 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   }
 
   void _goTo(int index) {
-    if (index < 0 || index >= _steps.length) return;
+    if (index < 0 || index >= _steps.length || index == _index) return;
+    final from = _step;
     setState(() {
+      _previous = from;
       _index = index;
       _done = false;
       _busy = false;
       _outcome = ValueNotifier<bool?>(
           _step.access == null ? null : _answered[_step.access]);
     });
+    _feltArrow = false;
+    // One note higher each step forward, lower going back: a scale.
+    widget.sounds.play('step-${index.clamp(1, 6)}');
+    _shift.duration = Duration(milliseconds: _still ? 240 : 1050);
+    _shift.forward(from: 0).whenComplete(() {
+      if (mounted && _shift.value >= 1) setState(() => _previous = null);
+    });
     _spring(_drift, index.toDouble(), response: 0.9);
     _spring(_route, _steps.length <= 1 ? 0 : index / (_steps.length - 1));
+  }
+
+  void _shiftTick() {
+    // The arrow's moment is felt, lightly.
+    if (!_feltArrow && !_still && _shift.value >= arrowAt) {
+      _feltArrow = true;
+      widget.feel('detent');
+    }
   }
 
   /// The one button.
@@ -236,6 +289,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
         // makes a student feel they answered wrong.
         if (on) {
           widget.feel('land');
+          widget.sounds.play('granted');
           setState(() => _done = true);
         }
         final step = _index;
@@ -254,19 +308,36 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     }
   }
 
-  void _leave() {
+  Future<void> _leave() async {
     if (_leaving) return;
-    _leaving = true;
-    final box = _buttonKey.currentContext?.findRenderObject() as RenderBox?;
-    final mine = context.findRenderObject() as RenderBox?;
-    if (box != null && mine != null && box.hasSize) {
-      _revealCentre =
-          mine.globalToLocal(box.localToGlobal(box.size.center(Offset.zero)));
+    setState(() => _leaving = true);
+    Rect? mark;
+    if (!_still) {
+      try {
+        mark = await (widget.findMark?.call() ?? Future<Rect?>.value())
+            .timeout(const Duration(milliseconds: 400));
+      } catch (_) {}
     }
-    if (_still) {
-      _exit.duration = const Duration(milliseconds: 260);
+    if (!mounted) return;
+    final stage = _stageKey.currentContext?.findRenderObject() as RenderBox?;
+    if (mark != null && stage != null && stage.hasSize) {
+      final centre =
+          stage.globalToLocal(mark.center) - stage.size.center(Offset.zero);
+      // The page's arrow fills its 757 box; the mark itself is 712 of it.
+      _markTarget = (centre, mark.height * 712 / 757);
     }
+    _exit.duration = Duration(milliseconds: _still ? 320 : 1600);
+    _exit.addListener(_exitTick);
     _exit.forward().whenComplete(widget.onFinished);
+  }
+
+  void _exitTick() {
+    // The arrow has landed on the sign-in's: the page may show itself.
+    if (!_feltBoarded && _exit.value >= (_still ? 0 : 0.7)) {
+      _feltBoarded = true;
+      if (!_still) widget.feel('detent');
+      widget.onBoarded?.call();
+    }
   }
 
   /// Android's back: one step back, out of the app from the welcome.
@@ -285,7 +356,10 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
 
   Widget _scene(BoardingStep step) => switch (step) {
         BoardingStep.welcome => _contentShown
-            ? DeparturesScene(still: _still, feel: widget.feel)
+            ? DeparturesScene(
+                still: _still,
+                feel: widget.feel,
+                onFlip: () => widget.sounds.play('flap'))
             : const SizedBox.shrink(),
         BoardingStep.notifications => NotificationsScene(
             still: _still, feel: widget.feel, outcome: _outcome),
@@ -298,7 +372,11 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
             key: _passKey,
             still: _still,
             feel: widget.feel,
-            onTorn: _leave,
+            onTear: () => widget.sounds.play('tear'),
+            onTorn: () {
+              widget.sounds.play('board');
+              _leave();
+            },
           ),
       };
 
@@ -312,15 +390,14 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
         child: AnimatedBuilder(
           animation: _exit,
           builder: (context, child) {
-            final e = Curves.easeInOutCubic.transform(_exit.value);
-            if (e <= 0) return child!;
-            return ClipPath(
-              clipper: _RevealClipper(e, _revealCentre),
-              child: Opacity(
-                opacity: (1 - math.max(0.0, e - 0.75) * 4).clamp(0.0, 1.0),
-                child: Transform.scale(scale: 1 + 0.05 * e, child: child),
-              ),
-            );
+            // Once the arrow is on the sign-in's, the onboarding fades away
+            // and the same night, with the same arrow, is the sign-in.
+            final fade = _still
+                ? _exit.value
+                : ((_exit.value - 0.72) / 0.28).clamp(0.0, 1.0);
+            if (fade <= 0) return child!;
+            return Opacity(
+                opacity: 1 - Curves.easeInOut.transform(fade), child: child);
           },
           child: Stack(fit: StackFit.expand, children: [
             NightSky(night: _night, drift: _drift, still: _still),
@@ -400,28 +477,28 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
               final scene = MediaQuery.withNoTextScaling(
                 child: LayoutBuilder(builder: (context, box) {
                   final light = math.max(box.maxWidth, box.maxHeight) * 0.62;
-                  return Stack(clipBehavior: Clip.none, children: [
-                    Positioned(
-                      left: box.maxWidth / 2 - light,
-                      top: box.maxHeight / 2 - light,
-                      width: light * 2,
-                      height: light * 2,
-                      child: FadeTransition(
-                          opacity: _night, child: Spotlight(radius: light)),
-                    ),
-                    Positioned.fill(
-                      child: AnimatedSwitcher(
-                        duration: Duration(milliseconds: _still ? 200 : 700),
-                        reverseDuration:
-                            Duration(milliseconds: _still ? 200 : 260),
-                        switchInCurve: Curves.easeOutCubic,
-                        switchOutCurve: Curves.easeInCubic,
-                        transitionBuilder: _sceneTransition,
-                        child: KeyedSubtree(
-                            key: ValueKey(_step), child: _scene(_step)),
-                      ),
-                    ),
-                  ]);
+                  return Stack(
+                      key: _stageKey,
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned(
+                          left: box.maxWidth / 2 - light,
+                          top: box.maxHeight / 2 - light,
+                          width: light * 2,
+                          height: light * 2,
+                          child: FadeTransition(
+                              opacity: _night, child: Spotlight(radius: light)),
+                        ),
+                        Positioned.fill(
+                          child: AnimatedBuilder(
+                            animation: Listenable.merge([_shift, _exit]),
+                            builder: (context, _) => _leaving
+                                ? _boarding(Size(box.maxWidth, box.maxHeight))
+                                : _stage(Size(box.maxWidth, box.maxHeight),
+                                    _shift.value),
+                          ),
+                        ),
+                      ]);
                 }),
               );
 
@@ -450,23 +527,25 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
               );
 
               final action = PearlButton(
-                key: _buttonKey,
                 label: copy.action,
                 busy: _busy,
                 done: _done,
-                onDown: () => widget.feel('press'),
+                onDown: () {
+                  widget.feel('press');
+                  widget.sounds.play('tap');
+                },
                 onPressed: _plan == null ? null : _continue,
               );
 
               List<Widget> parts(Widget sceneSlot) => [
                     const SizedBox(height: 8),
-                    top,
+                    FadeTransition(opacity: _chromeFade, child: top),
                     const SizedBox(height: 12),
                     sceneSlot,
                     SizedBox(height: gap),
-                    words,
+                    FadeTransition(opacity: _chromeFade, child: words),
                     SizedBox(height: gap),
-                    action,
+                    FadeTransition(opacity: _chromeFade, child: action),
                     const SizedBox(height: 12),
                   ];
 
@@ -487,27 +566,104 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     );
   }
 
-  Widget _sceneTransition(Widget child, Animation<double> animation) {
-    final incoming = child.key == ValueKey(_step);
-    if (_still) return FadeTransition(opacity: animation, child: child);
-    return AnimatedBuilder(
-      animation: animation,
-      child: child,
-      builder: (context, child) {
-        final v = animation.value;
-        // In: from a little smaller and lower, into place. Out: it simply
-        // steps back and goes.
-        final scale = incoming ? 0.94 + 0.06 * v : 0.97 + 0.03 * v;
-        final rise = incoming ? (1 - v) * 14 : 0.0;
-        return Opacity(
-          opacity: v.clamp(0.0, 1.0),
-          child: Transform.translate(
-            offset: Offset(0, rise),
-            child: Transform.scale(scale: scale, child: child),
+  /// The stage at [m] of a transition: the old object fading over its own
+  /// outline, the outline becoming the arrow and the arrow the new object,
+  /// the new object fading in over the outline it has become. Each object
+  /// is keyed by its step, so it keeps running while it fades.
+  Widget _stage(Size stage, double m) {
+    final previous = _previous;
+    double smooth(double x) {
+      final t = x.clamp(0.0, 1.0);
+      return t * t * (3 - 2 * t);
+    }
+
+    final layers = <Widget>[];
+    if (previous != null && !_still) {
+      layers.add(Positioned.fill(
+        key: const ValueKey('morph'),
+        child: CustomPaint(
+          painter: StageMorphPainter(
+            from: formOf(previous, stage),
+            to: formOf(_step, stage),
+            progress: _shift,
           ),
-        );
-      },
-    );
+        ),
+      ));
+    }
+    if (previous == null || _still || m >= 0.86) {
+      final opacity = previous == null
+          ? 1.0
+          : _still
+              ? m
+              : smooth((m - 0.86) / 0.11);
+      layers.add(_SceneLayer(
+          key: ValueKey(_step), opacity: opacity, child: _scene(_step)));
+    }
+    if (previous != null && (_still || m < 0.16)) {
+      final opacity = _still ? 1 - m : 1 - smooth(m / 0.14);
+      layers.add(_SceneLayer(
+          key: ValueKey(previous), opacity: opacity, child: _scene(previous)));
+    }
+    return Stack(children: layers);
+  }
+
+  /// Boarding: what is left of the pass becomes the arrow, and the arrow
+  /// goes to where the sign-in draws its own (or stays in the middle when
+  /// the page has none), as the onboarding fades onto it.
+  Widget _boarding(Size stage) {
+    final e = _exit.value;
+    double smooth(double x) {
+      final t = x.clamp(0.0, 1.0);
+      return t * t * (3 - 2 * t);
+    }
+
+    final pass = formOf(BoardingStep.boarding, stage);
+    final outer = pass.shape.outerRect;
+    final scale = passScale(stage);
+    // The stub has gone: the part above the perforation.
+    final upper = StageForm(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(
+                outer.left, outer.top, outer.width, outer.height * 246 / 352),
+            Radius.circular(20 * scale)),
+        pass.color);
+    final layers = <Widget>[];
+    if (!_still) {
+      final becoming = (e / 0.36).clamp(0.0, 1.0);
+      if (becoming < 1) {
+        layers.add(Positioned.fill(
+          child: CustomPaint(
+            painter: StageMorphPainter(
+              from: upper,
+              to: upper,
+              progress: AlwaysStoppedAnimation(becoming),
+              toArrow: true,
+            ),
+          ),
+        ));
+      } else {
+        final target = _markTarget ?? (Offset.zero, 84.0);
+        final t = smooth((e - 0.38) / 0.32);
+        final go = Curves.easeInOutCubic.transform(t);
+        layers.add(Positioned.fill(
+          child: CustomPaint(
+            painter: ArrowPainter(
+              offset: Offset.lerp(Offset.zero, target.$1, go)!,
+              height: ui.lerpDouble(84, target.$2, go)!,
+              glow: 1 - go,
+            ),
+          ),
+        ));
+      }
+    }
+    final passOpacity = _still ? 1.0 : 1 - smooth(e / 0.1);
+    if (passOpacity > 0) {
+      layers.add(_SceneLayer(
+          key: const ValueKey(BoardingStep.boarding),
+          opacity: passOpacity,
+          child: _scene(BoardingStep.boarding)));
+    }
+    return Stack(children: layers);
   }
 
   /// One height for the words on every step, so the scene above them never
@@ -534,6 +690,21 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     }
     return tallest + 2;
   }
+}
+
+/// One step's object on the stage, faded by [opacity].
+class _SceneLayer extends StatelessWidget {
+  const _SceneLayer({super.key, required this.opacity, required this.child});
+  final double opacity;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Positioned.fill(
+        child: IgnorePointer(
+          ignoring: opacity < 1,
+          child: Opacity(opacity: opacity.clamp(0.0, 1.0), child: child),
+        ),
+      );
 }
 
 /// A step's words: the headline, then the line under it a beat later.
@@ -598,32 +769,6 @@ class _CopyState extends State<_Copy> with SingleTickerProviderStateMixin {
       _line(1, BalancedText(copy.body, style: Boarding.body)),
     ]);
   }
-}
-
-/// The onboarding with a widening hole in it, the portal showing through.
-class _RevealClipper extends CustomClipper<Path> {
-  _RevealClipper(this.progress, this.centre);
-  final double progress;
-  final Offset? centre;
-
-  @override
-  Path getClip(Size size) {
-    final c = centre ?? Offset(size.width / 2, size.height * 0.8);
-    final far = [
-      Offset.zero,
-      Offset(size.width, 0),
-      Offset(0, size.height),
-      Offset(size.width, size.height),
-    ].map((p) => (p - c).distance).reduce(math.max);
-    return Path()
-      ..fillType = PathFillType.evenOdd
-      ..addRect(Offset.zero & size)
-      ..addOval(Rect.fromCircle(center: c, radius: far * progress * 1.02));
-  }
-
-  @override
-  bool shouldReclip(_RevealClipper old) =>
-      old.progress != progress || old.centre != centre;
 }
 
 /// For the tests and the rehearsal: where the onboarding is, and a way to

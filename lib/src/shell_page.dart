@@ -36,6 +36,7 @@ import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
 import 'onboarding/onboarding_gate.dart';
+import 'portal_handover.dart';
 import 'trusted_portal.dart';
 import 'student_push.dart';
 import 'student_calls.dart';
@@ -790,6 +791,8 @@ class _ShellPageState extends State<ShellPage> {
         body: Stack(
           children: [
             SafeArea(
+              // The onboarding finds the sign-in's arrow through it.
+              key: PortalHandover.instance.webViewArea,
               // Chat owns its top inset through viewport-fit=cover and CSS
               // env(safe-area-inset-top), including the translucent backdrop.
               top: !_chatUnderStatusBar,
@@ -830,6 +833,7 @@ class _ShellPageState extends State<ShellPage> {
                 ),
                 onWebViewCreated: (controller) {
                   _controller = controller;
+                  PortalHandover.instance.controller = controller;
                   controller.addJavaScriptHandler(
                     handlerName: AppConfig.bridgeName,
                     callback: _handleBridgeCall,

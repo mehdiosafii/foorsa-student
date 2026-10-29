@@ -124,13 +124,16 @@ final submission.
 ## First launch
 
 A first-time downloader boards through a native onboarding before the
-sign-in: the splash's F becomes the journey's airliner, one line of a
-departures board welcomes them, one screen asks for each phone access
-(notifications, camera, microphone, location), each a single object, a
-headline and one button, and a boarding pass ends it while the portal loads
-underneath. Updates skip it. Each screen's one button is Continue and always
-leads to the system prompt (App Review 5.1.1(iv)); tracking is built but off,
-because the app does not track. See `docs/first-launch-onboarding.md`.
+sign-in, told with one object: the splash's F is an arrow that becomes the
+journey's airliner, and between steps each object melts into the arrow and
+unfolds into the next. One screen asks for each phone access (notifications,
+camera, microphone, location), each a single object, a headline and one
+button, with soft glass sounds that rise a note per step; a boarding pass
+ends it, becomes the arrow, and lands on the sign-in's own arrow while the
+portal fades in on the same night. Updates skip it. Each screen's one button
+is Continue and always leads to the system prompt (App Review 5.1.1(iv));
+tracking is built but off, because the app does not track. See
+`docs/first-launch-onboarding.md`.
 
 ## What the portal tells the app
 
