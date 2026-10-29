@@ -1,0 +1,40 @@
+name: Production release schedule
+
+# One-off. Google Play accepts bundles signed with the reset upload key from
+# 31 Oct 2026 18:03 (Play Console). From 18:23 UTC that day, once an hour, this
+# starts google-play.yml on main for the production track and waits for it,
+# then every three hours from 1 Nov 09:23 UTC to 3 Nov, in case Play's date
+# was shown in another time zone.
+# A refusal because the key is not valid yet waits for the next hour; success,
+# or any other failure, switches this schedule off
+# (scripts/scheduled_production_release.py).
+on:
+  schedule:
+    - cron: '23 18-23 31 10 *'
+    - cron: '23 0-8 1 11 *'
+    - cron: '23 9-23/3 1 11 *'
+    - cron: '23 */3 2-3 11 *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: production-release-schedule
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Start the production release and wait for it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: python3 scripts/scheduled_production_release.py
