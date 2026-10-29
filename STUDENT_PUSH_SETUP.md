@@ -40,6 +40,8 @@ Google Play release and cannot update an app signed with a different key. Keep
 the existing installed student app intact. Play release signing and physical
 device delivery verification are required before broad distribution.
 
-Apple APNs and TestFlight setup are deferred. The application version remains
-`1.2.18+48`, so this configuration merge does not initiate an iOS release.
+TestFlight 1.2.19 (49), 29 Oct 2026, is the first iOS build released with these
+notifications and the adviser calls. The build carries the push entitlement;
+delivery to an iPhone still needs the APNs key in Firebase (step 2) and, for
+calls, the APNs settings in `docs/student-calls.md`.
 
