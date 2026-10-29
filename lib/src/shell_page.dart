@@ -239,6 +239,7 @@ class _ShellPageState extends State<ShellPage> {
         return null;
       }
       final enable = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+        scrollable: true,
         icon: const Icon(Icons.fingerprint, size: 42),
         title: const Text('Sign in faster next time'),
         content: Text('Use ${_biometrics.label} to sign in to Foorsa on this phone. '
@@ -1236,14 +1237,17 @@ class _ShellPageState extends State<ShellPage> {
                 child: SafeArea(child: Center(child: SingleChildScrollView(
                   padding: const EdgeInsets.all(32),
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.fingerprint, size: 64),
+                    Icon(Icons.fingerprint, size: 64, color: _isDark(context) ? Colors.white : const Color(0xFF183250)),
                     const SizedBox(height: 24),
-                    Text('Welcome back', style: Theme.of(context).textTheme.headlineMedium),
+                    Text('Welcome back', style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      color: _isDark(context) ? Colors.white : const Color(0xFF183250))),
                     const SizedBox(height: 12),
-                    Text('Use ${_biometrics.label} to open your student account.', textAlign: TextAlign.center),
+                    Text('Use ${_biometrics.label} to open your student account.', textAlign: TextAlign.center,
+                      style: TextStyle(color: _isDark(context) ? Colors.white70 : const Color(0xFF334155))),
                     if (_biometricError != null) Padding(
                       padding: const EdgeInsets.only(top: 16),
-                      child: Text(_biometricError!, textAlign: TextAlign.center),
+                      child: Text(_biometricError!, textAlign: TextAlign.center,
+                        style: TextStyle(color: _isDark(context) ? Colors.white70 : const Color(0xFF334155))),
                     ),
                     const SizedBox(height: 28),
                     FilledButton.icon(
@@ -1251,7 +1255,9 @@ class _ShellPageState extends State<ShellPage> {
                       icon: const Icon(Icons.lock_open),
                       label: Text(_biometricBusy ? 'Unlocking…' : 'Sign in securely'),
                     ),
-                    TextButton(onPressed: _biometricBusy ? null : _usePassword, child: const Text('Use password')),
+                    TextButton(onPressed: _biometricBusy ? null : _usePassword,
+                      style: TextButton.styleFrom(foregroundColor: _isDark(context) ? Colors.white : const Color(0xFF183250)),
+                      child: const Text('Use password')),
                   ]),
                 ))),
               )),
