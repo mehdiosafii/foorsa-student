@@ -164,6 +164,8 @@ class _VoiceSceneState extends State<VoiceScene>
                   child: ClipRect(
                     child: OverflowBox(
                       alignment: Alignment.bottomCenter,
+                      // Its own height, not the chat's: at the bottom.
+                      minHeight: 0,
                       maxHeight: double.infinity,
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -171,6 +173,23 @@ class _VoiceSceneState extends State<VoiceScene>
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            // The live chat's day chip.
+                            Center(
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 4),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 11, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0x14FFFFFF),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: const Text('Today',
+                                    style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: Boarding.muted)),
+                              ),
+                            ),
                             _bubble(
                               appear: widget.still
                                   ? 1

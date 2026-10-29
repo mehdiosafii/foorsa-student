@@ -597,7 +597,8 @@ class _CopyState extends State<_Copy> with SingleTickerProviderStateMixin {
   }
 
   Widget _line(int order, Widget child) {
-    final start = order * 0.09;
+    // After the last step's words have gone (160 ms), one line at a time.
+    final start = 0.16 + order * 0.09;
     final curve = CurvedAnimation(
         parent: _c,
         curve: Interval(start, math.min(1, start + 0.6),

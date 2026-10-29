@@ -50,7 +50,7 @@ class _TrackingSceneState extends State<TrackingScene>
   Widget build(BuildContext context) {
     return Semantics(
       label:
-          'An ad, then Foorsa, then more students. Your papers and messages are never part of it.',
+          'An ad, then Foorsa, then more students. Your papers and messages are never used.',
       excludeSemantics: true,
       // On a short screen the diagram scales down rather than spilling.
       child: LayoutBuilder(
@@ -98,7 +98,7 @@ class _TrackingSceneState extends State<TrackingScene>
                             _Promise(
                                 icon: LucideIcons.shieldCheck,
                                 text:
-                                    'Your papers and messages are never part of it.'),
+                                    'Your papers and messages are never used.'),
                             SizedBox(height: 9),
                             _Promise(
                                 icon: LucideIcons.lock,

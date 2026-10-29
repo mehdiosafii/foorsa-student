@@ -329,10 +329,14 @@ class PearlButton extends StatelessWidget {
               children: [
                 const SizedBox(width: 28),
                 Expanded(
+                  // The old word leaves before the new one comes, so the two
+                  // never sit on top of each other.
                   child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 260),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
+                    duration: const Duration(milliseconds: 320),
+                    switchInCurve:
+                        const Interval(0.4, 1, curve: Curves.easeOutCubic),
+                    switchOutCurve:
+                        const Interval(0.6, 1, curve: Curves.easeInCubic),
                     transitionBuilder: (child, animation) => FadeTransition(
                       opacity: animation,
                       child: SlideTransition(
