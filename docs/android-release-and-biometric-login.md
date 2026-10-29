@@ -64,12 +64,28 @@ debug APK cannot update a Play-signed installation.
 
 ## Quick sign-in
 
-After a successful student `/api/portal/me` response, the native shell offers
-Face ID/Touch ID on iOS or strong fingerprint/face recognition on Android 9 and later. Older Android phones retain password sign-in.
-Students can choose **Not now**; that decision is remembered for seven days,
-per student on this device. Ambassador sessions and the initial mandatory
-password-change screen are excluded. No portal deployment is required: the
-versioned top-frame script adapts the existing portal token contract.
+Since 1.2.21 (52) quick sign-in lives in the portal's own screens; the
+native "Welcome back" overlay of 1.2.20 is gone.
+
+- **After a password sign-in** (a successful student `/api/portal/me`
+  response), the shell offers Face ID / Touch ID on iOS or strong fingerprint /
+  face recognition on Android 9 and later. **Not now** is remembered for seven
+  days, per student on this device. Ambassador sessions and the mandatory
+  password-change screen are excluded. In 1.2.20 the bridge received its
+  nonce only before a document scan, so this offer never appeared; the shell
+  now hands the nonce over on every page load (`_publishScannerNonce`) and the
+  bridge also asks for it when the WebView platform is ready.
+- **The sign-in screen** asks `window.__foorsaBiometrics.status()` and, when a
+  login is saved, shows a Face ID (or fingerprint) icon at the end of the Sign
+  in button and opens the OS prompt by itself once per launch
+  (`unlock({auto: true})`). The
+  shell reads the vault through the OS prompt, validates the token with the
+  server and returns it to the trusted main frame only; the bridge installs it
+  as this launch's tab session and the portal carries on as after a typed
+  password.
+- **Profile › Settings** has a "Sign in with Face ID" switch: `enable()` saves
+  the open session behind the OS prompt; `disable()` forgets it and moves the
+  session back to ordinary storage, so the student stays signed in.
 
 Enrollment independently validates the token with the server, verifies native
 biometric storage with a read-back, and only then marks it enabled. The saved
@@ -80,20 +96,16 @@ namespaced encrypted store with an authenticated Android KeyStore key,
 strong biometrics only, and enrollment-change invalidation. Android backup and
 device transfer are disabled for app data; biometric keys never migrate.
 
-For enrolled users, the bridge moves the active web login and media tokens out of persistent
-`localStorage` into the current tab's session storage. Each new native launch
-clears that tab session before the portal starts. A native unlock screen reads
-the vault through OS biometric authentication, validates the token with the
-server, and restores it only to the configured HTTPS main frame. Cancellation
-and temporary network errors do not erase the saved login. **Use password**
-forgets quick sign-in and opens ordinary sign-in. Explicit sign-out and an
-expired/rejected session forget the saved record. Missing installation metadata
-cannot revive a surviving iOS Keychain item after reinstall.
+While quick sign-in is on, the web login and media tokens live in the current
+tab's session storage, and each new native launch clears them, so the app
+opens on the portal's sign-in screen with Face ID. Cancellation and temporary
+network errors do not erase the saved login. **Signing out keeps it** for the
+next sign-in; an expired or rejected session, a changed Face ID / fingerprint
+set, or a deleted account (`portal-logout` with `forgetDevice: true`) forgets
+it. Signing in as a different student replaces it.
 
 Tokens retain the server's existing 30-day lifetime; this feature does not
-extend it or store passwords to work around expiry. Reauthenticate with the
-password and opt in again after expiry. Biometrics are required on a new app
-launch; this feature does not introduce a lock on every background/resume event.
+extend it or store passwords to work around expiry.
 
 ## Validation
 

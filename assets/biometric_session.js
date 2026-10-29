@@ -9,12 +9,14 @@
   const kindKey = 'foorsa_portal_kind';
   const protectedKey = 'foorsa_biometric_session';
   const bootKey = 'foorsa_biometric_boot';
+  const autoKey = 'foorsa_biometric_auto';
   const rawGet = Storage.prototype.getItem;
   const rawSet = Storage.prototype.setItem;
   const rawRemove = Storage.prototype.removeItem;
   let protectedSession = config.protected || rawGet.call(localStorage, protectedKey) === '1';
   let generation = 0;
   let nonce = null;
+  let readyWaiters = [];
   let pendingSession = null;
   let pendingLogout = false;
   let blocked = false;
@@ -36,7 +38,8 @@
 
   // Keep the active web session in tab storage. The durable login lives only
   // in the native vault. Every new native launch clears this tab session before
-  // React can read it, then installs only the session the user unlocked.
+  // React can read it, so the portal opens on its sign-in screen, where the
+  // student unlocks with Face ID or a fingerprint (or types their password).
   Storage.prototype.getItem = function(key) {
     if (this === localStorage && credentialKeys.has(key) && protectedSession) {
       return rawGet.call(sessionStorage, key);
@@ -67,6 +70,42 @@
       operation, token, nonce,
     });
   };
+  // The shell hands this page its nonce on every load and whenever asked. A
+  // call made before then (the sign-in screen asking whether Face ID is set
+  // up) waits for it rather than being dropped.
+  const whenReady = () => nonce ? Promise.resolve(true) : new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); resolve(true); };
+    const timer = setTimeout(() => {
+      readyWaiters = readyWaiters.filter((waiter) => waiter !== done);
+      resolve(false);
+    }, 6000);
+    readyWaiters.push(done);
+  });
+  const call = async (operation, token) => {
+    if (!(await whenReady())) return null;
+    try {
+      const result = await send(operation, token);
+      return result && typeof result === 'object' ? result : null;
+    } catch (_) {
+      return null;
+    }
+  };
+  const reasonOf = (result) => (result && typeof result.reason === 'string' ? result.reason : 'unavailable');
+  const requestReady = () => {
+    try { window.flutter_inappwebview?.callHandler?.('FoorsaShellScannerSession'); } catch (_) { /* the load hands it over */ }
+  };
+  window.addEventListener('flutterInAppWebViewPlatformReady', requestReady);
+
+  // Quick sign-in is off: the session goes back to ordinary, lasting storage.
+  const unprotect = () => {
+    for (const key of credentialKeys) {
+      const value = rawGet.call(sessionStorage, key);
+      if (value) rawSet.call(localStorage, key, value);
+    }
+    rawRemove.call(localStorage, protectedKey);
+    protectedSession = false;
+  };
+
   const flush = () => {
     if (pendingLogout) {
       if (!nonce) return;
@@ -81,13 +120,22 @@
       }).catch(() => { announced = null; });
     }
   };
-  window.addEventListener('portal-logout', () => {
+  window.addEventListener('portal-logout', (event) => {
     generation++;
     pendingSession = null;
-    pendingLogout = true;
+    // Signing out keeps quick sign-in: it waits on the sign-in screen for the
+    // next time. An expired or rejected session, or a deleted account, takes
+    // it away, and the session goes back to ordinary storage.
+    const detail = event && event.detail;
+    const keepQuickSignIn = !!detail && detail.signedOut === true && detail.forgetDevice !== true;
     for (const key of credentialKeys) {
       rawRemove.call(localStorage, key);
       rawRemove.call(sessionStorage, key);
+    }
+    if (!keepQuickSignIn) {
+      pendingLogout = true;
+      rawRemove.call(localStorage, protectedKey);
+      protectedSession = false;
     }
     flush();
   });
@@ -117,8 +165,14 @@
     return response;
   };
 
-  Object.defineProperty(window, '__foorsaBiometrics', {value: {
-    ready(value) { nonce = value; flush(); },
+  Object.defineProperty(window, '__foorsaBiometrics', {value: Object.freeze({
+    ready(value) {
+      nonce = value;
+      const waiters = readyWaiters;
+      readyWaiters = [];
+      for (const waiter of waiters) waiter();
+      flush();
+    },
     matches(token) { return token === localStorage.getItem(tokenKey) && !blocked; },
     protect(token) {
       if (token !== localStorage.getItem(tokenKey) || blocked) return false;
@@ -131,5 +185,56 @@
       protectedSession = true;
       return true;
     },
-  }, configurable: false});
+    // ── For the portal's sign-in screen and Profile › Settings ──────────
+    // Whether this phone can do it and whether a sign-in is saved. `kind`
+    // names what the phone uses: face, touch or (Android) biometric.
+    async status() {
+      const result = await call('status');
+      if (!result) return null;
+      return {
+        available: result.available === true,
+        enabled: result.enabled === true,
+        kind: result.kind === 'face' || result.kind === 'touch' ? result.kind : 'biometric',
+      };
+    },
+    // The OS prompt opens; on success the saved session becomes this tab's
+    // session and the portal carries on as if the password had been typed.
+    // `auto` runs at most once per app launch (the screen opening by itself).
+    async unlock(options) {
+      if (options && options.auto) {
+        if (rawGet.call(sessionStorage, autoKey) === config.boot) return {ok: false, reason: 'skipped'};
+        rawSet.call(sessionStorage, autoKey, config.boot);
+      }
+      const result = await call('unlock');
+      if (!result || result.ok !== true || typeof result.token !== 'string' || !result.token) {
+        return {ok: false, reason: reasonOf(result)};
+      }
+      for (const key of credentialKeys) rawRemove.call(localStorage, key);
+      rawRemove.call(sessionStorage, mediaKey);
+      rawSet.call(sessionStorage, tokenKey, result.token);
+      rawSet.call(sessionStorage, bootKey, config.boot);
+      rawSet.call(localStorage, kindKey, 'student');
+      rawSet.call(localStorage, protectedKey, '1');
+      protectedSession = true;
+      blocked = false;
+      generation++;
+      // Already saved: there is nothing to offer for this session.
+      announced = result.token;
+      return {ok: true};
+    },
+    // Turned on from Profile › Settings, for the session open now.
+    async enable() {
+      const token = localStorage.getItem(tokenKey);
+      if (!token || blocked || localStorage.getItem(kindKey) === 'agent') return {ok: false, reason: 'unavailable'};
+      const result = await call('enable', token);
+      return result && result.ok === true ? {ok: true} : {ok: false, reason: reasonOf(result)};
+    },
+    // Turned off: the saved sign-in is deleted and the student stays signed in.
+    async disable() {
+      const result = await call('disable');
+      if (!result || result.ok !== true) return {ok: false, reason: reasonOf(result)};
+      unprotect();
+      return {ok: true};
+    },
+  }), configurable: false});
 })();

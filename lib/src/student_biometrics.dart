@@ -102,6 +102,9 @@ class StudentBiometrics {
   String? _savedToken;
   Map<String, int> _declined = {};
   String label = 'Face ID or fingerprint';
+  /// What the sign-in screen names: face (Face ID), touch (Touch ID) or, on
+  /// Android, biometric (the strong fingerprint or face the phone has).
+  String get kind => label == 'Face ID' ? 'face' : label == 'Touch ID' ? 'touch' : 'biometric';
   bool get enabled => owner != null;
   bool hasSavedSession(StudentSession session) =>
       owner == session.owner && _savedToken == session.token;
