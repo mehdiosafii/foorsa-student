@@ -124,9 +124,10 @@ final submission.
 ## First launch
 
 A first-time downloader boards through a native onboarding before the
-sign-in: the splash's F becomes the journey's airliner, a departures board
-welcomes them, one screen asks for each phone access (notifications, camera,
-microphone, location), and a boarding pass ends it while the portal loads
+sign-in: the splash's F becomes the journey's airliner, one line of a
+departures board welcomes them, one screen asks for each phone access
+(notifications, camera, microphone, location), each a single object, a
+headline and one button, and a boarding pass ends it while the portal loads
 underneath. Updates skip it. Each screen's one button is Continue and always
 leads to the system prompt (App Review 5.1.1(iv)); tracking is built but off,
 because the app does not track. See `docs/first-launch-onboarding.md`.

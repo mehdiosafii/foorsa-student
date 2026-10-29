@@ -26,15 +26,18 @@ open.
 
 ## The steps
 
-| Step | Asks for | Shows |
+Every screen is the same three things under one object: a headline, one line
+under it, and one button. Each object does one thing, then settles.
+
+| Step | Asks for | The object |
 | --- | --- | --- |
-| Welcome | nothing | a split-flap departures board of the voyage's 16 cities; a tap flips it |
-| Notifications | `Permission.notification` | the lock screen with Foorsa's real notification texts arriving |
-| Camera | `Permission.camera` | a specimen passport page found, read and flattened as the scanner does |
-| Microphone | `Permission.microphone` | the live chat: a voice note recorded, sent, read and answered; holding the mic tries it (nothing is recorded) |
-| Location | `Permission.locationWhenInUse` | a night map of Hangzhou: the next prayer, the weather, a supermarket nearby |
-| Tracking | `Permission.appTrackingTransparency` | off, see below |
-| Boarding pass | nothing | the pass, printed, with the student's choices on it |
+| Welcome | nothing | one line of a split-flap board, flipping through the voyage's 16 cities, with its reflection; a tap flips it |
+| Notifications | `Permission.notification` | a stack of Foorsa's notifications (the app's real texts), a new one landing on top every few seconds |
+| Camera | `Permission.camera` | a drawn passport page, tipped back, found by the scanner's corners and straightened flat |
+| Microphone | `Permission.microphone` | the chat's mic with a voice running out from it on both sides; holding it makes the voice louder (nothing is recorded) |
+| Location | `Permission.locationWhenInUse` | a night map seen through a fading lens, the blue dot with its heading, and the next prayer |
+| Tracking | `Permission.appTrackingTransparency` | off, see below; a shield |
+| Boarding pass | nothing | the pass, which lies down flat as Wallet adds a card; its stub tears off |
 
 A step is shown only when the phone will show its prompt (`denied` in
 permission_handler: never asked on iOS, never asked or refused once on
@@ -49,8 +52,8 @@ permission prompt must lead to the prompt.
   Skip or close beside it. `test/onboarding_flow_test.dart` fails if a step's
   action changes.
 - Whatever the student answers, the next step follows; nothing promises a
-  reward for allowing (App Tracking Transparency forbids that too). The pass
-  shows what is on and off, as a status, never as a prize.
+  reward for allowing (App Tracking Transparency forbids that too). A yes
+  shows a check on the button for a moment; a no simply moves on.
 - Each prompt's words are the purpose strings already in `Info.plist`.
 
 ## Tracking is off
@@ -73,26 +76,36 @@ iOS that also needs items 1 and 2, or the plugin reports it refused.
 
 ## How it feels
 
-The look is the portal's dark theme (`portal.css`, `portalMaterials.css`):
-its ink and muted text, the pale steel accent, glass panels, the pearl main
-button, the backdrop's folds over the splash's navy, and the boarding pass of
-`flightPass.css`. The wordmark, the F mark, the airliner and the icons are
-drawn from the portal's own vectors (`brand_vectors.dart`, `airliner.dart`,
-`lucide.dart`). Motion uses the portal's springs (damping and response, as
-`fluid.ts`), and touch uses the shell's textures by name (`shell_haptics.dart`):
-`unfold` as the plane assembles, `release` as it takes off, `press` on a tap,
-`detent` when the scanner locks, `land` for an access turned on, `grain` as
-the pass prints and as the stub tears.
+Less is more: every screen is one lit object on a still night, so nothing
+competes with the one thing it says. The ground is the night the native
+splash deepens into, a few faint stars high up and one soft light behind the
+object (`night_sky.dart`). Progress is one hairline with the journey's
+airliner at its tip; the welcome shows the wordmark instead. The headline is
+32 pt bold with tight tracking and the line under it 17 pt muted, both centred
+and broken into even lines (`BalancedText`, like CSS `text-wrap: balance`), so
+no word is left alone on a line. The one button is the portal's flat pearl
+pill (`--portal-primary-fill`).
 
-Reduce Motion skips the flight, stands every scene still and cross-fades the
-steps. Scenes are illustrations at a fixed text size; the words under them
-follow the phone's text size, smaller on short screens, and below 220 pt of
-scene the screen scrolls. Android's back goes one step back.
+The colours are the portal's dark theme (`portal.css`, `portalMaterials.css`)
+and the pass is `flightPass.css`'s paper and ink. The wordmark, the airliner
+and the icons are drawn from the portal's own vectors (`brand_vectors.dart`,
+`airliner.dart`, `lucide.dart`). Motion uses the portal's springs (damping and
+response, as `fluid.ts`): an object comes in from a little smaller and lower,
+the words follow it a beat apart. Touch is kept for moments that mean
+something (`shell_haptics.dart`): `unfold` and `release` as the plane takes
+off, `press` on a tap, `land` when an access is turned on and when the pass
+lies down, `grain` as the stub tears and `release` when it comes off. Nothing
+buzzes on its own.
+
+Reduce Motion skips the flight, stands every object still and cross-fades the
+steps. Objects are illustrations at a fixed text size; the words under them
+follow the phone's text size, smaller on short screens, and below 200 pt of
+room the screen scrolls. Android's back goes one step back.
 
 ## Required device verification
 
 - Fresh install on a physical iPhone and Android phone: every prompt appears
-  after its Continue, and its answer reaches the pass.
+  after its Continue, and a yes shows the check on the button.
 - Update over an installed build: no onboarding.
 - Kill the app mid-onboarding, reopen: it opens on the onboarding again.
 - Android 12 and older (no notification prompt): the notifications step is
@@ -105,7 +118,7 @@ scene the screen scrolls. Android's back goes one step back.
 
 ## Validation performed locally
 
-- `flutter analyze` and `flutter test` (the onboarding's 23 tests among the
+- `flutter analyze` and `flutter test` (the onboarding's 26 tests among the
   suite): the plan, the copy rules, the permission mapping, the store, the
   whole walk through with fake permissions, back, and every step on a 320 x
   568 phone, an iPhone SE and a large phone with large text.

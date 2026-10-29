@@ -1,8 +1,9 @@
-/// The onboarding's look, in the portal's own terms (portal.css and
-/// portalMaterials.css in foorsa-reward): its dark theme's ink, muted text,
-/// pale steel accent and pearl main button, its glass panels, and the boarding
-/// pass's paper and ink (flightPass.css). The onboarding is always the night
-/// scene the native splash opens on, so these are the dark values only.
+/// The onboarding's look. It is the portal's dark theme pared down to what a
+/// first screen needs: one ground, one light behind one object, a headline,
+/// one line under it and one pearl button (portal.css and portalMaterials.css
+/// in foorsa-reward: the dark ink, the muted text, the flat pearl main action).
+/// The onboarding is always the night the native splash opens on, so these are
+/// the dark values only.
 library;
 
 import 'dart:math' as math;
@@ -22,49 +23,36 @@ class Boarding {
   /// The native splash's ground (flutter_native_splash, LaunchBackground).
   static const splashNavy = Color(0xFF183250);
 
-  /// The portal's dark page ground.
-  static const night = Color(0xFF0C141D);
-  static const nightMid = Color(0xFF101C2B);
+  // The night: deep at the foot, a little bluer at the head.
+  static const nightTop = Color(0xFF0E1A29);
+  static const night = Color(0xFF0A131F);
+  static const nightFoot = Color(0xFF060B13);
 
-  static const heading = Color(0xFFF5F8FC);
+  /// The one light on the stage, behind the object.
+  static const spotlight = Color(0xFF1D3552);
+
+  static const heading = Color(0xFFF4F7FB);
   static const ink = Color(0xFFE0E5EC); // --portal-ink
-  static const muted = Color(0xFFB3BDC8); // --portal-muted
-  static const faint = Color(0xFF8D9AAA);
+  static const muted = Color(0xFF8E9BAB);
+  static const faint = Color(0xFF5E6B7B);
+  static const hairline = Color(0x1FE0E9F5);
   static const accent = Color(0xFFA9C8E6); // --portal-accent
-  static const accentSoft = Color(0x1FA9C8E6); // --portal-accent-soft
-  static const done = Color(0xFF6EE7B7); // --portal-mark-done
-  static const doneSoft = Color(0x216EE7B7);
-  static const wait = Color(0xFFFCD34D); // --portal-tone-wait
-  static const recording = Color(0xFFE0413B); // the live chat's recording dot
 
-  // Glass (portalMaterials.css, dark).
-  static const glassFill = Color(0x7A1B2A38);
-  static const glassDeep = Color(0xC2162331);
-  static const glassEdge = Color(0x2EDCEEFF);
-  static const glassHighlight = Color(0x5CE7F6FF);
-  static const glassShadow = Color(0x66000510);
+  /// The phone's own location blue, toned to the night.
+  static const here = Color(0xFF3D8BFF);
 
-  // The pearl main button on dark (--portal-primary-fill).
-  static const pearlTop = Color(0xFFF4F9FD);
-  static const pearlBottom = Color(0xFFDBE8F3);
-  static const pearlInk = Color(0xFF132A40);
+  /// The rim of an object on the stage.
+  static const slateEdge = Color(0x1AFFFFFF);
 
-  // The live chat, dark (liveChat.css).
-  static const chatTeam = Color(0xFF1C2733);
-  static const chatTeamInk = Color(0xFFE6EBF1);
-  static const chatMineTop = Color(0xFF3A6896);
-  static const chatMineBottom = Color(0xFF2A5079);
+  // The flat pearl main action on dark (--portal-primary-fill).
+  static const pearl = Color(0xFFEFF4F9);
+  static const pearlInk = Color(0xFF0F2438);
 
   // The boarding pass (flightPass.css).
-  static const paper = Color(0xFFFCFBF7);
-  static const paperShade = Color(0xFFF1EEE5);
-  static const passInk = Color(0xFF1B1F2E);
-  static const passSub = Color(0xFF697080);
-  static const passLabel = Color(0xFF7B7E85);
-  static const gold = Color(0xFFA09275);
-  static const goldLight = Color(0xFFD1C4A8);
-  static const passHeaderTop = Color(0xFF22283D);
-  static const passHeaderBottom = Color(0xFF171A27);
+  static const paper = Color(0xFFFBFAF6);
+  static const passInk = Color(0xFF16233A);
+  static const passLabel = Color(0xFF8A8D94);
+  static const passRule = Color(0xFFE4E1D8);
 
   /// The portal's content column.
   static const contentWidth = 448.0;
@@ -72,41 +60,32 @@ class Boarding {
   static const mono = 'Menlo';
   static const monoFallback = <String>['Courier', 'RobotoMono', 'monospace'];
 
-  static TextStyle eyebrow = const TextStyle(
-    fontSize: 11.5,
-    fontWeight: FontWeight.w600,
-    letterSpacing: 1.5,
-    height: 1.3,
-    color: muted,
-  );
-
-  static TextStyle headline = const TextStyle(
-    fontSize: 30,
+  static const headline = TextStyle(
+    fontSize: 32,
     fontWeight: FontWeight.w700,
-    letterSpacing: -0.7,
+    letterSpacing: -0.9,
     height: 1.12,
     color: heading,
   );
 
-  static TextStyle arabic = const TextStyle(
-    fontSize: 15,
-    fontWeight: FontWeight.w500,
-    height: 1.5,
-    color: muted,
-  );
-
-  static TextStyle body = const TextStyle(
-    fontSize: 15.5,
-    height: 1.45,
-    color: muted,
-    letterSpacing: -0.1,
-  );
-
-  static TextStyle footnote = const TextStyle(
-    fontSize: 12.5,
+  static const body = TextStyle(
+    fontSize: 17,
+    fontWeight: FontWeight.w400,
     height: 1.4,
-    color: faint,
+    letterSpacing: -0.2,
+    color: muted,
   );
+
+  /// A small capital caption: the board's NEXT DEPARTURE, the pass's labels.
+  static TextStyle caption(
+          {Color color = faint, double size = 11, double spacing = 2.2}) =>
+      TextStyle(
+        fontSize: size,
+        fontWeight: FontWeight.w600,
+        letterSpacing: spacing,
+        height: 1.2,
+        color: color,
+      );
 
   static TextStyle monoStyle(double size,
           {Color color = ink,
@@ -131,86 +110,13 @@ SpringDescription foorsaSpring({double damping = 1, double response = 0.4}) {
       mass: 1, stiffness: omega * omega, damping: 2 * damping * omega);
 }
 
-/// The portal's glass panel on dark: a sheen over a translucent fill, a
-/// hairline rim, a top highlight and a soft drop, no blur (phones never blur
-/// a whole card, portalMaterials.css).
-class NightGlass extends StatelessWidget {
-  const NightGlass({
-    super.key,
-    required this.child,
-    this.radius = 26,
-    this.padding = EdgeInsets.zero,
-    this.deep = false,
-  });
-
-  final Widget child;
-  final double radius;
-  final EdgeInsetsGeometry padding;
-  final bool deep;
-
-  @override
-  Widget build(BuildContext context) {
-    final shape = BorderRadius.circular(radius);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: shape,
-        color: deep ? Boarding.glassDeep : Boarding.glassFill,
-        boxShadow: const [
-          BoxShadow(
-              color: Boarding.glassShadow,
-              blurRadius: 24,
-              offset: Offset(0, 8),
-              spreadRadius: -14),
-        ],
-      ),
-      child: Stack(children: [
-        Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: shape,
-              border: Border.all(color: Boarding.glassEdge),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0x29CFE7FC),
-                  Color(0x0495B9D8),
-                  Color(0x1298C3E4)
-                ],
-                stops: [0, 0.47, 1],
-              ),
-            ),
-          ),
-        ),
-        // The top highlight, an inset hairline of light.
-        Positioned(
-          left: radius * 0.7,
-          right: radius * 0.7,
-          top: 0.5,
-          height: 1,
-          child: const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [
-                Color(0x00E7F6FF),
-                Boarding.glassHighlight,
-                Color(0x00E7F6FF),
-              ]),
-            ),
-          ),
-        ),
-        Padding(padding: padding, child: child),
-      ]),
-    );
-  }
-}
-
 /// The portal's one press: in within 100 ms, back on a 240 ms spring.
 class Pressable extends StatefulWidget {
   const Pressable(
       {super.key,
       required this.child,
       this.onTap,
-      this.scale = 0.98,
+      this.scale = 0.97,
       this.onDown});
   final Widget child;
   final VoidCallback? onTap;
@@ -269,8 +175,9 @@ class _PressableState extends State<Pressable>
   }
 }
 
-/// The main action on dark: a pearl pill with navy ink (the journey's
-/// "My universities" button), its label crossing over as the steps change.
+/// The one button: a flat pearl pill with navy ink. Its word crosses over as
+/// the steps change, and once the student has said yes it shows a check for a
+/// moment instead of a word.
 class PearlButton extends StatelessWidget {
   const PearlButton({
     super.key,
@@ -278,101 +185,71 @@ class PearlButton extends StatelessWidget {
     required this.onPressed,
     this.onDown,
     this.busy = false,
-    this.trailing = true,
+    this.done = false,
   });
 
   final String label;
   final VoidCallback? onPressed;
   final VoidCallback? onDown;
   final bool busy;
-  final bool trailing;
+
+  /// The student just turned this on.
+  final bool done;
 
   @override
   Widget build(BuildContext context) {
-    final enabled = onPressed != null && !busy;
+    final enabled = onPressed != null && !busy && !done;
     return Semantics(
       button: true,
       enabled: enabled,
-      label: label,
+      label: done ? '$label, turned on' : label,
       excludeSemantics: true,
       child: Pressable(
         onTap: enabled ? onPressed : null,
         onDown: onDown,
         child: AnimatedOpacity(
           duration: const Duration(milliseconds: 200),
-          opacity: enabled ? 1 : 0.72,
+          opacity: onPressed == null ? 0.6 : 1,
           child: Container(
             height: 56,
             alignment: Alignment.center,
             decoration: BoxDecoration(
+              color: Boarding.pearl,
               borderRadius: BorderRadius.circular(28),
-              gradient: const LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Boarding.pearlTop, Boarding.pearlBottom],
-              ),
-              border: Border.all(color: const Color(0xC7FFFFFF)),
-              boxShadow: const [
-                BoxShadow(
-                    color: Color(0x290A1E34),
-                    blurRadius: 2,
-                    offset: Offset(0, 1)),
-                BoxShadow(
-                    color: Color(0x800A1E34),
-                    blurRadius: 18,
-                    offset: Offset(0, 8),
-                    spreadRadius: -10),
-              ],
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const SizedBox(width: 28),
-                Expanded(
-                  // The old word leaves before the new one comes, so the two
-                  // never sit on top of each other.
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 320),
-                    switchInCurve:
-                        const Interval(0.4, 1, curve: Curves.easeOutCubic),
-                    switchOutCurve:
-                        const Interval(0.6, 1, curve: Curves.easeInCubic),
-                    transitionBuilder: (child, animation) => FadeTransition(
-                      opacity: animation,
-                      child: SlideTransition(
-                        position: Tween(
-                                begin: const Offset(0, 0.35), end: Offset.zero)
-                            .animate(animation),
-                        child: child,
-                      ),
-                    ),
-                    child: Text(
+            // The old word leaves before the new one comes, so the two never
+            // sit on top of each other.
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 320),
+              switchInCurve:
+                  const Interval(0.35, 1, curve: Curves.easeOutCubic),
+              switchOutCurve:
+                  const Interval(0.55, 1, curve: Curves.easeInCubic),
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: Tween(begin: 0.92, end: 1.0).animate(animation),
+                  child: child,
+                ),
+              ),
+              child: done
+                  ? const Lucide(LucideIcons.check,
+                      key: ValueKey('done'),
+                      size: 22,
+                      color: Boarding.pearlInk,
+                      strokeWidth: 2.6)
+                  : Text(
                       label,
                       key: ValueKey(label),
                       textAlign: TextAlign.center,
                       maxLines: 1,
                       style: const TextStyle(
                         fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.2,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.3,
                         color: Boarding.pearlInk,
                       ),
                     ),
-                  ),
-                ),
-                SizedBox(
-                  width: 28,
-                  child: trailing
-                      ? const Align(
-                          alignment: Alignment.centerLeft,
-                          child: Lucide(LucideIcons.chevronRight,
-                              size: 20,
-                              color: Boarding.pearlInk,
-                              strokeWidth: 2.2),
-                        )
-                      : null,
-                ),
-              ],
             ),
           ),
         ),
@@ -381,49 +258,108 @@ class PearlButton extends StatelessWidget {
   }
 }
 
-/// A small status line: what the student just chose, in words, never colour
-/// alone (the portal's status words, portal-tone-done).
-class OutcomeChip extends StatelessWidget {
-  const OutcomeChip({super.key, required this.on, required this.label});
-  final bool on;
-  final String label;
+/// Seconds since the first frame, for scenes that draw from a clock.
+mixin SceneClock<T extends StatefulWidget> on State<T>, TickerProvider {
+  final ValueNotifier<double> clock = ValueNotifier<double>(0);
+  late final _ticker = createTicker((elapsed) =>
+      clock.value = elapsed.inMicroseconds / Duration.microsecondsPerSecond);
+
+  /// Starts the clock unless the student asked for still screens.
+  void startClock({required bool still}) {
+    if (!still) _ticker.start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    clock.dispose();
+    super.dispose();
+  }
+}
+
+/// 0 to 1 over [from]–[to], eased in and out.
+double ease(double x, double from, double to) {
+  final t = ((x - from) / (to - from)).clamp(0.0, 1.0);
+  return t * t * (3 - 2 * t);
+}
+
+/// 0 to 1 over [from]–[to], easing out (fast, then settling).
+double easeOut(double x, double from, double to) {
+  final t = ((x - from) / (to - from)).clamp(0.0, 1.0);
+  return 1 - math.pow(1 - t, 3).toDouble();
+}
+
+/// Text broken into lines of even length, as CSS's `text-wrap: balance`
+/// does: the same number of lines, never a word left alone on the last one.
+class BalancedText extends StatelessWidget {
+  const BalancedText(this.text,
+      {super.key,
+      required this.style,
+      this.textAlign = TextAlign.center,
+      this.maxLines});
+  final String text;
+  final TextStyle style;
+  final TextAlign textAlign;
+  final int? maxLines;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 7, 14, 7),
-      decoration: BoxDecoration(
-        color: on ? Boarding.doneSoft : const Color(0x14FFFFFF),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-            color: on ? const Color(0x406EE7B7) : const Color(0x24FFFFFF)),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 20,
-          height: 20,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: on ? Boarding.done : const Color(0x33FFFFFF),
-          ),
-          alignment: Alignment.center,
-          child: on
-              ? const Lucide(LucideIcons.check,
-                  size: 13, color: Color(0xFF06281A), strokeWidth: 3.2)
-              : Container(width: 8, height: 2, color: Boarding.ink),
+    return LayoutBuilder(builder: (context, constraints) {
+      final width = balancedWidth(
+        TextSpan(
+            text: text, style: DefaultTextStyle.of(context).style.merge(style)),
+        constraints.maxWidth,
+        MediaQuery.textScalerOf(context),
+        Directionality.of(context),
+      );
+      return Align(
+        alignment: switch (textAlign) {
+          TextAlign.left || TextAlign.start => Alignment.topLeft,
+          TextAlign.right || TextAlign.end => Alignment.topRight,
+          _ => Alignment.topCenter,
+        },
+        widthFactor: 1,
+        heightFactor: 1,
+        child: SizedBox(
+          width: width,
+          child: Text(text,
+              style: style,
+              textAlign: textAlign,
+              maxLines: maxLines,
+              overflow: maxLines == null ? null : TextOverflow.ellipsis),
         ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13.5,
-                fontWeight: FontWeight.w600,
-                color: on ? Boarding.done : Boarding.ink,
-              )),
-        ),
-      ]),
-    );
+      );
+    });
   }
+}
+
+/// The narrowest width at which [span] still takes as many lines as it does
+/// at [maxWidth].
+double balancedWidth(InlineSpan span, double maxWidth, TextScaler scaler,
+    TextDirection direction) {
+  if (!maxWidth.isFinite) return maxWidth;
+  final painter =
+      TextPainter(text: span, textDirection: direction, textScaler: scaler);
+  int lines(double width) {
+    painter.layout(maxWidth: width);
+    return painter.computeLineMetrics().length;
+  }
+
+  final target = lines(maxWidth);
+  if (target <= 1) {
+    painter.dispose();
+    return maxWidth;
+  }
+  var low = maxWidth / target, high = maxWidth;
+  for (var i = 0; i < 12 && high - low > 1; i++) {
+    final mid = (low + high) / 2;
+    if (lines(mid) > target) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  painter.dispose();
+  // A hair of room, so rounding never pushes a word down.
+  return math.min(maxWidth, high + 1);
 }

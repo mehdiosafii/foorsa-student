@@ -24,6 +24,9 @@ class SplitFlapLine extends StatefulWidget {
     this.still = false,
     this.onSettled,
     this.seed = 0,
+    this.weight = FontWeight.w700,
+    this.tileTop = const Color(0xFF1A2A3E),
+    this.tileBottom = const Color(0xFF15233A),
   });
 
   final String text;
@@ -40,6 +43,9 @@ class SplitFlapLine extends StatefulWidget {
   /// Every flap has landed on its letter.
   final VoidCallback? onSettled;
   final int seed;
+  final FontWeight weight;
+  final Color tileTop;
+  final Color tileBottom;
 
   @override
   State<SplitFlapLine> createState() => _SplitFlapLineState();
@@ -163,7 +169,7 @@ class _SplitFlapLineState extends State<SplitFlapLine>
         widget.length * widget.cellWidth + (widget.length - 1) * widget.gap;
     final style = DefaultTextStyle.of(context).style.copyWith(
       fontSize: widget.fontSize ?? widget.cellHeight * 0.62,
-      fontWeight: FontWeight.w700,
+      fontWeight: widget.weight,
       color: widget.color,
       height: 1,
       letterSpacing: 0,
@@ -182,6 +188,8 @@ class _SplitFlapLineState extends State<SplitFlapLine>
             cellWidth: widget.cellWidth,
             cellHeight: widget.cellHeight,
             gap: widget.gap,
+            top: widget.tileTop,
+            bottom: widget.tileBottom,
             glyphs: _Glyphs.of(style, Directionality.of(context)),
           ),
         ),
@@ -215,6 +223,8 @@ class _FlapPainter extends CustomPainter {
     required this.cellWidth,
     required this.cellHeight,
     required this.gap,
+    required this.top,
+    required this.bottom,
     required this.glyphs,
   }) : super(repaint: now);
 
@@ -223,10 +233,10 @@ class _FlapPainter extends CustomPainter {
   final double cellWidth;
   final double cellHeight;
   final double gap;
+  final Color top;
+  final Color bottom;
   final _Glyphs glyphs;
 
-  static const _top = Color(0xFF1A2A3E);
-  static const _bottom = Color(0xFF15233A);
   static const _hinge = Color(0xFF060B12);
 
   @override
@@ -264,7 +274,7 @@ class _FlapPainter extends CustomPainter {
         ? RRect.fromRectAndCorners(half, topLeft: radius, topRight: radius)
         : RRect.fromRectAndCorners(half,
             bottomLeft: radius, bottomRight: radius);
-    canvas.drawRRect(shape, Paint()..color = top ? _top : _bottom);
+    canvas.drawRRect(shape, Paint()..color = top ? this.top : bottom);
     canvas.save();
     canvas.clipRRect(shape);
     final painter = glyphs.painters[glyph];

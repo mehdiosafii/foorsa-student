@@ -39,7 +39,6 @@ void main() {
       BoardingStep.location,
       BoardingStep.boarding,
     ]);
-    expect(plan.gates, 4);
   });
 
   test(
@@ -95,27 +94,16 @@ void main() {
     }
   });
 
-  test(
-      'every screen says it in English with the Arabic under it, as the shell does',
-      () {
-    final arabic = RegExp(r'[؀-ۿ]');
+  test('every screen is one headline, one line under it and one button', () {
     for (final step in BoardingStep.values) {
       final copy = copyFor(step);
-      expect(arabic.hasMatch(copy.arabic), isTrue, reason: step.name);
       expect(copy.headline.endsWith('.'), isTrue,
           reason: 'the portal writes its headlines as sentences');
-      expect(copy.eyebrow, copy.eyebrow.toUpperCase());
+      // Short enough to read at a glance: two lines on the smallest phone.
+      expect(copy.headline.length, lessThanOrEqualTo(36), reason: step.name);
+      expect(copy.body.length, lessThanOrEqualTo(72), reason: step.name);
+      expect(copy.body.contains('\n'), isFalse, reason: step.name);
     }
-  });
-
-  test('what the student chose is said in words', () {
-    expect(outcomeLine(BoardingAccess.notifications, true),
-        'Notifications are on');
-    expect(outcomeLine(BoardingAccess.notifications, false),
-        'Notifications stay off for now');
-    expect(outcomeLine(BoardingAccess.camera, true), 'Camera is on');
-    expect(outcomeLine(BoardingAccess.location, false),
-        'Location stays off for now');
   });
 
   test('permission_handler answers map to what the onboarding can still ask',

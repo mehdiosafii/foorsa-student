@@ -7,7 +7,7 @@
 /// engines fly out of the mark into place, with the same curves and the same
 /// offsets as the web, so the opening of the onboarding is the portal's own
 /// brand moment. [AirlinerSilhouette] is the plane as one flat shape, for the
-/// small plane on the progress route.
+/// small plane on the progress line.
 library;
 
 import 'dart:math' as math;

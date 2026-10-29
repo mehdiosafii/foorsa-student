@@ -84,22 +84,18 @@ void main() {
       (
         BoardingStep.notifications,
         BoardingAccess.notifications,
-        'Know the moment there’s news.'
+        'Never miss a moment.'
       ),
-      (
-        BoardingStep.camera,
-        BoardingAccess.camera,
-        'Scan your papers in seconds.'
-      ),
+      (BoardingStep.camera, BoardingAccess.camera, 'Scan papers in seconds.'),
       (
         BoardingStep.microphone,
         BoardingAccess.microphone,
-        'Talk to your adviser, from anywhere.'
+        'Talk to your adviser.'
       ),
       (
         BoardingStep.location,
         BoardingAccess.location,
-        'Feel at home in your new city.'
+        'Feel at home in China.'
       ),
     ];
     for (final (step, access, headline) in expected) {
@@ -111,9 +107,13 @@ void main() {
         expect(find.text(exit), findsNothing, reason: '$exit on ${step.name}');
       }
       final before = phone.asked.length;
-      await _press(tester, 'Continue');
+      await tester.tap(find.text('Continue').last);
+      await tester.pump(const Duration(milliseconds: 100));
       expect(phone.asked.length, before + 1);
       expect(phone.asked.last, access);
+      // A yes shows on the button for a moment; a no simply moves on.
+      expect(find.bySemanticsLabel('Continue, turned on'),
+          access == BoardingAccess.microphone ? findsNothing : findsOneWidget);
       // Granted or not, the next step follows by itself.
       await tester.pump(const Duration(milliseconds: 1200));
       await _settle(tester);
@@ -122,9 +122,8 @@ void main() {
     expect(key.currentState!.currentStep, BoardingStep.boarding);
     expect(find.text('You’re ready to board.'), findsOneWidget);
     expect(find.text('FOORSA STUDENT'), findsOneWidget);
-    // The pass says what the student chose, the refused microphone too.
-    expect(find.bySemanticsLabel('Notifications on'), findsOneWidget);
-    expect(find.bySemanticsLabel('Microphone off'), findsOneWidget);
+    expect(
+        find.bySemanticsLabel(RegExp('^Your boarding pass')), findsOneWidget);
 
     await _press(tester, 'Board');
     await tester.pump(const Duration(milliseconds: 400));

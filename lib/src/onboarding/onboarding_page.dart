@@ -76,7 +76,9 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   bool _leaving = false;
   final Map<BoardingAccess, bool> _answered = {};
   ValueNotifier<bool?> _outcome = ValueNotifier<bool?>(null);
-  (BoardingAccess, bool)? _chip;
+
+  /// The student just said yes: the button shows a check for a moment.
+  bool _done = false;
   Offset? _revealCentre;
   final GlobalKey<BoardingPassSceneState> _passKey =
       GlobalKey<BoardingPassSceneState>();
@@ -153,7 +155,8 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       _feltRelease = true;
       widget.feel('release');
     }
-    if (s > 2.6) _showContent();
+    // The welcome comes once the plane has cleared it.
+    if (s > 2.82) _showContent();
   }
 
   void _skipIntro() {
@@ -194,7 +197,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     if (index < 0 || index >= _steps.length) return;
     setState(() {
       _index = index;
-      _chip = null;
+      _done = false;
       _busy = false;
       _outcome = ValueNotifier<bool?>(
           _step.access == null ? null : _answered[_step.access]);
@@ -229,10 +232,14 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
         final on = answer == AccessState.granted;
         _answered[access] = on;
         _outcome.value = on;
-        setState(() => _chip = (access, on));
-        widget.feel(on ? 'land' : 'detent');
+        // A yes is felt and shown, a no simply moves on: nothing on the way
+        // makes a student feel they answered wrong.
+        if (on) {
+          widget.feel('land');
+          setState(() => _done = true);
+        }
         final step = _index;
-        await Future<void>.delayed(Duration(milliseconds: on ? 1100 : 800));
+        await Future<void>.delayed(Duration(milliseconds: on ? 900 : 380));
         if (mounted && _index == step) _goTo(_index + 1);
     }
   }
@@ -276,14 +283,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     _goTo(_index - 1);
   }
 
-  Map<BoardingAccess, bool> get _settings {
-    final states = _plan?.states ?? const {};
-    return {
-      for (final access in boardingOrder)
-        access: _answered[access] ?? states[access] == AccessState.granted,
-    };
-  }
-
   Widget _scene(BoardingStep step) => switch (step) {
         BoardingStep.welcome => _contentShown
             ? DeparturesScene(still: _still, feel: widget.feel)
@@ -299,7 +298,6 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
             key: _passKey,
             still: _still,
             feel: widget.feel,
-            settings: _settings,
             onTorn: _leave,
           ),
       };
@@ -355,7 +353,10 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   }
 
   /// The smallest a scene may be. Below it the screen scrolls instead.
-  static const _minScene = 220.0;
+  static const _minScene = 200.0;
+
+  /// The words never run wider than this, so they break like a headline.
+  static const _measure = 340.0;
 
   Widget _layout(BoardingCopy copy) {
     return SafeArea(
@@ -372,84 +373,70 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
               final scaler = compact
                   ? TextScaler.linear(media.textScaler.scale(1) * 0.88)
                   : media.textScaler;
-              final copyHeight =
-                  _copyHeight(context, constraints.maxWidth, scaler);
-              final footnote = compact ? 26.0 : 34.0;
-              final fixed = 8 + 44 + 14 + 22 + copyHeight + 14 + 56 + footnote;
+              final measure = math.min(_measure, constraints.maxWidth);
+              final copyHeight = _copyHeight(context, measure, scaler);
+              final gap = compact ? 20.0 : 28.0;
+              final fixed = 8 + 32 + 12 + gap + copyHeight + gap + 56 + 12;
               final room = constraints.maxHeight - fixed;
 
               final top = SizedBox(
-                height: 44,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 420),
-                  child: _step == BoardingStep.welcome
-                      ? const Center(
-                          key: ValueKey('mark'),
-                          child: FoorsaWordmark(
-                              height: 30, color: Boarding.heading))
-                      : Padding(
-                          key: const ValueKey('route'),
-                          padding: const EdgeInsets.only(top: 4),
-                          child: RouteProgress(
-                              progress: _route, gates: _plan?.gates ?? 0),
-                        ),
+                height: 32,
+                child: Center(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 420),
+                    child: _step == BoardingStep.welcome
+                        ? const FoorsaWordmark(
+                            key: ValueKey('mark'),
+                            height: 20,
+                            color: Boarding.heading)
+                        : RouteProgress(
+                            key: const ValueKey('route'), progress: _route),
+                  ),
                 ),
               );
 
               // The scenes are illustrations at a fixed size: the words
               // under them follow the phone's text size.
               final scene = MediaQuery.withNoTextScaling(
-                child: Stack(clipBehavior: Clip.none, children: [
-                  Positioned.fill(
-                    child: AnimatedSwitcher(
-                      duration: Duration(milliseconds: _still ? 200 : 620),
-                      reverseDuration:
-                          Duration(milliseconds: _still ? 200 : 320),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) =>
-                          _sceneTransition(child, animation),
-                      child: KeyedSubtree(
-                          key: ValueKey(_step), child: _scene(_step)),
+                child: LayoutBuilder(builder: (context, box) {
+                  final light = math.max(box.maxWidth, box.maxHeight) * 0.62;
+                  return Stack(clipBehavior: Clip.none, children: [
+                    Positioned(
+                      left: box.maxWidth / 2 - light,
+                      top: box.maxHeight / 2 - light,
+                      width: light * 2,
+                      height: light * 2,
+                      child: FadeTransition(
+                          opacity: _night, child: Spotlight(radius: light)),
                     ),
-                  ),
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: -6,
-                    child: Center(
+                    Positioned.fill(
                       child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 320),
-                        switchInCurve: Curves.easeOutBack,
-                        transitionBuilder: (child, animation) => FadeTransition(
-                          opacity: animation,
-                          child: ScaleTransition(
-                              scale: Tween(begin: 0.86, end: 1.0)
-                                  .animate(animation),
-                              child: child),
-                        ),
-                        child: _chip == null
-                            ? const SizedBox.shrink()
-                            : OutcomeChip(
-                                key: ValueKey(_chip),
-                                on: _chip!.$2,
-                                label: outcomeLine(_chip!.$1, _chip!.$2),
-                              ),
+                        duration: Duration(milliseconds: _still ? 200 : 700),
+                        reverseDuration:
+                            Duration(milliseconds: _still ? 200 : 260),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: _sceneTransition,
+                        child: KeyedSubtree(
+                            key: ValueKey(_step), child: _scene(_step)),
                       ),
                     ),
-                  ),
-                ]),
+                  ]);
+                }),
               );
 
               final words = MediaQuery(
                 data: media.copyWith(textScaler: scaler),
                 child: SizedBox(
+                  width: measure,
                   height: copyHeight,
                   child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 460),
+                    duration: const Duration(milliseconds: 520),
                     reverseDuration: const Duration(milliseconds: 160),
+                    // Anchored to the button, so the space above it is the
+                    // same on every step.
                     layoutBuilder: (current, previous) => Stack(
-                      alignment: Alignment.topLeft,
+                      alignment: Alignment.bottomCenter,
                       children: [...previous, if (current != null) current],
                     ),
                     transitionBuilder: (child, animation) =>
@@ -466,36 +453,21 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                 key: _buttonKey,
                 label: copy.action,
                 busy: _busy,
+                done: _done,
                 onDown: () => widget.feel('press'),
                 onPressed: _plan == null ? null : _continue,
-              );
-
-              final note = SizedBox(
-                height: footnote,
-                child: Center(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: Text(copy.footnote ?? '',
-                        key: ValueKey(copy.footnote),
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textScaler: scaler,
-                        style: Boarding.footnote),
-                  ),
-                ),
               );
 
               List<Widget> parts(Widget sceneSlot) => [
                     const SizedBox(height: 8),
                     top,
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     sceneSlot,
-                    const SizedBox(height: 22),
+                    SizedBox(height: gap),
                     words,
-                    const SizedBox(height: 14),
+                    SizedBox(height: gap),
                     action,
-                    note,
+                    const SizedBox(height: 12),
                   ];
 
               if (room >= _minScene) {
@@ -523,12 +495,14 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       child: child,
       builder: (context, child) {
         final v = animation.value;
-        final scale = incoming ? 0.93 + 0.07 * v : 1 - 0.04 * (1 - v);
-        final dx = incoming ? (1 - v) * 40 : -(1 - v) * 28;
+        // In: from a little smaller and lower, into place. Out: it simply
+        // steps back and goes.
+        final scale = incoming ? 0.94 + 0.06 * v : 0.97 + 0.03 * v;
+        final rise = incoming ? (1 - v) * 14 : 0.0;
         return Opacity(
           opacity: v.clamp(0.0, 1.0),
           child: Transform.translate(
-            offset: Offset(dx, 0),
+            offset: Offset(0, rise),
             child: Transform.scale(scale: scale, child: child),
           ),
         );
@@ -540,11 +514,11 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   /// changes size between steps.
   double _copyHeight(BuildContext context, double width, TextScaler scaler) {
     final base = DefaultTextStyle.of(context).style;
-    double measure(String text, TextStyle style,
-        {TextDirection direction = TextDirection.ltr}) {
+    double measure(String text, TextStyle style) {
       final painter = TextPainter(
         text: TextSpan(text: text, style: base.merge(style)),
-        textDirection: direction,
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center,
         textScaler: scaler,
       )..layout(maxWidth: width);
       return painter.height;
@@ -553,12 +527,8 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     var tallest = 0.0;
     for (final step in _steps) {
       final c = copyFor(step);
-      final h = measure(c.eyebrow, Boarding.eyebrow) +
-          10 +
-          measure(c.headline, Boarding.headline) +
-          6 +
-          measure(c.arabic, Boarding.arabic, direction: TextDirection.rtl) +
-          10 +
+      final h = measure(c.headline, Boarding.headline) +
+          _Copy.gap +
           measure(c.body, Boarding.body);
       tallest = math.max(tallest, h);
     }
@@ -566,11 +536,13 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   }
 }
 
-/// A step's words, coming in one after another.
+/// A step's words: the headline, then the line under it a beat later.
 class _Copy extends StatefulWidget {
   const _Copy({super.key, required this.copy, required this.still});
   final BoardingCopy copy;
   final bool still;
+
+  static const gap = 12.0;
 
   @override
   State<_Copy> createState() => _CopyState();
@@ -578,7 +550,7 @@ class _Copy extends StatefulWidget {
 
 class _CopyState extends State<_Copy> with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 720));
+      vsync: this, duration: const Duration(milliseconds: 760));
 
   @override
   void initState() {
@@ -598,15 +570,15 @@ class _CopyState extends State<_Copy> with SingleTickerProviderStateMixin {
 
   Widget _line(int order, Widget child) {
     // After the last step's words have gone (160 ms), one line at a time.
-    final start = 0.16 + order * 0.09;
+    final start = 0.2 + order * 0.1;
     final curve = CurvedAnimation(
         parent: _c,
-        curve: Interval(start, math.min(1, start + 0.6),
+        curve: Interval(start, math.min(1, start + 0.62),
             curve: Curves.easeOutCubic));
     return FadeTransition(
       opacity: curve,
       child: SlideTransition(
-        position: Tween(begin: const Offset(0, 0.35), end: Offset.zero)
+        position: Tween(begin: const Offset(0, 0.18), end: Offset.zero)
             .animate(curve),
         child: child,
       ),
@@ -616,31 +588,15 @@ class _CopyState extends State<_Copy> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final copy = widget.copy;
-    return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _line(0, Text(copy.eyebrow, style: Boarding.eyebrow)),
-          const SizedBox(height: 10),
-          _line(
-              1,
-              Semantics(
-                  header: true,
-                  child: Text(copy.headline, style: Boarding.headline))),
-          const SizedBox(height: 6),
-          // The Arabic sits under what it translates, so it starts on the left.
-          _line(
-              2,
-              SizedBox(
-                width: double.infinity,
-                child: Text(copy.arabic,
-                    textDirection: TextDirection.rtl,
-                    textAlign: TextAlign.left,
-                    style: Boarding.arabic),
-              )),
-          const SizedBox(height: 10),
-          _line(3, Text(copy.body, style: Boarding.body)),
-        ]);
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      _line(
+          0,
+          Semantics(
+              header: true,
+              child: BalancedText(copy.headline, style: Boarding.headline))),
+      const SizedBox(height: _Copy.gap),
+      _line(1, BalancedText(copy.body, style: Boarding.body)),
+    ]);
   }
 }
 
