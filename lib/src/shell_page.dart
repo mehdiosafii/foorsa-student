@@ -118,12 +118,9 @@ class _ShellPageState extends State<ShellPage> {
   );
   final String _biometricBoot = _newScannerNonce();
   String _biometricScript = '';
-  String? _unlockedToken;
-  bool _showBiometricUnlock = false;
   bool _biometricWasEnabled = false;
   bool _biometricBusy = false;
   int _biometricGeneration = 0;
-  String? _biometricError;
 
   Future<void> _prepareBiometrics() async {
     // Nothing here prompts or reads a credential. The first frame always draws.
@@ -135,10 +132,12 @@ class _ShellPageState extends State<ShellPage> {
       // Never let unavailable preferences prevent ordinary password sign-in.
     }
     if (!mounted) return;
+    // The portal always opens. With quick sign-in saved, its sign-in screen
+    // offers Face ID or the fingerprint (and opens the prompt by itself once a
+    // launch); the password stays underneath it.
     setState(() {
       _biometricWasEnabled = _biometrics.enabled;
-      _showBiometricUnlock = _biometrics.enabled;
-      _bootWebView = !_showBiometricUnlock;
+      _bootWebView = true;
     });
   }
 
@@ -149,66 +148,27 @@ class _ShellPageState extends State<ShellPage> {
         'origin': Uri.parse(AppConfig.baseUrl).origin,
         'boot': _biometricBoot,
         'protected': _biometricWasEnabled || _biometrics.enabled,
-        'token': _unlockedToken,
+        'token': null,
       })};'),
     injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
     forMainFrameOnly: true,
   );
 
-  Future<void> _retireBiometricBootstrap(InAppWebViewController controller) async {
-    if (_unlockedToken == null) return;
-    _unlockedToken = null;
-    // Restoration is for the first document only. Future reloads use the tab
-    // session; clearing it or signing out must never replay the initial token.
+  /// Reloads after quick sign-in is turned off must not clear the session.
+  Future<void> _refreshSessionScript() async {
+    final controller = _controller;
+    if (controller == null) return;
     await controller.removeUserScriptsByGroupName(groupName: 'foorsa-biometric-session');
     await controller.addUserScript(userScript: _sessionScript());
   }
 
-  Future<void> _unlockBiometrics() async {
-    if (_biometricBusy) return;
-    setState(() { _biometricBusy = true; _biometricError = null; });
-    try {
-      final session = await _biometrics.unlock();
-      final validity = session == null ? SessionValidity.expired : await _biometrics.validate(session);
-      if (!mounted) return;
-      if (validity == SessionValidity.unavailable) {
-        setState(() => _biometricError = 'Could not connect. Try again when you are online.');
-      } else if (validity == SessionValidity.expired) {
-        await _biometrics.forget();
-        if (mounted) {
-          _biometricNotice('Please sign in with your password to renew quick sign-in.');
-          setState(() { _showBiometricUnlock = false; _bootWebView = true; });
-        }
-      } else {
-        setState(() {
-          _unlockedToken = session!.token;
-          _showBiometricUnlock = false;
-          _bootWebView = true;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _biometricError = 'Could not unlock. Try again or use your password.');
-    } finally {
-      if (mounted) setState(() => _biometricBusy = false);
-    }
-  }
-
-  Future<void> _usePassword() async {
-    if (_biometricBusy) return;
-    setState(() => _biometricBusy = true);
-    try { await _biometrics.forget(); } catch (_) { /* The web session is still cleared at boot. */ }
-    if (mounted) {
-      setState(() {
-      _unlockedToken = null;
-      _showBiometricUnlock = false;
-      _bootWebView = true;
-      _biometricBusy = false;
-    });
-    }
-  }
-
   void _biometricNotice(String message) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  static bool _isCancellation(PlatformException error) {
+    final text = '${error.code} ${error.message ?? ''}'.toLowerCase();
+    return text.contains('cancel') || text.contains('-128');
   }
 
   Future<bool> _biometricSessionIsCurrent(String token, String nonce) async {
@@ -222,23 +182,127 @@ class _ShellPageState extends State<ShellPage> {
       'window.__foorsaBiometrics?.matches(${jsonEncode(token)}) === true') == true;
   }
 
+  Future<bool> _protectWebSession(String token) async => await _controller?.evaluateJavascript(source:
+      'location.origin === ${jsonEncode(Uri.parse(AppConfig.baseUrl).origin)} && '
+      'window.__foorsaBiometrics?.protect(${jsonEncode(token)}) === true') == true;
+
   Future<Object?> _handleBiometrics(List<dynamic> args) async {
     if (args.isEmpty || args.first is! Map) return null;
     final data = args.first as Map;
     final nonce = data['nonce'];
-    if (nonce != _scannerNonce || !_isTrustedPortal(await _controller?.getUrl())) return null;
-    if (data['operation'] == 'forget') {
-      _biometricGeneration++;
-      try {
-        final controller = _controller;
-        if (controller != null) await _retireBiometricBootstrap(controller);
-      } catch (_) { /* The web view may have closed during sign-out. */ }
-      try { await _biometrics.forget(); } catch (_) { /* No credential is returned. */ }
+    if (nonce is! String || nonce != _scannerNonce ||
+        !_isTrustedPortal(await _controller?.getUrl())) {
       return null;
     }
-    if (data['operation'] != 'session' || data['token'] is! String) return null;
+    switch (data['operation']) {
+      case 'forget':
+        // An expired or rejected session, or a deleted account. Signing out
+        // keeps quick sign-in and never sends this.
+        _biometricGeneration++;
+        try { await _biometrics.forget(); } catch (_) { /* No credential is returned. */ }
+        _biometricWasEnabled = false;
+        try { await _refreshSessionScript(); } catch (_) { /* The web view may have closed. */ }
+        return null;
+      case 'status':
+        final available = await _biometrics.available();
+        return {'available': available, 'enabled': _biometrics.enabled, 'kind': _biometrics.kind};
+      case 'unlock':
+        return _unlockForPortal();
+      case 'enable':
+        return _enableForPortal(data['token'], nonce);
+      case 'disable':
+        _biometricGeneration++;
+        try { await _biometrics.forget(); } catch (_) { return {'ok': false, 'reason': 'failed'}; }
+        _biometricWasEnabled = false;
+        try { await _refreshSessionScript(); } catch (_) { /* The next launch reads the stored state. */ }
+        return {'ok': true};
+      case 'session':
+        return _offerAfterSignIn(data['token'], nonce);
+    }
+    return null;
+  }
+
+  /// The sign-in screen's Face ID / fingerprint button. The OS prompt reads the
+  /// saved session; the server confirms it before the portal is handed it.
+  Future<Map<String, Object?>> _unlockForPortal() async {
+    if (_biometricBusy) return {'ok': false, 'reason': 'busy'};
+    if (!_biometrics.enabled) return {'ok': false, 'reason': 'unavailable'};
+    _biometricBusy = true;
+    try {
+      final StudentSession? session;
+      try {
+        session = await _biometrics.unlock();
+      } on PlatformException catch (error) {
+        return {'ok': false, 'reason': _isCancellation(error) ? 'cancelled' : 'failed'};
+      }
+      if (session == null) {
+        // Nothing usable is saved any more (a changed Face ID or fingerprint
+        // set removes it): the password is the way back in.
+        await _biometrics.forget();
+        _biometricWasEnabled = false;
+        return {'ok': false, 'reason': 'expired'};
+      }
+      switch (await _biometrics.validate(session)) {
+        case SessionValidity.unavailable:
+          return {'ok': false, 'reason': 'offline'};
+        case SessionValidity.expired:
+          await _biometrics.forget();
+          _biometricWasEnabled = false;
+          return {'ok': false, 'reason': 'expired'};
+        case SessionValidity.valid:
+          _biometricWasEnabled = true;
+          return {'ok': true, 'token': session.token};
+      }
+    } catch (_) {
+      return {'ok': false, 'reason': 'failed'};
+    } finally {
+      _biometricBusy = false;
+    }
+  }
+
+  /// Profile › Settings turned it on for the session open now.
+  Future<Map<String, Object?>> _enableForPortal(Object? token, String nonce) async {
+    if (token is! String) return {'ok': false, 'reason': 'unavailable'};
+    if (_biometricBusy) return {'ok': false, 'reason': 'busy'};
+    final session = StudentSession.parse(token);
+    if (session == null) return {'ok': false, 'reason': 'unavailable'};
+    final generation = _biometricGeneration;
+    _biometricBusy = true;
+    try {
+      if (!await _biometricSessionIsCurrent(session.token, nonce)) return {'ok': false, 'reason': 'unavailable'};
+      if (!await _biometrics.available()) return {'ok': false, 'reason': 'not_set_up'};
+      switch (await _biometrics.validate(session)) {
+        case SessionValidity.unavailable:
+          return {'ok': false, 'reason': 'offline'};
+        case SessionValidity.expired:
+          return {'ok': false, 'reason': 'expired'};
+        case SessionValidity.valid:
+          break;
+      }
+      // A different account must never inherit the previous student's vault.
+      if (_biometrics.enabled && !_biometrics.hasSavedSession(session)) await _biometrics.forget();
+      if (!await _biometrics.save(session)) return {'ok': false, 'reason': 'failed'};
+      if (generation != _biometricGeneration || !await _biometricSessionIsCurrent(session.token, nonce) ||
+          !await _protectWebSession(session.token)) {
+        await _biometrics.forget();
+        return {'ok': false, 'reason': 'failed'};
+      }
+      _biometricWasEnabled = true;
+      return {'ok': true};
+    } on PlatformException catch (error) {
+      return {'ok': false, 'reason': _isCancellation(error) ? 'cancelled' : 'failed'};
+    } catch (_) {
+      return {'ok': false, 'reason': 'failed'};
+    } finally {
+      _biometricBusy = false;
+    }
+  }
+
+  /// After a password sign-in, once the server has confirmed the session.
+  Future<Object?> _offerAfterSignIn(Object? token, String nonce) async {
+    if (token is! String) return null;
     if (_biometricBusy) return {'retry': true};
-    final session = StudentSession.parse(data['token']);
+    final session = StudentSession.parse(token);
     if (session == null) return null;
     final generation = _biometricGeneration;
     _biometricBusy = true;
@@ -253,13 +317,14 @@ class _ShellPageState extends State<ShellPage> {
       }
       final enable = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
         scrollable: true,
-        icon: const Icon(Icons.fingerprint, size: 42),
+        icon: Icon(_biometrics.kind == 'face' ? Icons.face_retouching_natural : Icons.fingerprint, size: 42),
         title: const Text('Sign in faster next time'),
         content: Text('Use ${_biometrics.label} to sign in to Foorsa on this phone. '
-          'Your login is saved securely on this device. Foorsa never sees your face or fingerprint.'),
+          'Your login is saved securely on this device. Foorsa never sees your face or fingerprint. '
+          'You can turn this off in Profile › Settings.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Enable quick sign-in')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text('Use ${_biometrics.label}')),
         ],
       ));
       if (generation != _biometricGeneration || !await _biometricSessionIsCurrent(session.token, nonce)) return null;
@@ -269,14 +334,12 @@ class _ShellPageState extends State<ShellPage> {
         await _biometrics.forget();
         return null;
       }
-      final protected = await _controller?.evaluateJavascript(source:
-        'location.origin === ${jsonEncode(Uri.parse(AppConfig.baseUrl).origin)} && '
-        'window.__foorsaBiometrics?.protect(${jsonEncode(session.token)}) === true');
-      if (protected != true) {
+      if (!await _protectWebSession(session.token)) {
         await _biometrics.forget();
         throw StateError('The session changed before it could be protected');
       }
-      _biometricNotice('Quick sign-in is enabled on this phone.');
+      _biometricWasEnabled = true;
+      _biometricNotice('${_biometrics.label} sign-in is on for this phone.');
     } catch (_) {
       _biometricNotice('Quick sign-in could not be saved. You can keep using your password.');
     } finally {
@@ -312,7 +375,10 @@ class _ShellPageState extends State<ShellPage> {
     await controller.evaluateJavascript(source:
       'if (location.origin === ${jsonEncode(Uri.parse(AppConfig.baseUrl).origin)}) {'
       'Object.defineProperty(window, "__foorsaScannerNonce", '
-      '{value: ${jsonEncode(nonce)}, configurable: true, enumerable: false});}'
+      '{value: ${jsonEncode(nonce)}, configurable: true, enumerable: false});'
+      // Quick sign-in talks to the shell with the same nonce. Until 1.2.21 it
+      // was handed over only before a scan, so the sign-in offer never showed.
+      'window.__foorsaBiometrics?.ready(${jsonEncode(nonce)});}'
     );
   }
 
@@ -1114,11 +1180,6 @@ class _ShellPageState extends State<ShellPage> {
                       // Publish into the trusted main frame, never return the
                       // capability to an iframe that requested this refresh.
                       await _publishScannerNonce(controller);
-                      if (_isTrustedPortal(await controller.getUrl())) {
-                        await controller.evaluateJavascript(source:
-                          'if (location.origin === ${jsonEncode(Uri.parse(AppConfig.baseUrl).origin)}) '
-                          'window.__foorsaBiometrics?.ready(${jsonEncode(_scannerNonce)});');
-                      }
                       return {'ready': true};
                     },
                   );
@@ -1175,7 +1236,6 @@ class _ShellPageState extends State<ShellPage> {
                   _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
-                  await _retireBiometricBootstrap(controller);
                   await _openPushChat();
                   if (_loader.showing) setState(_loader.pageLoaded);
                   if (!_errorThisLoad) {
@@ -1245,36 +1305,6 @@ class _ShellPageState extends State<ShellPage> {
               ),
             if (_loadFailed)
               ShellOfflineScreen(onRetry: _retry, dark: _isDark(context)),
-            if (_showBiometricUnlock)
-              Positioned.fill(child: Material(
-                color: _isDark(context) ? const Color(0xFF0B1220) : const Color(0xFFF5F7FA),
-                child: SafeArea(child: Center(child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(32),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.fingerprint, size: 64, color: _isDark(context) ? Colors.white : const Color(0xFF183250)),
-                    const SizedBox(height: 24),
-                    Text('Welcome back', style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: _isDark(context) ? Colors.white : const Color(0xFF183250))),
-                    const SizedBox(height: 12),
-                    Text('Use ${_biometrics.label} to open your student account.', textAlign: TextAlign.center,
-                      style: TextStyle(color: _isDark(context) ? Colors.white70 : const Color(0xFF334155))),
-                    if (_biometricError != null) Padding(
-                      padding: const EdgeInsets.only(top: 16),
-                      child: Text(_biometricError!, textAlign: TextAlign.center,
-                        style: TextStyle(color: _isDark(context) ? Colors.white70 : const Color(0xFF334155))),
-                    ),
-                    const SizedBox(height: 28),
-                    FilledButton.icon(
-                      onPressed: _biometricBusy ? null : _unlockBiometrics,
-                      icon: const Icon(Icons.lock_open),
-                      label: Text(_biometricBusy ? 'Unlocking…' : 'Sign in securely'),
-                    ),
-                    TextButton(onPressed: _biometricBusy ? null : _usePassword,
-                      style: TextButton.styleFrom(foregroundColor: _isDark(context) ? Colors.white : const Color(0xFF183250)),
-                      child: const Text('Use password')),
-                  ]),
-                ))),
-              )),
           ],
         ),
       ),
