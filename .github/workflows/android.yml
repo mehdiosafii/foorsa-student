@@ -53,6 +53,16 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
+      - run: node --test test/biometric_session_test.cjs
+      - name: Build Google Play bundle from the same shared source as iOS
+        run: flutter build appbundle --release
+      - name: Save unsigned Play validation bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: foorsa-android-unsigned-bundle-${{ github.sha }}
+          path: build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
       - name: Build Android device-test APK
         run: flutter build apk --debug --target-platform android-arm64
       - name: Save APK and checksum

@@ -6,7 +6,7 @@ plugins {
 }
 
 // Release signing from android/key.properties (upload key for Play).
-// Falls back to debug so `flutter run --release` still works locally.
+// Without the upload key, release bundles stay unsigned. Never ship a debug-signed release.
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('key.properties')
 if (keystorePropertiesFile.exists()) {
@@ -55,7 +55,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
+            signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : null
         }
     }
 }

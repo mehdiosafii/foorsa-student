@@ -32,6 +32,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to securely sign in to your Foorsa student account on this device.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Foorsa Student uses the camera to scan your documents and take your ID photo for your application file.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

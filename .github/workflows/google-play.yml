@@ -1,0 +1,128 @@
+name: Google Play
+
+on:
+  push:
+    branches: [main]
+    paths: [pubspec.yaml]
+  pull_request:
+    paths: ['.github/workflows/google-play.yml', 'scripts/prepare_android_release.py', 'scripts/publish_google_play.py', pubspec.yaml]
+  workflow_dispatch:
+    inputs:
+      track:
+        description: Google Play release track
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+
+permissions:
+  contents: read
+
+concurrency:
+  group: google-play-release
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report Play release setup without exposing credentials
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          python3 - <<'PY'
+          import os
+          names = ['ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD', 'GOOGLE_PLAY_SERVICE_ACCOUNT_JSON']
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              print('::warning::Google Play publishing needs these Actions secrets: ' + ', '.join(missing))
+          else:
+              print('All five release secrets are configured; Play validates key and account access during publication.')
+          PY
+  version:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version.outputs.changed }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          else
+            python3 - "$BEFORE" <<'PY'
+          import os, pathlib, subprocess, sys
+          def version(text):
+              return next(line for line in text.splitlines() if line.startswith('version:'))
+          current = version(pathlib.Path('pubspec.yaml').read_text())
+          previous = subprocess.run(['git', 'show', f'{sys.argv[1]}:pubspec.yaml'], capture_output=True, text=True)
+          changed = previous.returncode != 0 or version(previous.stdout) != current
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'changed={str(changed).lower()}\n')
+          PY
+          fi
+
+  publish:
+    needs: version
+    if: github.ref == 'refs/heads/main' && needs.version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PLAY_TRACK: ${{ inputs.track || vars.GOOGLE_PLAY_TRACK || 'internal' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check release credentials
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: python3 scripts/prepare_android_release.py
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: 3.47.5
+          channel: stable
+          cache: true
+      - run: python3 scripts/verify_firebase_config.py
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - run: node --test test/biometric_session_test.cjs
+      - run: flutter build appbundle --release
+      - name: Verify the signed bundle
+        run: |
+          jarsigner -verify build/app/outputs/bundle/release/app-release.aab | tee "$RUNNER_TEMP/bundle-verification.txt"
+          grep -q 'jar verified' "$RUNNER_TEMP/bundle-verification.txt"
+          sha256sum build/app/outputs/bundle/release/app-release.aab
+      - name: Save signed Android bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: foorsa-google-play-${{ github.sha }}
+          path: build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
+      - name: Install Play publisher
+        run: python3 -m pip install 'google-api-python-client==2.187.0' 'google-auth==2.43.0'
+      - name: Publish to Google Play
+        run: python3 scripts/publish_google_play.py
+      - name: Remove signing credentials
+        if: always()
+        run: rm -f android/key.properties "$RUNNER_TEMP/foorsa-upload.jks" "$RUNNER_TEMP/foorsa-play.json"

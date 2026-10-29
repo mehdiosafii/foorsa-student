@@ -15,6 +15,13 @@ For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
 
+## Android releases and quick sign-in
+
+Android now validates a release App Bundle as well as the test APK, and has a
+Google Play publishing workflow using the same shared version as iOS. Students
+can opt into securely saved Face ID, Touch ID, or Android biometric sign-in.
+See [release setup, session behavior, and device checks](docs/android-release-and-biometric-login.md).
+
 ## iOS release build
 
 Validated locally with Flutter 3.47.5 and Xcode 27.0. The GitHub build uses
