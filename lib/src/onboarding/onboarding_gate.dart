@@ -3,10 +3,11 @@
 /// it). The shell underneath keeps loading the portal the whole time.
 library;
 
-import 'dart:ui' as ui;
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../portal_handover.dart';
 import '../shell_haptics.dart';
@@ -36,6 +37,30 @@ class OnboardingScope extends InheritedWidget {
   bool updateShouldNotify(OnboardingScope old) => old.active != active;
 }
 
+/// The first real notification, the moment the student turns them on: the
+/// card the scene was showing them flies up, and the phone's own banner
+/// comes down. The plugin is already set up by the shell (student_push.dart),
+/// on the channel Foorsa's updates use.
+Future<void> showFirstNotification() async {
+  try {
+    await FlutterLocalNotificationsPlugin().show(
+      id: 20261029,
+      title: 'Foorsa',
+      body: 'Notifications are on. Replies from your adviser will show up here.',
+      notificationDetails: const NotificationDetails(
+        android: AndroidNotificationDetails('student_updates', 'Foorsa updates',
+            importance: Importance.high,
+            priority: Priority.high,
+            icon: 'ic_stat_message'),
+        iOS: DarwinNotificationDetails(
+            presentBanner: true, presentList: true, presentSound: true),
+      ),
+    );
+  } catch (error) {
+    debugPrint('first notification not shown: $error');
+  }
+}
+
 class FirstLaunchGate extends StatefulWidget {
   const FirstLaunchGate({
     super.key,
@@ -45,7 +70,6 @@ class FirstLaunchGate extends StatefulWidget {
     this.permissions = const SystemBoardingPermissions(),
     this.haptics,
     this.asksToTrack = OnboardingConfig.asksToTrack,
-    this.splash,
     this.sounds,
   });
 
@@ -53,9 +77,6 @@ class FirstLaunchGate extends StatefulWidget {
   /// takeoff (takeoff_intro.dart), which a platform view's set-up would
   /// stall. The portal still has the whole onboarding to load.
   static const webViewDelay = Duration(milliseconds: 3600);
-
-  /// The launch screen's roundel, decoded before the first frame.
-  final ui.Image? splash;
 
   /// Its sounds; silent when none are given (tests).
   final OnboardingSounds? sounds;
@@ -103,10 +124,14 @@ class _FirstLaunchGateState extends State<FirstLaunchGate> {
               sounds: widget.sounds ?? const SilentSounds(),
               findMark: PortalHandover.instance.markRect,
               onBoarded: PortalHandover.instance.boarded,
+              onGranted: (access) {
+                if (access == BoardingAccess.notifications) {
+                  unawaited(showFirstNotification());
+                }
+              },
               onFinished: _finish,
               isIOS: defaultTargetPlatform == TargetPlatform.iOS,
               asksToTrack: widget.asksToTrack,
-              splash: widget.splash,
             ),
           ),
       ]),

@@ -7,6 +7,7 @@ import 'package:foorsa_student/src/onboarding/onboarding_gate.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_page.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_sound.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_store.dart';
+import 'package:foorsa_student/src/onboarding/runway.dart';
 
 class _Phone implements BoardingPermissions {
   _Phone({this.answers = const {}, this.start = const {}});
@@ -52,17 +53,37 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
+/// The runway, by the word on it.
+Finder _runway(String label) => find.widgetWithText(Runway, label).last;
+
 Future<void> _press(WidgetTester tester, String label) async {
-  await tester.tap(find.text(label).last);
+  await tester.tap(_runway(label));
   await _settle(tester);
 }
 
-class _Heard implements BoardingSounds {
+class _Heard extends BoardingSounds {
   final cues = <String>[];
+  var bed = false;
+  var _muted = false;
   @override
   void play(String cue) => cues.add(cue);
   @override
   void stop(String cue) => cues.add('stop $cue');
+  @override
+  void startBed() => bed = true;
+  @override
+  void endBed() => bed = false;
+  @override
+  bool get muted => _muted;
+  @override
+  set muted(bool value) => _muted = value;
+}
+
+/// Frames, at the phone's rate, for animations that are not stilled.
+Future<void> _frames(WidgetTester tester, Duration length) async {
+  for (var t = Duration.zero; t < length; t += const Duration(milliseconds: 16)) {
+    await tester.pump(const Duration(milliseconds: 16));
+  }
 }
 
 void main() {
@@ -116,11 +137,11 @@ void main() {
         expect(find.text(exit), findsNothing, reason: '$exit on ${step.name}');
       }
       final before = phone.asked.length;
-      await tester.tap(find.text('Continue').last);
+      await tester.tap(_runway('Continue'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(phone.asked.length, before + 1);
       expect(phone.asked.last, access);
-      // A yes shows on the button for a moment; a no simply moves on.
+      // A yes shows on the runway for a moment; a no simply moves on.
       expect(find.bySemanticsLabel('Continue, turned on'),
           access == BoardingAccess.microphone ? findsNothing : findsOneWidget);
       // Granted or not, the next step follows by itself.
@@ -287,8 +308,8 @@ void main() {
     for (var i = 0; i < 90; i++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
-    await tester.tap(find.text('Board'));
-    for (var i = 0; i < 200 && !finished; i++) {
+    await tester.tap(_runway('Board'));
+    for (var i = 0; i < 320 && !finished; i++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(asked, 1);
@@ -296,6 +317,90 @@ void main() {
     expect(finished, isTrue);
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets(
+      'the runway\'s arrow carries the student on, and lifts off before the '
+      'phone asks', (tester) async {
+    _screen(tester, const Size(390, 844));
+    final phone = _Phone();
+    final heard = _Heard();
+    final key = GlobalKey<FirstLaunchOnboardingState>();
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(
+          size: Size(390, 844), padding: EdgeInsets.only(top: 47, bottom: 34)),
+      child: MaterialApp(
+        home: FirstLaunchOnboarding(
+          key: key,
+          permissions: phone,
+          feel: (_, [__ = 1]) {},
+          onFinished: () {},
+          isIOS: false,
+          asksToTrack: false,
+          sounds: heard,
+        ),
+      ),
+    ));
+    await tester.pump();
+    key.currentState!.debugJumpTo(BoardingStep.welcome);
+    await _frames(tester, const Duration(milliseconds: 1300));
+    expect(key.currentState!.runwayPhase, RunwayPhase.parked);
+    expect(heard.bed, isTrue);
+
+    // The arrow rolls down the runway, lifts off and flies into the board.
+    await tester.tap(_runway('Get started'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(key.currentState!.runwayPhase, RunwayPhase.departing);
+    await _frames(tester, const Duration(milliseconds: 600));
+    expect(key.currentState!.runwayPhase, RunwayPhase.away);
+    expect(key.currentState!.currentStep, BoardingStep.notifications);
+    await _frames(tester, const Duration(milliseconds: 1700));
+    expect(key.currentState!.runwayPhase, RunwayPhase.parked);
+    expect(find.text('Continue'), findsOneWidget);
+
+    // On a step that asks, the phone asks once the arrow is in the air.
+    await tester.tap(_runway('Continue'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(phone.asked, isEmpty);
+    await _frames(tester, const Duration(milliseconds: 700));
+    expect(phone.asked, [BoardingAccess.notifications]);
+    await tester.pump();
+    expect(find.bySemanticsLabel('Continue, turned on'), findsOneWidget);
+    await _frames(tester, const Duration(milliseconds: 2600));
+    expect(key.currentState!.currentStep, BoardingStep.camera);
+    expect(key.currentState!.runwayPhase, RunwayPhase.parked);
+
+    for (final cue in ['tap', 'takeoff', 'swoop', 'dock', 'step-1', 'park',
+        'granted', 'step-2']) {
+      expect(heard.cues, contains(cue));
+    }
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('the speaker in the corner turns the sound off and on',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    _screen(tester, const Size(390, 844));
+    final heard = _Heard();
+    await tester.pumpWidget(_phone(FirstLaunchOnboarding(
+      permissions: _Phone(),
+      feel: (_, [__ = 1]) {},
+      onFinished: () {},
+      isIOS: true,
+      asksToTrack: false,
+      sounds: heard,
+    )));
+    await _settle(tester);
+    await tester.tap(find.bySemanticsLabel('Sound on'));
+    await _settle(tester);
+    expect(heard.muted, isTrue);
+    expect(find.bySemanticsLabel('Sound off'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Sound off'));
+    await _settle(tester);
+    expect(heard.muted, isFalse);
+    await tester.pumpWidget(const SizedBox());
+    semantics.dispose();
   });
 
   group('the gate', () {

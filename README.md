@@ -124,16 +124,19 @@ final submission.
 ## First launch
 
 A first-time downloader boards through a native onboarding before the
-sign-in, told with one object: the splash's F is an arrow that becomes the
-journey's airliner, and between steps each object melts into the arrow and
-unfolds into the next. One screen asks for each phone access (notifications,
-camera, microphone, location), each a single object, a headline and one
-button, with soft glass sounds that rise a note per step; a boarding pass
-ends it, becomes the arrow, and lands on the sign-in's own arrow while the
-portal fades in on the same night. Updates skip it. Each screen's one button
-is Continue and always leads to the system prompt (App Review 5.1.1(iv));
-tracking is built but off, because the app does not track. See
-`docs/first-launch-onboarding.md`.
+sign-in, told with one object: the launch screen is Foorsa's arrow alone, in
+pearl glass, and it becomes the journey's airliner. After that the arrow is
+the button: parked at the gate of a glass runway, it taxis, lifts off and
+swoops into each picture, which folds into it and unfolds as the next. One
+screen asks for each phone access (notifications, camera, microphone,
+location), each a single object in the portal's glass, a headline and the
+runway; sounds you can hear (a soft music bed, a glass note per step) with a
+speaker to turn them off; the first real notification when they are turned
+on. At the end the arrow cuts the boarding pass's stub off and lands on the
+sign-in's own arrow while the portal fades in on the same night. Updates skip
+it. Each screen's one control says Continue and always leads to the system
+prompt (App Review 5.1.1(iv)); tracking is built but off, because the app
+does not track. See `docs/first-launch-onboarding.md`.
 
 ## What the portal tells the app
 

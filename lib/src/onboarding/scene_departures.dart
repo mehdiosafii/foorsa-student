@@ -10,6 +10,7 @@ import 'dart:math' as math;
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'glass.dart';
 import 'split_flap.dart';
 import 'stage_forms.dart';
 
@@ -111,13 +112,20 @@ class _DeparturesSceneState extends State<DeparturesScene> {
               alignment: Alignment.center,
               clipBehavior: Clip.none,
               children: [
+                // The flaps sit in a glass case, the portal's pane.
+                SizedBox(
+                  width: boardWidth(constraints.maxWidth) + boardCase * 2,
+                  height: height + boardCase * 2,
+                  child: GlassPane(
+                      glass: Glass.pane, radius: height * 0.13 + boardCase),
+                ),
                 line(),
                 Transform.translate(
-                  offset: Offset(0, -(height / 2 + 26)),
+                  offset: Offset(0, -(height / 2 + boardCase + 24)),
                   child: Text('NEXT DEPARTURE', style: Boarding.caption()),
                 ),
                 Transform.translate(
-                  offset: Offset(0, height / 2 + 3 + height * 0.31),
+                  offset: Offset(0, height / 2 + boardCase + 6 + height * 0.31),
                   // The floor of the stage: the board again, upside down,
                   // fading.
                   child: SizedBox(

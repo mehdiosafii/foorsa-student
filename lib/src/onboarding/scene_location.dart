@@ -1,6 +1,6 @@
-/// Location: a quiet night map seen through a lens that fades into the stage,
-/// the phone's blue dot in the middle with its heading, and the one thing it
-/// gives a student in a new city: the next prayer.
+/// Location: a quiet night map seen through a glass lens, the phone's blue
+/// dot in the middle with its heading, and the one thing it gives a student
+/// in a new city: the next prayer.
 library;
 
 import 'dart:math' as math;
@@ -9,6 +9,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'glass.dart';
 import 'stage_forms.dart';
 
 class LocationScene extends StatefulWidget {
@@ -66,21 +67,12 @@ class _PrayerLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1B2836),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Boarding.slateEdge, width: 0.5),
-        boxShadow: const [
-          BoxShadow(
-              color: Color(0x66000000),
-              blurRadius: 18,
-              offset: Offset(0, 8),
-              spreadRadius: -6),
-        ],
-      ),
-      child: Text.rich(
+    return GlassPane(
+      glass: Glass.pane,
+      radius: 999,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
+        child: Text.rich(
         TextSpan(children: [
           TextSpan(
               text: 'Asr  ',
@@ -94,12 +86,23 @@ class _PrayerLabel extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   fontFeatures: [FontFeature.tabularFigures()])),
         ]),
-        style:
-            const TextStyle(fontSize: 13.5, height: 1.2, letterSpacing: -0.1),
+          style:
+              const TextStyle(fontSize: 13.5, height: 1.2, letterSpacing: -0.1),
+        ),
       ),
     );
   }
 }
+
+/// The lens's frame: [lensGlass] without its face, so the map shows.
+final Glass _lensFrame = Glass(
+  fill: const [Color(0x00000000), Color(0x00000000), Color(0x00000000)],
+  rim: lensGlass.rim,
+  wall: lensGlass.wall,
+  highlight: lensGlass.highlight,
+  glow: lensGlass.glow,
+  shadows: lensGlass.shadows,
+);
 
 class _MapPainter extends CustomPainter {
   _MapPainter(this.clock, {required this.still}) : super(repaint: clock);
@@ -110,12 +113,14 @@ class _MapPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final t = still ? 0.0 : clock.value;
     final centre = size.center(Offset.zero);
-    final r = size.width / 2;
     final appear = still ? 1.0 : easeOut(t, 0, 0.9);
 
-    // The map, through a lens that fades out at its edge.
-    canvas.saveLayer(Offset.zero & size, Paint());
+    // The map, through the lens (stage_forms.dart's lensRadius).
+    final r = size.width * 0.4;
+    final circle = Rect.fromCircle(center: centre, radius: r);
     canvas.save();
+    canvas.clipPath(Path()..addOval(circle));
+    canvas.saveLayer(circle, Paint()..color = Color.fromRGBO(0, 0, 0, appear));
     canvas.translate(centre.dx, centre.dy);
     // It drifts very slowly, as a map does in a walking hand.
     canvas.rotate(0.03 * math.sin(t * 0.35));
@@ -124,21 +129,22 @@ class _MapPainter extends CustomPainter {
     canvas.translate(-145, -145);
     _streets(canvas);
     canvas.restore();
+    // Darker towards the glass's edge, as a lens is.
     canvas.drawRect(
-      Offset.zero & size,
+      circle,
       Paint()
-        ..blendMode = BlendMode.dstIn
         ..shader = ui.Gradient.radial(centre, r, [
-          Color.fromRGBO(0, 0, 0, appear),
-          Color.fromRGBO(0, 0, 0, 0.88 * appear),
-          const Color(0x00000000),
+          const Color(0x00060B12),
+          Color.fromRGBO(6, 11, 18, 0.55 * appear),
         ], const [
-          0,
-          0.55,
+          0.62,
           1
         ]),
     );
     canvas.restore();
+    final lens = GlassShape.rrect(
+        RRect.fromRectAndRadius(circle, Radius.circular(r)));
+    paintGlassBody(canvas, lens, _lensFrame, opacity: appear);
 
     // Where the phone is pointing.
     final heading =
@@ -182,6 +188,7 @@ class _MapPainter extends CustomPainter {
         centre, 10.5, Paint()..color = Color.fromRGBO(255, 255, 255, appear));
     canvas.drawCircle(
         centre, 7.5, Paint()..color = Boarding.here.withValues(alpha: appear));
+    paintGlassRim(canvas, lens, _lensFrame, opacity: appear);
   }
 
   /// A part of a city at night, in a 290 pt square: a river, avenues, a

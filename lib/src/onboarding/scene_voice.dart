@@ -9,7 +9,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'glass.dart';
 import 'lucide.dart';
+import 'stage_forms.dart';
 
 class VoiceScene extends StatefulWidget {
   const VoiceScene({super.key, required this.still, required this.feel});
@@ -79,32 +81,17 @@ class _VoiceSceneState extends State<VoiceScene>
                 valueListenable: _held,
                 builder: (context, held, child) =>
                     Transform.scale(scale: 1 - 0.05 * held, child: child),
-                child: Container(
-                  width: 88,
-                  height: 88,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      center: Alignment(-0.3, -0.5),
-                      radius: 1.1,
-                      colors: [Color(0xFF263749), Color(0xFF17232F)],
+                // The portal's lit glass, as its tiles are.
+                child: const SizedBox.square(
+                  dimension: micSide,
+                  child: GlassPane(
+                    glass: Glass.tile,
+                    circle: true,
+                    child: Center(
+                      child: Lucide(LucideIcons.mic,
+                          size: 32, color: Boarding.heading, strokeWidth: 1.9),
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Color(0x66000000),
-                          blurRadius: 30,
-                          offset: Offset(0, 14),
-                          spreadRadius: -10),
-                    ],
                   ),
-                  foregroundDecoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border:
-                        Border.all(color: const Color(0x24FFFFFF), width: 0.8),
-                  ),
-                  alignment: Alignment.center,
-                  child: const Lucide(LucideIcons.mic,
-                      size: 32, color: Boarding.heading, strokeWidth: 1.9),
                 ),
               ),
             ),

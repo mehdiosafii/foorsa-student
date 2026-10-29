@@ -16,10 +16,10 @@ import 'brand_marks.dart';
 import 'stage_forms.dart';
 
 const _passWidth = passWidth;
-const _upperHeight = 236.0;
+/// The perforation's band, its middle at [passTearY].
 const _tearHeight = 20.0;
 const _passHeight = passHeight;
-const _tearY = _upperHeight + _tearHeight / 2;
+const _tearY = passTearY;
 
 class BoardingPassScene extends StatefulWidget {
   const BoardingPassScene({
@@ -77,15 +77,18 @@ class BoardingPassSceneState extends State<BoardingPassScene>
     super.dispose();
   }
 
-  /// Tears the stub off by itself (the Board button). Completes when it is off.
-  Future<void> tear() async {
+  /// The arrow is cutting along the perforation, [p] of the way: the stub
+  /// comes away behind it.
+  void peel(double p) {
     if (_torn) return;
-    if (!widget.still) {
-      await _pull.animateTo(_tearAt + 14,
-          duration: const Duration(milliseconds: 420),
-          curve: Curves.easeInCubic);
-    }
-    _complete();
+    _pull.value = p.clamp(0.0, 1.0) * _tearAt;
+  }
+
+  /// The stub falls away, cut by the arrow rather than torn by hand.
+  void tearQuietly() {
+    if (_torn) return;
+    setState(() => _torn = true);
+    if (!widget.still) _fall.forward();
   }
 
   void _complete() {

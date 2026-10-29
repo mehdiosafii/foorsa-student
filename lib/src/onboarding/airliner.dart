@@ -14,6 +14,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 
+import 'glass.dart';
 import 'svg_path.dart';
 
 // The component's paths, verbatim.
@@ -54,6 +55,24 @@ class PlaneShape {
   static const _beacon = Offset(90, 98);
 }
 
+/// The arrow's pearl glass as the plane wears it in the sky: no shadow cast
+/// on the night, and a lighter bevel for its thin wings.
+const planeGlass = Glass(
+  fill: [Color(0xFFFFFFFF), Color(0xFFE8EFF6), Color(0xFFBACADA)],
+  fillAngle: 145,
+  rim: [Color(0xFFFFFFFF), Color(0x80FFFFFF), Color(0x26FFFFFF)],
+  rimWidth: 1.2,
+  wall: Color(0x00FFFFFF),
+  highlight: GlassShadow(Color(0xD9FFFFFF), dx: 1.2, dy: 1.8, blur: 2.4),
+  glow: GlassShadow(Color(0x403E5874), dx: -1.6, dy: -2.4, blur: 6),
+  shadows: [GlassShadow.none, GlassShadow.none, GlassShadow.none],
+);
+
+final GlassShape _hull = GlassShape.path(Path()
+  ..addPath(PlaneShape.tailLeft, Offset.zero)
+  ..addPath(PlaneShape.tailRight, Offset.zero)
+  ..addPath(PlaneShape.body, Offset.zero));
+
 /// The pearl material: lit from the top left of the plane.
 Paint pearlPaint(Rect box, {double opacity = 1}) => Paint()
   ..shader = ui.Gradient.linear(
@@ -72,7 +91,6 @@ Paint pearlPaint(Rect box, {double opacity = 1}) => Paint()
 /// on [clock] (seconds).
 void paintPearlPlane(Canvas canvas,
     {double detail = 1, double lights = 0, double clock = 0}) {
-  const box = Rect.fromLTWH(0, 0, 180, 180);
   // The engines hang under the wings, so they come first.
   if (detail > 0.001) {
     final grow = 0.5 + 0.5 * detail;
@@ -100,16 +118,8 @@ void paintPearlPlane(Canvas canvas,
     }
   }
 
-  final pearl = pearlPaint(box);
-  canvas.drawPath(PlaneShape.tailLeft, pearl);
-  canvas.drawPath(PlaneShape.tailRight, pearl);
-  canvas.drawPath(PlaneShape.body, pearl);
-  final edge = Paint()
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 0.7
-    ..strokeJoin = StrokeJoin.round
-    ..color = const Color(0x5C8EA4BA);
-  canvas.drawPath(PlaneShape.body, edge);
+  paintGlassBody(canvas, _hull, planeGlass);
+  paintGlassRim(canvas, _hull, planeGlass);
 
   if (detail > 0.001) {
     final line = Paint()

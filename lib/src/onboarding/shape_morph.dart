@@ -81,6 +81,10 @@ Path lerpOutline(List<Offset> a, List<Offset> b, double t) {
   return path..close();
 }
 
+/// The points between [a] (at 0) and [b] (at 1), already aligned.
+List<Offset> lerpOutlinePoints(List<Offset> a, List<Offset> b, double t) =>
+    [for (var i = 0; i < a.length; i++) Offset.lerp(a[i], b[i], t)!];
+
 /// A rounded rectangle's outline (a circle when the radius is half the
 /// side), as a morph end.
 Path roundedOutline(Rect rect, double radius) => Path()

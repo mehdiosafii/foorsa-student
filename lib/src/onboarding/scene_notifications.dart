@@ -11,6 +11,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'glass.dart';
 import 'stage_forms.dart';
 
 class _Note {
@@ -22,6 +23,9 @@ class _Note {
   double scale = 1.04, vs = 0;
   double alpha = 0, va = 0;
   int slot = 0;
+
+  /// Gone up to the top of the screen, as the phone's own banner.
+  bool gone = false;
 }
 
 const _bodies = <String>[
@@ -98,19 +102,36 @@ class _NotificationsSceneState extends State<NotificationsScene>
     final on = widget.outcome.value;
     if (on == null || !mounted) return;
     _timer?.cancel();
-    if (on) _add('Notifications are on. We’ll let you know.');
+    if (!on || _notes.isEmpty) return;
+    // Turned on: the front card goes up to the top of the screen, where the
+    // phone's own first notification comes down (onboarding_gate.dart), and
+    // the stack steps forward.
+    final front = _notes.first..gone = true;
+    var slot = 0;
+    for (final note in _notes) {
+      if (!identical(note, front)) note.slot = slot++;
+    }
+    widget.feel('release');
+    if (widget.still) {
+      _notes.remove(front);
+      _notes.forEach(_snap);
+    }
+    _frame.value++;
   }
 
   /// Front card, then two plates peeking under it, then gone.
-  (double, double, double) _target(int slot) => switch (slot) {
-        0 => (0, 1, 1),
-        1 => (11, 0.94, 0.62),
-        2 => (20, 0.88, 0.3),
-        _ => (26, 0.82, 0),
-      };
+  (double, double, double) _target(_Note note) {
+    if (note.gone) return (-320, 0.96, 0);
+    return switch (note.slot) {
+      0 => (0, 1, 1),
+      1 => (11, 0.94, 0.62),
+      2 => (20, 0.88, 0.3),
+      _ => (26, 0.82, 0),
+    };
+  }
 
   void _snap(_Note note) {
-    final (y, s, a) = _target(note.slot);
+    final (y, s, a) = _target(note);
     note
       ..y = y
       ..scale = s
@@ -125,7 +146,7 @@ class _NotificationsSceneState extends State<NotificationsScene>
     const omega = 2 * math.pi / 0.55;
     const k = omega * omega, c = 2 * 0.8 * omega;
     for (final note in _notes) {
-      final (y, s, a) = _target(note.slot);
+      final (y, s, a) = _target(note);
       for (var i = 0; i < 4; i++) {
         final h = dt / 4;
         note.vy += (-k * (note.y - y) - c * note.vy) * h;
@@ -136,6 +157,7 @@ class _NotificationsSceneState extends State<NotificationsScene>
         note.alpha += note.va * h;
       }
     }
+    _notes.removeWhere((note) => note.gone && note.y < -240);
     _frame.value++;
   }
 
@@ -177,8 +199,9 @@ class _NotificationsSceneState extends State<NotificationsScene>
                           child: Transform.scale(
                             scale: note.scale,
                             alignment: Alignment.bottomCenter,
-                            child:
-                                _Card(body: note.body, front: note.slot == 0),
+                            child: _Card(
+                                body: note.body,
+                                front: note.slot == 0 || note.gone),
                           ),
                         ),
                       ),
@@ -199,24 +222,38 @@ class _Card extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: cardHeight,
-      padding: const EdgeInsets.fromLTRB(14, 0, 16, 0),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A2633),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Boarding.slateEdge, width: 0.5),
-        boxShadow: front
-            ? const [
-                BoxShadow(
-                    color: Color(0x59000000),
-                    blurRadius: 48,
-                    offset: Offset(0, 24),
-                    spreadRadius: -18),
-              ]
-            : null,
+    // The portal's pane; only the front card casts its full shadow.
+    return RepaintBoundary(
+      child: SizedBox(
+        height: cardHeight,
+        child: GlassPane(
+          glass: front ? Glass.pane : _behind,
+          radius: 22,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 16, 0),
+            child: _content(),
+          ),
+        ),
       ),
-      child: Row(children: [
+    );
+  }
+
+  /// A card stacked behind: the same glass, a lighter shadow.
+  static final Glass _behind = Glass(
+    fill: Glass.pane.fill,
+    rim: Glass.pane.rim,
+    wall: Glass.pane.wall,
+    highlight: Glass.pane.highlight,
+    glow: Glass.pane.glow,
+    shadows: const [
+      GlassShadow(Color(0x33000000), dy: 1, blur: 2),
+      GlassShadow(Color(0x26000000), dy: 6, blur: 12, spread: -6),
+      GlassShadow.none,
+    ],
+  );
+
+  Widget _content() {
+    return Row(children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(9),
           child: Image.asset('assets/icons/app_icon_ios.png',
@@ -257,7 +294,6 @@ class _Card extends StatelessWidget {
             ],
           ),
         ),
-      ]),
-    );
+      ]);
   }
 }

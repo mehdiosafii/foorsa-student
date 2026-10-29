@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,7 +6,6 @@ import 'src/device_access.dart';
 import 'src/onboarding/onboarding_gate.dart';
 import 'src/onboarding/onboarding_sound.dart';
 import 'src/onboarding/onboarding_store.dart';
-import 'src/onboarding/splash_logo.dart';
 import 'src/student_calls.dart';
 import 'src/shell_appearance.dart';
 import 'src/shell_page.dart';
@@ -25,21 +22,19 @@ Future<void> main() async {
   final appearance = await ShellAppearanceStore().read();
   // First-time downloaders board through the onboarding; an update does not.
   final firstLaunch = await OnboardingStore().shouldShow();
-  // Its first frame is the launch screen's: the roundel is decoded before it.
-  final splash = firstLaunch ? await decodeSplashLogo() : null;
   // And its sounds, behind the native splash, so the intro's starts with its
-  // first frame. Never more than a moment: without them it is silent.
+  // first frame: the intro is loaded first and the rest load behind it. Never
+  // more than a moment; a late intro joins the picture where it has got to.
   final sounds = firstLaunch ? OnboardingSounds() : null;
   if (sounds != null) {
     await sounds
         .prepare()
-        .timeout(const Duration(milliseconds: 700), onTimeout: () {});
+        .timeout(const Duration(milliseconds: 900), onTimeout: () {});
   }
   await StudentCalls.instance.start();
   runApp(FoorsaStudentApp(
       appearance: appearance,
       firstLaunch: firstLaunch,
-      splash: splash,
       sounds: sounds));
 }
 
@@ -48,16 +43,12 @@ class FoorsaStudentApp extends StatelessWidget {
       {super.key,
       this.appearance,
       this.firstLaunch = false,
-      this.splash,
       this.sounds});
 
   final ShellAppearance? appearance;
 
   /// Show the first-launch onboarding over the shell (onboarding_store.dart).
   final bool firstLaunch;
-
-  /// The splash's roundel, decoded, for the onboarding's first frame.
-  final ui.Image? splash;
 
   /// The onboarding's sounds, loaded before its first frame.
   final OnboardingSounds? sounds;
@@ -76,7 +67,6 @@ class FoorsaStudentApp extends StatelessWidget {
       ),
       home: FirstLaunchGate(
         show: firstLaunch,
-        splash: splash,
         sounds: sounds,
         child: DeviceAccess(
           suppressed: firstLaunch,

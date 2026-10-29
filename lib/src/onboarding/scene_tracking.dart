@@ -7,7 +7,9 @@ import 'dart:math' as math;
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'glass.dart';
 import 'lucide.dart';
+import 'stage_forms.dart';
 
 class TrackingScene extends StatefulWidget {
   const TrackingScene({super.key, required this.still});
@@ -35,26 +37,17 @@ class _TrackingSceneState extends State<TrackingScene>
           dimension: 220,
           child: CustomPaint(
             painter: _RingsPainter(clock, still: widget.still),
-            child: Center(
-              child: Container(
-                width: 96,
-                height: 96,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    center: Alignment(-0.3, -0.5),
-                    radius: 1.1,
-                    colors: [Color(0xFF263749), Color(0xFF17232F)],
+            child: const Center(
+              child: SizedBox.square(
+                dimension: shieldSide,
+                child: GlassPane(
+                  glass: Glass.tile,
+                  circle: true,
+                  child: Center(
+                    child: Lucide(LucideIcons.shieldCheck,
+                        size: 40, color: Boarding.heading, strokeWidth: 1.7),
                   ),
                 ),
-                foregroundDecoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border:
-                      Border.all(color: const Color(0x24FFFFFF), width: 0.8),
-                ),
-                alignment: Alignment.center,
-                child: const Lucide(LucideIcons.shieldCheck,
-                    size: 40, color: Boarding.heading, strokeWidth: 1.7),
               ),
             ),
           ),

@@ -10,27 +10,53 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'brand_vectors.dart';
+import 'glass.dart';
 import 'onboarding_flow.dart';
 import 'svg_path.dart';
 
-/// An object's outline and colour, centred on the stage's middle.
+/// An object's outline and material, centred on the stage's middle.
 class StageForm {
-  const StageForm(this.shape, this.color);
+  StageForm(this.shape, this.glass);
   final RRect shape;
-  final Color color;
+  final Glass glass;
+
+  /// Its main colour, for a flat stand-in.
+  Color get color => glass.fill[1];
 
   Path get path => Path()..addRRect(shape);
 }
 
+
+/// The passport page's paper, and the boarding pass's.
+const pagePaper = Color(0xFFF2EFE7);
+const passPaper = Color(0xFFFBFAF6);
+
+/// The map's lens: dark glass over the city at night.
+const lensGlass = Glass(
+  fill: [Color(0xE6111C28), Color(0xE6111C28), Color(0xE6111C28)],
+  rim: [Color(0xCCFFFFFF), Color(0x66D8E8F8), Color(0x29A4BCCF)],
+  wall: Color(0x1FE4EFFA),
+  highlight: GlassShadow(Color(0x33FFFFFF), dx: 1, dy: 2, blur: 3),
+  glow: GlassShadow(Color(0x66CDE7FF), dx: -2, dy: -3, blur: 8),
+  shadows: [
+    GlassShadow.none,
+    GlassShadow(Color(0x40000000), dy: 8, blur: 16, spread: -8),
+    GlassShadow(Color(0x59000000), dy: 26, blur: 56, spread: -14),
+  ],
+);
+
 // The sizes the scenes are built to.
 
-/// The departures board: nine cells, 4 pt apart.
+/// The departures board: nine cells, 4 pt apart, in a glass case.
 const boardCells = 9;
 const boardGap = 4.0;
-double boardCell(double width) =>
-    math.min(36.0, (width - (boardCells - 1) * boardGap) / boardCells);
+double boardCell(double width) => math.min(
+    36.0, (width - 2 * boardCase - (boardCells - 1) * boardGap) / boardCells);
 double boardWidth(double width) =>
     boardCells * boardCell(width) + (boardCells - 1) * boardGap;
+
+/// The board's glass case, round the line of flaps.
+const boardCase = 7.0;
 
 const cardHeight = 78.0;
 double cardWidth(double width) => math.min(340.0, width);
@@ -48,6 +74,9 @@ const shieldSide = 96.0;
 
 const passWidth = 300.0;
 const passHeight = 352.0;
+
+/// The perforation, from the pass's top (the middle of its 20 pt band).
+const passTearY = 246.0;
 double passScale(Size stage) => math.min(1.0,
     math.min(stage.width / (passWidth + 8), stage.height / (passHeight + 24)));
 
@@ -60,26 +89,26 @@ StageForm formOf(BoardingStep step, Size stage) {
       final cell = boardCell(stage.width);
       final h = cell * 1.44;
       return StageForm(
-          box(boardWidth(stage.width), h, h * 0.13), const Color(0xFF182433));
+          box(boardWidth(stage.width) + boardCase * 2, h + boardCase * 2,
+              h * 0.13 + boardCase),
+          Glass.pane);
     case BoardingStep.notifications:
-      return StageForm(
-          box(cardWidth(stage.width), cardHeight, 22), const Color(0xFF1A2633));
+      return StageForm(box(cardWidth(stage.width), cardHeight, 22), Glass.pane);
     case BoardingStep.camera:
       final w = pageWidth(stage.width);
-      return StageForm(box(w, w * 0.704, w * 0.035), const Color(0xFFF2EFE7));
+      return StageForm(box(w, w * 0.704, w * 0.035), Glass.solid(pagePaper));
     case BoardingStep.microphone:
-      return StageForm(
-          box(micSide, micSide, micSide / 2), const Color(0xFF1F2E3E));
+      return StageForm(box(micSide, micSide, micSide / 2), Glass.tile);
     case BoardingStep.location:
       final r = lensRadius(stage);
-      return StageForm(box(r * 2, r * 2, r), const Color(0xFF111C28));
+      return StageForm(box(r * 2, r * 2, r), lensGlass);
     case BoardingStep.tracking:
       return StageForm(
-          box(shieldSide, shieldSide, shieldSide / 2), const Color(0xFF1F2E3E));
+          box(shieldSide, shieldSide, shieldSide / 2), Glass.tile);
     case BoardingStep.boarding:
       final s = passScale(stage);
       return StageForm(
-          box(passWidth * s, passHeight * s, 20 * s), const Color(0xFFFBFAF6));
+          box(passWidth * s, passHeight * s, 20 * s), Glass.solid(passPaper));
   }
 }
 
