@@ -13,6 +13,13 @@ void main() {
     });
   });
 
+  test('the app says its version once it knows it', () {
+    final caps =
+        shellCapabilities(isIOS: true, appVersion: '1.2.20', appBuild: '51');
+    expect(caps['appVersion'], '1.2.20');
+    expect(caps['appBuild'], '51');
+  });
+
   test('Android keeps the video with the adviser', () {
     expect(shellCapabilities(isIOS: false), {
       'embeddedFrames': true,
