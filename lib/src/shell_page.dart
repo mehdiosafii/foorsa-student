@@ -13,6 +13,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -478,8 +480,28 @@ class _ShellPageState extends State<ShellPage> {
     };
   }
 
+  /// Photos picked at once from the library: the portal reviews them as the
+  /// pages of one paper, and each crosses the bridge as a data URL.
+  static const _maxPickedPhotos = 10;
+
   Future<Map<String, dynamic>> _pickForWeb(String mode, bool multiple) async {
     try {
+      // Several photos from the library are the pages of one paper (both
+      // sides of each parent's card); the portal reviews them as one scan.
+      if (mode == 'photo' && multiple) {
+        final shots = await ImagePicker().pickMultiImage(
+          maxWidth: 2600,
+          imageQuality: 92,
+          limit: _maxPickedPhotos,
+        );
+        if (shots.isEmpty) return {'cancelled': true};
+        return {
+          'files': [
+            for (final shot in shots.take(_maxPickedPhotos))
+              _fileEntry(shot.name, await shot.readAsBytes()),
+          ]
+        };
+      }
       if (mode == 'camera' || mode == 'photo') {
         if (mode == 'camera') await ph.Permission.camera.request();
         final shot = await ImagePicker().pickImage(
@@ -1039,6 +1061,13 @@ class _ShellPageState extends State<ShellPage> {
               child: !_bootWebView
                   ? const SizedBox.expand()
                   : InAppWebView(
+                // The page takes every touch at once: held in Flutter's
+                // gesture arena, a long press reached WebKit late or not at
+                // all, and the Copy / Paste menu came and went (the owner,
+                // 30 Oct 2026: "copy past ... needs to be working stably").
+                gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                  Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
+                },
                 initialUserScripts: UnmodifiableListView([_sessionScript()]),
                 initialUrlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)),
                 initialSettings: InAppWebViewSettings(
