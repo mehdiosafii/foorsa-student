@@ -1352,7 +1352,7 @@ class ScanTextGateStatus {
   /// longer: those lines fill the student's details when the server's reader
   /// cannot answer.
   static Duration clearPageGrace(ScanPaperKind kind) => kind == ScanPaperKind.paper
-      ? const Duration(milliseconds: 1200) : const Duration(seconds: 2);
+      ? const Duration(milliseconds: 800) : const Duration(milliseconds: 1500);
 
   /// Whether a page that has been clear and steady for [clearFor] is taken
   /// now: at once when the reading passed (or the phone cannot read), once the
@@ -1375,6 +1375,81 @@ class ScanTextGateStatus {
 
   @override
   String toString() => 'ScanTextGateStatus(passed: $passed, allowsCapture: $allowsCapture, guidance: $guidance)';
+}
+
+/// A page in one preview frame, for [ScanAutoShutter].
+enum ScanShutterPage {
+  /// No page found in this frame.
+  missing,
+
+  /// A page found, not (yet) steady or sharp enough to count toward the hold.
+  inView,
+
+  /// The hold is complete.
+  steady,
+}
+
+/// When a page in view is taken with no tap (the owner, 30 Oct 2026: "it should be automatic
+/// once the shot is clear"; on build 54 it still needed the button). Build 54 took a page only
+/// after an unbroken run of clear, steady frames: one soft frame, a tremor of the hand or a dim
+/// room started the wait over, and the shutter appeared before it ended. Frame by frame, the
+/// first way in that is due wins:
+/// - steady and read: the hold is complete and the reading passed (or this phone cannot read);
+/// - steady: the hold has been complete for the paper's grace ([ScanTextGateStatus.clearPageGrace]),
+///   counted from the first time it was, through any frame missed since;
+/// - in view: a page has been in view for [inViewLimit], steady or not, sharp or not.
+/// Never while the reading has seen the wrong paper or the wrong side of a card: the shutter is
+/// there for that. The clocks start over once the page has been out of view for [pageLossReset].
+/// The same rule as the iPhone's ScannerAutoShutter (ScannerTextReading.swift).
+class ScanAutoShutter {
+  static const pageLossReset = Duration(milliseconds: 800);
+
+  /// A page in shadow, glare or dim light has this long to be fixed before it is taken anyway:
+  /// a slightly shadowed page beats no page.
+  static const lightingGrace = Duration(milliseconds: 1500);
+
+  /// How long a page stays in view before it is taken, steady or not.
+  static Duration inViewLimit(ScanPaperKind kind) => kind == ScanPaperKind.paper
+      ? const Duration(milliseconds: 2500) : const Duration(milliseconds: 3500);
+
+  DateTime? _inViewSince;
+  DateTime? _steadySince;
+  DateTime? _lastSeen;
+
+  DateTime? get inViewSince => _inViewSince;
+  DateTime? get steadySince => _steadySince;
+
+  /// How long the page has been steady, through any frame missed since; zero before it ever was.
+  Duration steadyFor(DateTime now) {
+    final since = _steadySince;
+    if (since == null || now.isBefore(since)) return Duration.zero;
+    return now.difference(since);
+  }
+
+  /// One preview frame. True when the page in it is to be taken now.
+  bool observe(ScanShutterPage page, DateTime now,
+      {required ScanTextGateStatus reading, required ScanPaperKind kind, required bool lightingGood}) {
+    if (page == ScanShutterPage.missing) {
+      final last = _lastSeen;
+      if (last != null && now.difference(last) >= pageLossReset) reset();
+      return false;
+    }
+    _lastSeen = now;
+    _inViewSince ??= now;
+    if (page == ScanShutterPage.steady) _steadySince ??= now;
+    if (reading.guidance?.holdsCapture == true) return false;
+    if (page == ScanShutterPage.steady) {
+      final steady = steadyFor(now);
+      if ((lightingGood || steady >= lightingGrace) && reading.capturesWhenClear(steady, kind)) return true;
+    }
+    return now.difference(_inViewSince!) >= inViewLimit(kind);
+  }
+
+  void reset() {
+    _inViewSince = null;
+    _steadySince = null;
+    _lastSeen = null;
+  }
 }
 
 /// The reading of one page while it is in view, and the gate on automatic

@@ -587,6 +587,90 @@ void main() {
     });
   });
 
+  // The owner, 30 Oct 2026, on build 54: the scanner still needed the button. A soft frame or a
+  // tremor started the wait over; now the page is taken steady and read, steady for a moment, or
+  // in view long enough, and never while the reading sees the wrong paper.
+  group('the automatic shutter', () {
+    final start = DateTime(2026, 10, 30, 20);
+
+    /// Frames 100 ms apart for [end]; how long after [start] the page was taken, or null.
+    Duration? takenAt(ScanPaperKind kind, Duration end, ScanShutterPage Function(Duration at) page,
+        {ScanTextGateStatus reading = const ScanTextGateStatus.waiting(ScanTextGuidance.reading),
+        bool lightingGood = true}) {
+      final shutter = ScanAutoShutter();
+      for (var at = Duration.zero; at <= end; at += const Duration(milliseconds: 100)) {
+        if (shutter.observe(page(at), start.add(at), reading: reading, kind: kind, lightingGood: lightingGood)) {
+          return at;
+        }
+      }
+      return null;
+    }
+
+    test('a steady page the reading passed is taken at once', () {
+      expect(takenAt(ScanPaperKind.passport, const Duration(seconds: 5), (_) => ScanShutterPage.steady,
+          reading: ScanTextGateStatus.passedReading), Duration.zero);
+      expect(takenAt(ScanPaperKind.paper, const Duration(seconds: 5), (_) => ScanShutterPage.steady,
+          reading: ScanTextGateStatus.cannotRead), Duration.zero);
+    });
+
+    test('a steady page the reading still looks at is taken after its grace, soft frames or not', () {
+      for (final kind in ScanPaperKind.values) {
+        final grace = ScanTextGateStatus.clearPageGrace(kind);
+        expect(takenAt(kind, const Duration(seconds: 10), (_) => ScanShutterPage.steady), grace, reason: '$kind');
+        // A soft frame every third frame no longer starts the grace over.
+        final flicker = takenAt(kind, const Duration(seconds: 10),
+            (at) => (at.inMilliseconds ~/ 100) % 3 == 2 ? ScanShutterPage.inView : ScanShutterPage.steady);
+        expect(flicker, isNotNull, reason: '$kind');
+        expect(flicker! <= grace + const Duration(milliseconds: 150), isTrue, reason: '$kind $flicker');
+      }
+    });
+
+    test('shadow, glare or dim light get a moment, then the page is taken anyway', () {
+      expect(takenAt(ScanPaperKind.paper, const Duration(seconds: 10), (_) => ScanShutterPage.steady,
+          lightingGood: false), ScanAutoShutter.lightingGrace);
+    });
+
+    test('a page in view, never steady or sharp, is taken once its limit is over', () {
+      for (final kind in ScanPaperKind.values) {
+        expect(takenAt(kind, const Duration(seconds: 10), (_) => ScanShutterPage.inView),
+            ScanAutoShutter.inViewLimit(kind), reason: '$kind');
+        expect(ScanAutoShutter.inViewLimit(kind) <= const Duration(milliseconds: 3500), isTrue);
+      }
+    });
+
+    test('out of view for a moment keeps the clocks; out of view a while starts them over', () {
+      bool between(Duration at, int from, int to) => at.inMilliseconds >= from && at.inMilliseconds <= to;
+      expect(takenAt(ScanPaperKind.paper, const Duration(seconds: 10),
+          (at) => between(at, 1000, 1500) ? ScanShutterPage.missing : ScanShutterPage.inView),
+          ScanAutoShutter.inViewLimit(ScanPaperKind.paper));
+      expect(takenAt(ScanPaperKind.paper, const Duration(seconds: 10),
+          (at) => between(at, 1000, 2000) ? ScanShutterPage.missing : ScanShutterPage.inView),
+          const Duration(milliseconds: 2100) + ScanAutoShutter.inViewLimit(ScanPaperKind.paper));
+    });
+
+    test('no page, nothing taken', () {
+      expect(takenAt(ScanPaperKind.paper, const Duration(seconds: 10), (_) => ScanShutterPage.missing,
+          reading: ScanTextGateStatus.passedReading), isNull);
+    });
+
+    test('the wrong paper, or the wrong side of a card, is never taken', () {
+      for (final guidance in [ScanTextGuidance.differentPaper, ScanTextGuidance.turnCardToFront, ScanTextGuidance.turnCardToBack]) {
+        for (final page in [ScanShutterPage.steady, ScanShutterPage.inView]) {
+          expect(takenAt(ScanPaperKind.idCard, const Duration(minutes: 1), (_) => page,
+              reading: ScanTextGateStatus.waiting(guidance)), isNull, reason: '$guidance $page');
+        }
+      }
+    });
+
+    test('the same clocks as the iPhone', () {
+      expect(ScanTextGateStatus.clearPageGrace(ScanPaperKind.paper), const Duration(milliseconds: 800));
+      expect(ScanTextGateStatus.clearPageGrace(ScanPaperKind.passport), const Duration(milliseconds: 1500));
+      expect(ScanAutoShutter.pageLossReset, const Duration(milliseconds: 800));
+      expect(ScanAutoShutter.inViewLimit(ScanPaperKind.paper), const Duration(milliseconds: 2500));
+      expect(ScanAutoShutter.inViewLimit(ScanPaperKind.idCard), const Duration(milliseconds: 3500));
+    });
+  });
+
   group('the live reading returned with the capture', () {
     test('a confirmed passport returns its lines and fields', () {
       final reading = session('identity')

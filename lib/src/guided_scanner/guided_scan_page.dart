@@ -52,9 +52,10 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   Future<void>? _pendingStart;
   final _analyzer = const ScanFrameAnalyzer();
   final _gate = ScanAutoCaptureGate();
-  // Since when the page has been clear and steady: the reading has a short
-  // moment (ScanTextGateStatus.capturesWhenClear), then the camera takes it.
-  DateTime? _clearSince;
+  // When the page is taken with no tap: steady and read, steady for a moment,
+  // or in view long enough (ScanAutoShutter). A soft frame no longer starts
+  // the wait over.
+  final _shutter = ScanAutoShutter();
   // The live reading: steady is not enough, the page must also read as the
   // paper this step asked for before the camera takes it by itself, or have
   // been clear for a moment while the reading still looks.
@@ -141,7 +142,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         _pendingDispose = _disposeCamera(previous);
       }
       _gate.reset();
-      _clearSince = null;
+      _shutter.reset();
       _restartReading();
       _previous = null;
       _lastProcessed = null;
@@ -293,7 +294,6 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     if (_reading.observePage(result.bounds, now)) _restartReading();
     _readText(image, result, now);
     final steady = _gate.observe(result, now);
-    _clearSince = steady ? (_clearSince ?? now) : null;
     final reading = _reading.status(glare: result.hint == ScanHint.reduceGlare);
     if (mounted) {
       setState(() {
@@ -303,12 +303,13 @@ class _GuidedScanPageState extends State<GuidedScanPage>
             ? _gate.progress : math.min(_gate.progress, 0.85);
       });
     }
-    // A clear page is taken with no tap once the reading passed, or once it
-    // has been clear for a moment while the reading still looks; never while
-    // the reading sees the wrong paper or the wrong side of a card.
-    final clearSince = _clearSince;
-    if (steady && clearSince != null &&
-        reading.capturesWhenClear(now.difference(clearSince), _reading.kind)) {
+    // Taken with no tap: steady and read, steady for a moment, or in view long
+    // enough; shadow, glare or dim light get a moment to be fixed first; the
+    // wrong paper, or the wrong side of a card, is never taken.
+    final page = steady ? ScanShutterPage.steady
+        : result.bounds != null ? ScanShutterPage.inView : ScanShutterPage.missing;
+    final lightingGood = result.hint != ScanHint.brighten && result.hint != ScanHint.reduceGlare;
+    if (!_busy && _shutter.observe(page, now, reading: reading, kind: _reading.kind, lightingGood: lightingGood)) {
       _captureMatched = reading.passed;
       unawaited(_takePhoto(automatic: true));
     }
@@ -409,7 +410,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         _cameraGeneration++;
       }
       _gate.reset();
-      _clearSince = null;
+      _shutter.reset();
       _previous = null;
       setState(() {
         _busy = false;
@@ -487,7 +488,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
   Future<void> _toggleAuto() async {
     _gate.reset();
-    _clearSince = null;
+    _shutter.reset();
     _restartReading();
     _previous = null;
     _lastProcessed = null;

@@ -86,10 +86,11 @@ struct ScannerTextReadingTests {
     cardGate()
     paperGate()
     clearPageCapture()
+    autoShutter()
     geometry()
     pageTrackingAndReader()
     liveReading()
-    print("PASS: ICAO 9303 check digits, TD3/TD1 parsing and look-alike repair, length repair, multi-frame voting, passport/card/paper right-document gate, clear-page capture, guidance, turn search, page tracking, reader fallback, bounded live reading")
+    print("PASS: ICAO 9303 check digits, TD3/TD1 parsing and look-alike repair, length repair, multi-frame voting, passport/card/paper right-document gate, clear-page capture, automatic shutter, guidance, turn search, page tracking, reader fallback, bounded live reading")
   }
 
   static func checkDigitsAndNormalization() {
@@ -425,6 +426,87 @@ struct ScannerTextReadingTests {
     // The lines on a passport or a card get a little longer than a paper's rows.
     precondition(ScannerTextGateStatus.clearPageGrace(for: .paper) < ScannerTextGateStatus.clearPageGrace(for: .passport))
     precondition(ScannerTextGateStatus.clearPageGrace(for: .passport) <= 2)
+  }
+
+  /// Frames 0.1 s apart from `start`, each with the page state `page(time)`; the time the page was
+  /// first taken, or nil when it never was.
+  static func takenAt(_ kind: ScannerPaperKind, until end: TimeInterval, start: TimeInterval = 10,
+                      reading: ScannerTextGateStatus = .waiting(.reading), lightingGood: Bool = true,
+                      shutter: inout ScannerAutoShutter,
+                      page: (TimeInterval) -> ScannerAutoShutter.Page) -> TimeInterval? {
+    var step = 0
+    while Double(step) / 10 <= end + 1e-9 {
+      let time = start + Double(step) / 10
+      if shutter.observe(page(time), at: time, reading: reading, kind: kind, lightingGood: lightingGood) {
+        return time - start
+      }
+      step += 1
+    }
+    return nil
+  }
+
+  // The owner, 30 Oct 2026, on build 54: the scanner still needed the button. A soft frame or a
+  // tremor started the wait over; now the page is taken steady and read, steady for a moment, or
+  // in view long enough, and never while the reading sees the wrong paper.
+  static func autoShutter() {
+    func near(_ value: TimeInterval?, _ expected: TimeInterval) -> Bool {
+      value.map { abs($0 - expected) < 0.051 } ?? false
+    }
+    // Steady and read: at once.
+    var shutter = ScannerAutoShutter()
+    precondition(near(takenAt(.passport, until: 5, reading: .passedReading, shutter: &shutter) { _ in .steady }, 0))
+    shutter = ScannerAutoShutter()
+    precondition(near(takenAt(.paper, until: 5, reading: .cannotRead, shutter: &shutter) { _ in .steady }, 0))
+    // Steady while the reading still looks: after the paper's grace.
+    for kind in [ScannerPaperKind.paper, .passport, .idCard] {
+      shutter = ScannerAutoShutter()
+      let grace = ScannerTextGateStatus.clearPageGrace(for: kind)
+      precondition(near(takenAt(kind, until: 10, shutter: &shutter) { _ in .steady }, grace))
+      // A soft frame every third frame no longer starts the grace over.
+      shutter = ScannerAutoShutter()
+      let flicker = takenAt(kind, until: 10, shutter: &shutter) { time in
+        Int(((time - 10) * 10).rounded()) % 3 == 2 ? .inView : .steady
+      }
+      precondition(flicker.map { $0 <= grace + 0.15 } ?? false)
+    }
+    // Shadow, glare or dim light: a moment to fix it, then the page is taken anyway.
+    shutter = ScannerAutoShutter()
+    precondition(near(takenAt(.paper, until: 10, lightingGood: false, shutter: &shutter) { _ in .steady },
+      ScannerAutoShutter.lightingGrace))
+    // In view, never steady or sharp: taken once its limit is over.
+    for kind in [ScannerPaperKind.paper, .passport, .idCard] {
+      shutter = ScannerAutoShutter()
+      let limit = ScannerAutoShutter.inViewLimit(for: kind)
+      precondition(near(takenAt(kind, until: 10, shutter: &shutter) { _ in .inView }, limit))
+      precondition(limit <= 3.5)
+    }
+    // Out of view for a moment keeps the clocks; out of view a while starts them over.
+    shutter = ScannerAutoShutter()
+    let blink = takenAt(.paper, until: 10, shutter: &shutter) { time in
+      (11...11.5).contains(time) ? .missing : .inView
+    }
+    precondition(near(blink, ScannerAutoShutter.inViewLimit(for: .paper)))
+    shutter = ScannerAutoShutter()
+    let away = takenAt(.paper, until: 10, shutter: &shutter) { time in
+      (11...12).contains(time) ? .missing : .inView
+    }
+    precondition(near(away, 2.1 + ScannerAutoShutter.inViewLimit(for: .paper)))
+    // No page, nothing taken.
+    shutter = ScannerAutoShutter()
+    precondition(takenAt(.paper, until: 10, reading: .passedReading, shutter: &shutter) { _ in .missing } == nil)
+    // The wrong paper, or the wrong side of a card, is never taken, steady or in view.
+    for guidance in [ScannerTextGuidance.differentPaper, .turnCardToFront, .turnCardToBack] {
+      for page in [ScannerAutoShutter.Page.steady, .inView] {
+        shutter = ScannerAutoShutter()
+        precondition(takenAt(.idCard, until: 60, reading: .waiting(guidance), shutter: &shutter) { _ in page } == nil)
+      }
+    }
+    // A clock that cannot be read starts everything over.
+    shutter = ScannerAutoShutter()
+    _ = shutter.observe(.steady, at: 1, reading: .waiting(.reading), kind: .paper, lightingGood: true)
+    precondition(shutter.steadySince == 1 && shutter.inViewSince == 1)
+    precondition(!shutter.observe(.steady, at: .nan, reading: .passedReading, kind: .paper, lightingGood: true))
+    precondition(shutter.steadySince == nil && shutter.inViewSince == nil)
   }
 
   static func paperGate() {
