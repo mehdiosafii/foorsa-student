@@ -12,11 +12,13 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'gesture_demo.dart';
 import 'scene_hint.dart';
 import 'stage_forms.dart';
 
@@ -26,6 +28,36 @@ const _restX = 0.13, _restY = 0.27;
 
 /// How near it must be let go for the scanner to take it (1 is home).
 const _takes = 0.6;
+
+/// The page has lifted out of the frame into the hand, in seconds from the
+/// scene's start.
+const _lifted = 1.05;
+
+/// Where the page waits in the hand, from the frame's middle, for a page
+/// [width] wide.
+Offset scanRest(double width) => Offset(width * _restX, width * 0.704 * _restY);
+
+/// The scanner's frame round a page [width] wide.
+Size scanFrame(double width) => Size(width + 54, width * 0.704 + 74);
+
+/// How far the guide's touch takes the page towards the frame: past where
+/// the scanner would take it, so a student who does the same has it taken,
+/// and short of home, so it does not look taken. The page goes with the
+/// touch, as under a finger.
+const _demoShare = 0.8;
+
+/// The camera's gesture: the page, from where it waits in the hand, into the
+/// frame.
+GestureDemo scanDemo(Size stage) {
+  final centre = stage.center(Offset.zero);
+  final rest = scanRest(pageWidth(stage.width));
+  return GestureDemo.move(
+      DemoGesture.drag, centre + rest, centre + rest * (1 - _demoShare),
+      // Still: an arrow on the page, the way it goes.
+      cueAt: centre + rest * 0.5,
+      cueInk: Boarding.passInk.withValues(alpha: 0.82),
+      cueShaft: 30);
+}
 
 class ScanScene extends StatefulWidget {
   const ScanScene({
@@ -37,6 +69,7 @@ class ScanScene extends StatefulWidget {
     required this.hint,
     required this.onAct,
     required this.outcome,
+    this.spoken,
   });
 
   final bool still;
@@ -44,6 +77,7 @@ class ScanScene extends StatefulWidget {
   final bool armed;
   final String label;
   final String hint;
+  final String? spoken;
   final SceneAct onAct;
 
   /// null until the student answers; then whether the camera is on.
@@ -73,9 +107,11 @@ class _ScanSceneState extends State<ScanScene> with TickerProviderStateMixin {
   bool _captured = false;
   double _capturedAt = -1;
   double _readFrom = -1;
-  double _idleFrom = 0;
   bool _found = false;
   double _pageWidth = 250;
+
+  /// How far the guide's touch has drawn the page towards the frame.
+  final ValueNotifier<double> _nudge = ValueNotifier<double>(0);
 
   @override
   void initState() {
@@ -94,7 +130,6 @@ class _ScanSceneState extends State<ScanScene> with TickerProviderStateMixin {
       old.outcome.removeListener(_answered);
       widget.outcome.addListener(_answered);
     }
-    if (widget.armed && !old.armed) _idleFrom = _clock.value;
   }
 
   @override
@@ -104,6 +139,7 @@ class _ScanSceneState extends State<ScanScene> with TickerProviderStateMixin {
     _settle.dispose();
     _clock.dispose();
     _moved.dispose();
+    _nudge.dispose();
     super.dispose();
   }
 
@@ -121,10 +157,7 @@ class _ScanSceneState extends State<ScanScene> with TickerProviderStateMixin {
     setState(() => _readFrom = _clock.value);
   }
 
-  Offset get _rest {
-    final w = _pageWidth, h = w * 0.704;
-    return Offset(w * _restX, h * _restY);
-  }
+  Offset get _rest => scanRest(_pageWidth);
 
   /// Where the page is now, from the frame's middle.
   Offset get _offset {
@@ -138,11 +171,11 @@ class _ScanSceneState extends State<ScanScene> with TickerProviderStateMixin {
     if (widget.still) return _rest;
     // It arrives in the frame, then lifts out into the hand.
     final t = _clock.value;
-    final lift = ease(t, 0.3, 1.05);
-    // Until it is touched, it drifts a little towards the frame now and
-    // then, to show where it goes.
-    final nudge = widget.armed ? idleNudge(t - _idleFrom, after: 1.6) : 0.0;
-    return _rest * (lift * (1 - 0.22 * nudge));
+    final lift = ease(t, 0.3, _lifted);
+    // Until it is touched, it goes towards the frame with the guide's touch,
+    // to show where it goes.
+    final nudge = widget.armed ? _nudge.value : 0.0;
+    return _rest * (lift * (1 - _demoShare * nudge));
   }
 
   /// 1 in the frame, 0 in the hand.
@@ -224,7 +257,6 @@ class _ScanSceneState extends State<ScanScene> with TickerProviderStateMixin {
         .whenComplete(() {
       if (!mounted || _held != null || _captured) return;
       _settleFrom = _settleTo = null;
-      _idleFrom = _clock.value;
     });
   }
 
@@ -268,48 +300,57 @@ class _ScanSceneState extends State<ScanScene> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, box) {
       _pageWidth = pageWidth(box.maxWidth);
-      final w = _pageWidth, h = w * 0.704;
-      final frame = Size(w + 54, h + 74);
-      return Stack(clipBehavior: Clip.none, children: [
-        Positioned.fill(
-          child: Semantics(
-            button: true,
-            enabled: widget.armed && !_captured,
-            label: widget.label,
-            excludeSemantics: true,
-            onTap: widget.armed && !_captured ? _tap : null,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _tap,
-              onPanStart: _grab,
-              onPanUpdate: _move,
-              onPanEnd: _drop,
-              onPanCancel: () {
-                if (_held != null && !_captured) _back();
-              },
-              child: CustomPaint(
-                painter: _ScanPainter(
-                  Listenable.merge([_clock, _moved]),
-                  _clock,
-                  still: widget.still,
-                  page: w,
-                  offset: () => _offset,
-                  near: _near,
-                  capturedAt: _capturedAt,
-                  readFrom: _readFrom,
+      final w = _pageWidth;
+      final frame = scanFrame(w);
+      final foot = box.maxHeight / 2 + frame.height / 2;
+      return SceneGuide(
+        instruction: widget.hint,
+        demo: scanDemo(box.biggest),
+        instructionTop: foot + 18,
+        clearOf: foot,
+        active: widget.armed && !_captured,
+        still: widget.still,
+        response: _nudge,
+        // The touch shows the page going back once it is in the hand.
+        firstAfter: math.max(guideStartsAfter, _lifted + 0.1 - _clock.value),
+        child: Stack(clipBehavior: Clip.none, children: [
+          Positioned.fill(
+            child: Semantics(
+              button: true,
+              enabled: widget.armed && !_captured,
+              label: widget.label,
+              hint: widget.spoken,
+              excludeSemantics: true,
+              onTap: widget.armed && !_captured ? _tap : null,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                // The page stays under the finger from the moment it is
+                // touched, as it does under the guide's touch.
+                dragStartBehavior: DragStartBehavior.down,
+                onTap: _tap,
+                onPanStart: _grab,
+                onPanUpdate: _move,
+                onPanEnd: _drop,
+                onPanCancel: () {
+                  if (_held != null && !_captured) _back();
+                },
+                child: CustomPaint(
+                  painter: _ScanPainter(
+                    Listenable.merge([_clock, _moved]),
+                    _clock,
+                    still: widget.still,
+                    page: w,
+                    offset: () => _offset,
+                    near: _near,
+                    capturedAt: _capturedAt,
+                    readFrom: _readFrom,
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: box.maxHeight / 2 + frame.height / 2 + 18,
-          child: GestureHint(widget.hint,
-              still: widget.still, shown: widget.armed && !_captured),
-        ),
-      ]);
+        ]),
+      );
     });
   }
 }
@@ -399,8 +440,8 @@ class _ScanPainter extends CustomPainter {
 
     // The scanner's corners: on the frame while they look for the page,
     // closing on it as it comes home, and tight round it once taken.
-    final frame =
-        Rect.fromCenter(center: centre, width: w + 54, height: h + 74);
+    final frame = Rect.fromCenter(
+        center: centre, width: scanFrame(w).width, height: scanFrame(w).height);
     final wide = [
       frame.topLeft,
       frame.topRight,

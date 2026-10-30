@@ -1,8 +1,9 @@
 /// The last screen: a boarding pass on the portal's paper (FlightPass,
 /// flightPass.css), the perforation with its two punched notches, and a stub
 /// that tears off under the finger, which is how the student boards. A tap on
-/// the stub tears it too. Now and then, while it waits, the stub gives a
-/// little tug at the perforation.
+/// the stub tears it too. While it waits, the guide's touch pulls the stub
+/// down every few seconds and the paper gives under it (scene_hint.dart),
+/// with Pull the stub down to board under the pass.
 library;
 
 import 'dart:async';
@@ -15,10 +16,41 @@ import 'package:flutter/widgets.dart';
 import 'airliner.dart';
 import 'boarding_style.dart';
 import 'brand_marks.dart';
+import 'gesture_demo.dart';
 import 'scene_hint.dart';
 import 'stage_forms.dart';
 
 const _passWidth = passWidth;
+
+/// Printed on the stub, as on a real pass.
+const stubPrint = 'PULL TO BOARD';
+
+/// How much the stub gives under the guide's touch, in the pass's points of
+/// pull: well short of where the paper starts to give (seven tenths of the
+/// tear).
+const _demoPull = 60.0;
+
+/// The pass on [stage]: centred, at its scale.
+Rect passRect(Size stage) {
+  final scale = passScale(stage);
+  return Rect.fromCenter(
+      center: stage.center(Offset.zero),
+      width: passWidth * scale,
+      height: passHeight * scale);
+}
+
+/// The boarding pass's gesture: the stub pulled down, from just under the
+/// perforation to the pass's foot, far enough to tear it: a student who
+/// does the same boards. Still, a chevron under the pass points down.
+GestureDemo boardingDemo(Size stage) {
+  final pass = passRect(stage);
+  final scale = passScale(stage);
+  return GestureDemo.move(
+      DemoGesture.pull,
+      Offset(pass.center.dx, pass.top + (passTearY + 12) * scale),
+      Offset(pass.center.dx, pass.bottom - 4 * scale),
+      cueAt: Offset(pass.center.dx, pass.bottom + 13));
+}
 
 /// The perforation's band, its middle at [passTearY].
 const _tearHeight = 20.0;
@@ -33,7 +65,8 @@ class BoardingPassScene extends StatefulWidget {
     required this.onTorn,
     this.armed = true,
     this.label = 'Board',
-    this.hint = 'Pull to board',
+    this.hint = 'Pull the stub down to board',
+    this.spoken,
     this.onTear,
   });
 
@@ -43,10 +76,11 @@ class BoardingPassScene extends StatefulWidget {
   /// The student may tear it (nothing else is moving).
   final bool armed;
 
-  /// What a screen reader calls the stub.
+  /// What a screen reader calls the stub, and what it says to do with it.
   final String label;
+  final String? spoken;
 
-  /// Printed on the stub.
+  /// What to do, said under the pass and shown on the stub.
   final String hint;
 
   /// The paper gives: its sound.
@@ -75,8 +109,10 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   /// Seconds since the pass appeared, for the stub's tug.
   late final Ticker _ticker;
   final ValueNotifier<double> _clock = ValueNotifier<double>(0);
-  double _idleFrom = 0;
   bool _touched = false;
+
+  /// How far the guide's touch is pulling the stub.
+  final ValueNotifier<double> _nudge = ValueNotifier<double>(0);
 
   static const _tearAt = 110.0;
 
@@ -87,12 +123,6 @@ class BoardingPassSceneState extends State<BoardingPassScene>
     _ticker =
         createTicker((elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
     if (!widget.still) _ticker.start();
-  }
-
-  @override
-  void didUpdateWidget(BoardingPassScene oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.armed && !oldWidget.armed) _idleFrom = _clock.value;
   }
 
   void _pullFeel() {
@@ -110,6 +140,7 @@ class BoardingPassSceneState extends State<BoardingPassScene>
     _clock.dispose();
     _pull.dispose();
     _fall.dispose();
+    _nudge.dispose();
     super.dispose();
   }
 
@@ -152,7 +183,12 @@ class BoardingPassSceneState extends State<BoardingPassScene>
 
   void _drag(DragUpdateDetails details) {
     if (_torn || !widget.armed) return;
-    _touched = true;
+    if (!_touched) {
+      // The finger takes the stub where the guide's touch had it, so it
+      // does not jump back under it.
+      _touched = true;
+      _pull.value += _demoPull * _nudge.value;
+    }
     _pull.value = math.max(
         0,
         _pull.value +
@@ -169,6 +205,8 @@ class BoardingPassSceneState extends State<BoardingPassScene>
       _complete();
     } else {
       widget.feel('detent');
+      // Let go short: it springs back, and the guide may pull it again.
+      _touched = false;
       _pull.animateWith(SpringSimulation(
           foorsaSpring(damping: 0.62, response: 0.32),
           _pull.value,
@@ -185,19 +223,31 @@ class BoardingPassSceneState extends State<BoardingPassScene>
       child: LayoutBuilder(builder: (context, constraints) {
         // The pass is drawn at its own size, fitted to the stage and
         // centred, where the transition leaves it.
-        final scale = passScale(constraints.biggest);
-        return Center(
-          child: SizedBox(
-            width: _passWidth * scale,
-            height: _passHeight * scale,
-            child: FittedBox(
-              fit: BoxFit.contain,
-              child: SizedBox(
-                width: _passWidth,
-                height: _passHeight,
-                child: AnimatedBuilder(
-                  animation: Listenable.merge([_pull, _fall, _clock]),
-                  builder: (context, _) => _pass(),
+        final stage = constraints.biggest;
+        final scale = passScale(stage);
+        final foot = passRect(stage).bottom;
+        return SceneGuide(
+          instruction: widget.hint,
+          demo: boardingDemo(stage),
+          // Still, the chevron sits between the pass and the words.
+          instructionTop: foot + (widget.still ? 30 : 22),
+          clearOf: foot + (widget.still ? 22 : 0),
+          active: widget.armed && !_torn,
+          still: widget.still,
+          response: _nudge,
+          child: Center(
+            child: SizedBox(
+              width: _passWidth * scale,
+              height: _passHeight * scale,
+              child: FittedBox(
+                fit: BoxFit.contain,
+                child: SizedBox(
+                  width: _passWidth,
+                  height: _passHeight,
+                  child: AnimatedBuilder(
+                    animation: Listenable.merge([_pull, _fall, _clock, _nudge]),
+                    builder: (context, _) => _pass(),
+                  ),
                 ),
               ),
             ),
@@ -208,10 +258,11 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   }
 
   Widget _pass() {
-    // While it waits, the stub tugs at the perforation now and then.
+    // While it waits, the stub gives under the guide's touch as it would
+    // under a finger, short of where the paper tears.
     final tug = widget.still || _touched || _torn || !widget.armed
         ? 0.0
-        : 7 * idleNudge(_clock.value - _idleFrom, after: 2.2, length: 0.8);
+        : _demoPull * _nudge.value;
     final pull = (_pull.value + tug).clamp(0.0, _tearAt + 30);
     final fall = _fall.value;
     final tearAngle = (pull / _tearAt) * 0.1 + fall * 0.5;
@@ -238,10 +289,14 @@ class BoardingPassSceneState extends State<BoardingPassScene>
             child: Transform.rotate(
               angle: tearAngle,
               alignment: Alignment.topRight,
+              // Its own node, not part of the pass's description: the one
+              // thing a screen reader can do here.
               child: Semantics(
+                container: true,
                 button: true,
                 enabled: widget.armed && !_torn,
                 label: widget.label,
+                hint: widget.spoken,
                 excludeSemantics: true,
                 onTap: widget.armed && !_torn ? _tearByTap : null,
                 child: GestureDetector(
@@ -330,7 +385,7 @@ class BoardingPassSceneState extends State<BoardingPassScene>
                 if (hint > 0)
                   Opacity(
                     opacity: hint,
-                    child: Text(widget.hint.toUpperCase(),
+                    child: Text(stubPrint,
                         style: Boarding.caption(
                             color: Boarding.passInk, size: 8.5, spacing: 1.6)),
                   ),

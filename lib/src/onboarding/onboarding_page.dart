@@ -5,7 +5,9 @@
 /// itself, wherever it stands: throws the arrow up into the departures board,
 /// taps the notification, puts the passport page in the scanner's frame,
 /// taps the mic, taps the map's locate arrow, tears the boarding pass's stub.
-/// What to do is said quietly under the object (scene_hint.dart).
+/// Every scene says what to do, under the object, and shows it on the
+/// object: a touch that does the gesture until the student does
+/// (scene_hint.dart, gesture_demo.dart).
 ///
 /// One arrow tells the story. Where the object is itself an arrow (the one
 /// under the board, the one in the map's button), it flies up into the
@@ -33,6 +35,7 @@ import 'night_sky.dart';
 import 'onboarding_flow.dart';
 import 'onboarding_sound.dart';
 import 'route_progress.dart';
+import 'scene_hint.dart';
 import 'scene_location.dart';
 import 'scene_notifications.dart';
 import 'scene_scan.dart';
@@ -638,6 +641,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
               armed: armed,
               hint: copy.hint,
               label: copy.action,
+              spoken: copy.spoken,
               onAct: _act,
               onFlip: () => widget.sounds.play('flap'))
           : const SizedBox.shrink(),
@@ -648,6 +652,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
           armed: armed,
           label: copy.action,
           hint: copy.hint,
+          spoken: copy.spoken,
           onAct: _act),
       BoardingStep.camera => ScanScene(
           still: _still,
@@ -656,6 +661,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
           armed: armed,
           label: copy.action,
           hint: copy.hint,
+          spoken: copy.spoken,
           onAct: _act),
       BoardingStep.microphone => VoiceScene(
           still: _still,
@@ -664,6 +670,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
           armed: armed,
           label: copy.action,
           hint: copy.hint,
+          spoken: copy.spoken,
           onAct: _act),
       BoardingStep.location => LocationScene(
           still: _still,
@@ -673,6 +680,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
           armed: armed,
           label: copy.action,
           hint: copy.hint,
+          spoken: copy.spoken,
           onAct: _act),
       BoardingStep.tracking => TrackingScene(
           still: _still,
@@ -681,6 +689,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
           armed: armed,
           label: copy.action,
           hint: copy.hint,
+          spoken: copy.spoken,
           onAct: _act),
       BoardingStep.boarding => BoardingPassScene(
           still: _still,
@@ -688,6 +697,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
           armed: armed,
           label: copy.action,
           hint: copy.hint,
+          spoken: copy.spoken,
           onTear: () => widget.sounds.play('tear'),
           onTorn: _boardNow,
         ),
@@ -802,6 +812,10 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   /// The smallest a scene may be. Below it the screen scrolls instead.
   static const _minScene = 220.0;
 
+  /// Scrolling, the room left under the scene for the words under its
+  /// object, which a stage this short pushes below it.
+  static const _scrollRoom = 48.0;
+
   /// The words never run wider than this, so they break like a headline.
   static const _measure = 340.0;
 
@@ -837,49 +851,58 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                             height: 20,
                             color: Boarding.heading)
                         : RouteProgress(
-                            key: const ValueKey('route'), progress: _route),
+                            key: const ValueKey('route'),
+                            progress: _route,
+                            // The welcome is the cover: the steps after it
+                            // are counted.
+                            step: _index,
+                            steps: _steps.length - 1),
                   ),
                 ),
               );
 
               // The scenes are illustrations at a fixed size: the words
-              // above them follow the phone's text size.
-              final scene = MediaQuery.withNoTextScaling(
-                child: LayoutBuilder(builder: (context, box) {
-                  final light = math.max(box.maxWidth, box.maxHeight) * 0.62;
-                  return Stack(
-                      key: _stageKey,
-                      clipBehavior: Clip.none,
-                      children: [
-                        AnimatedBuilder(
-                          animation: _exit,
-                          builder: (context, child) {
-                            final (moved, radius) = _boardingLight(light);
-                            return Positioned(
-                              left: box.maxWidth / 2 + moved.dx - radius,
-                              top: box.maxHeight / 2 + moved.dy - radius,
-                              width: radius * 2,
-                              height: radius * 2,
-                              child: child!,
-                            );
-                          },
-                          child: FadeTransition(
-                              opacity: _night,
-                              child: UnderStatusBar(
-                                  child: Spotlight(radius: light))),
-                        ),
-                        Positioned.fill(
-                          child: AnimatedBuilder(
-                            animation: Listenable.merge([_shift, _exit]),
-                            builder: (context, _) => _leaving
-                                ? _boardingStage(
-                                    Size(box.maxWidth, box.maxHeight))
-                                : _stage(Size(box.maxWidth, box.maxHeight),
-                                    _shift.value),
+              // above them follow the phone's text size, and so does what
+              // each says to do (scene_hint.dart).
+              final scene = InstructionScale(
+                scaler: media.textScaler,
+                child: MediaQuery.withNoTextScaling(
+                  child: LayoutBuilder(builder: (context, box) {
+                    final light = math.max(box.maxWidth, box.maxHeight) * 0.62;
+                    return Stack(
+                        key: _stageKey,
+                        clipBehavior: Clip.none,
+                        children: [
+                          AnimatedBuilder(
+                            animation: _exit,
+                            builder: (context, child) {
+                              final (moved, radius) = _boardingLight(light);
+                              return Positioned(
+                                left: box.maxWidth / 2 + moved.dx - radius,
+                                top: box.maxHeight / 2 + moved.dy - radius,
+                                width: radius * 2,
+                                height: radius * 2,
+                                child: child!,
+                              );
+                            },
+                            child: FadeTransition(
+                                opacity: _night,
+                                child: UnderStatusBar(
+                                    child: Spotlight(radius: light))),
                           ),
-                        ),
-                      ]);
-                }),
+                          Positioned.fill(
+                            child: AnimatedBuilder(
+                              animation: Listenable.merge([_shift, _exit]),
+                              builder: (context, _) => _leaving
+                                  ? _boardingStage(
+                                      Size(box.maxWidth, box.maxHeight))
+                                  : _stage(Size(box.maxWidth, box.maxHeight),
+                                      _shift.value),
+                            ),
+                          ),
+                        ]);
+                  }),
+                ),
               );
 
               final words = MediaQuery(
@@ -932,11 +955,14 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                 ]);
               }
               // Too short for everything: the scene keeps its size and the
-              // screen scrolls.
+              // screen scrolls, far enough to read what to do under the
+              // object (scene_hint.dart).
               return SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
-                child: Column(
-                    children: parts(SizedBox(height: _minScene, child: scene))),
+                child: Column(children: [
+                  ...parts(SizedBox(height: _minScene, child: scene)),
+                  const SizedBox(height: _scrollRoom),
+                ]),
               );
             }),
           ),

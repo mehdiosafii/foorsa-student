@@ -76,8 +76,20 @@ const passHeight = 352.0;
 
 /// The perforation, from the pass's top (the middle of its 20 pt band).
 const passTearY = 246.0;
-double passScale(Size stage) => math.min(1.0,
-    math.min(stage.width / (passWidth + 8), stage.height / (passHeight + 24)));
+
+/// The room the pass leaves under it for what to do (scene_hint.dart).
+const passGuideRoom = 34.0;
+
+/// The pass fits the stage. A short stage gives up a little of the pass's
+/// size, never more than a fifth, so what to do still fits under it.
+double passScale(Size stage) {
+  final full = math.min(
+      1.0,
+      math.min(
+          stage.width / (passWidth + 8), stage.height / (passHeight + 24)));
+  final roomy = (stage.height - 2 * passGuideRoom) / (passHeight + 24);
+  return math.min(full, math.max(roomy, full * 0.8));
+}
 
 StageForm formOf(BoardingStep step, Size stage) {
   RRect box(double w, double h, double r) => RRect.fromRectAndRadius(
