@@ -10,8 +10,10 @@ journey's airliner and climbs away.
 There are no buttons. On each screen the student acts on the object itself,
 wherever it stands: throws the arrow up into the departures board, taps the
 notification, puts the passport page in the scanner's frame, taps the mic,
-taps the map's locate arrow, tears the boarding pass's stub off. What to do
-is said quietly under the object. Between screens the object folds into the
+taps the map's locate arrow, tears the boarding pass's stub off. Every
+screen says exactly what to do, in one clear line next to the object, and
+shows it: a touch of glass does the gesture on the object itself, every few
+seconds, until the student does. Between screens the object folds into the
 arrow and unfolds as the next one; where the object is itself an arrow (the
 one under the board, the one in the map's button) it flies up into the
 picture, which folds into an arrow of light for it to dock in. At the end
@@ -38,20 +40,24 @@ open.
 ## The steps
 
 Every screen is a headline and one line under it, then one object under
-them that is the screen's control, and under the object, quietly, what to do
-with it. The object is in a different place and a different shape on every
+them that is the screen's control, and next to the object what to do with
+it, said in one clear line and shown by a touch doing it on the object. The
+object is in a different place and a different shape on every
 screen; there is no button bar. Each object does one thing, then settles. The
 objects are made of the portal's own glass (`glass.dart`), paper ones aside.
 
 | Step | Asks for | The object, and what the student does |
 | --- | --- | --- |
-| Welcome | nothing | one line of a split-flap board in a glass case, flipping through the voyage's 16 cities (a tap flips it), and under it Foorsa's arrow, resting. **Swipe up to begin**: the arrow is thrown up into the board, or tapped |
+| Welcome | nothing | one line of a split-flap board in a glass case, flipping through the voyage's 16 cities (a tap flips it), and under it Foorsa's arrow, resting. **Swipe the arrow up to begin**: the arrow is thrown up into the board, or tapped |
 | Notifications | `Permission.notification` | a stack of Foorsa's notifications on glass (the app's real texts), a new one landing on top every few seconds. **Tap the notification**; a yes sends the front card up and the phone's own first notification down |
 | Camera | `Permission.camera` | the scanner's frame, and a drawn passport page that lifts out of it into the hand, tipped and turned. **Drag the page into the frame**: it straightens as it nears, the corners close on it, and let go close enough it is taken with a soft flash (a tap puts it in) |
 | Microphone | `Permission.microphone` | the chat's mic, a glass orb, with a voice running out from it on both sides. **Tap the mic**; pressed, the voice comes up (nothing is recorded) |
 | Location | `Permission.locationWhenInUse` | a night map under a glass lens, and on its edge the map's locate button, which is Foorsa's arrow. **Tap the arrow to find yourself**; a yes drops the blue dot onto the map with its heading and the next prayer on a glass chip, then the arrow leaves the button and glides into the map |
 | Tracking | `Permission.appTrackingTransparency` | off, see below; a shield in a glass orb. **Tap the shield** |
-| Boarding pass | nothing | the pass, PULL TO BOARD printed on its stub. **The stub is pulled down and off** (a tap tears it too) |
+| Boarding pass | nothing | the pass, PULL TO BOARD printed on its stub. **Pull the stub down to board**: it comes off (a tap tears it too) |
+
+The words in bold are the line each screen shows next to its object, and the
+gesture its touch does there (see **What to do** below).
 
 A step is shown only when the phone will show its prompt (`denied` in
 permission_handler: never asked on iOS, never asked or refused once on
@@ -68,8 +74,12 @@ permission prompt must lead to the prompt.
   only then). There is no Not now, Skip or close.
 - For a screen reader each object is a button named **Continue**
   (`test/onboarding_flow_test.dart` fails if a step's name changes), and its
-  usual activation does what the gesture does. The words under the object
-  are for the eye only.
+  usual activation does what the gesture does. The button says what to do
+  after its name, as a screen reader's double tap does it ("Double-tap the
+  notification to go on", "Double-tap to put the page in the frame"); the
+  words under the object are for the eye, so a screen reader does not read
+  them twice. The boarding pass's stub is its own button, **Board**, apart
+  from the pass's description.
 - Whatever the student answers, the next step follows; nothing promises a
   reward for allowing (App Tracking Transparency forbids that too). A yes
   shows on the object for a moment (the notification goes up, the page is
@@ -101,7 +111,10 @@ Less is more: every screen is one lit object on a still night, so nothing
 competes with the one thing it says. The ground is the night the native
 splash deepens into, a few faint stars high up and one soft light behind the
 object (`night_sky.dart`). Progress is one hairline with the journey's
-airliner at its tip; the welcome shows the wordmark instead. The headline is
+airliner at its tip, and under it, as a departures board prints it, which
+step this is of how many (STEP 2 OF 5, said to a screen reader as "Setting
+up, Step 2 of 5"; `route_progress.dart`). The welcome is the cover: it shows
+the wordmark instead, and the count starts after it. The headline is
 32 pt bold with tight tracking and the line under it 17 pt muted, at the top,
 centred and broken into even lines (`BalancedText`, like CSS
 `text-wrap: balance`), so no word is left alone on a line. The object sits
@@ -109,15 +122,66 @@ under them, a little above the middle of what is left, in reach of a thumb;
 on a tall phone some of the extra height stays under it rather than between
 it and the words.
 
-**What to do** (`scene_hint.dart`). Under the object, a beat after it
-appears, one quiet line (15 pt, muted, breathing) says the gesture: Swipe up
-to begin, Tap the notification, Drag the page into the frame. It lets a touch
-through to the object under it, and goes once the student has acted. Every
-few seconds an object that has been waiting shows it can be acted on with one
-small movement (`idleNudge`): the arrow hops, the page drifts towards the
-frame, a ring goes out from the mic, the map's arrow hops along its own way,
-the stub tugs at the perforation. A tap on the map, rather than its arrow,
-makes the arrow answer. Every press is felt; it makes no sound of its own.
+**What to do** (`scene_hint.dart`, `gesture_demo.dart`). The owner tried the
+first version and found it confusing what to do next: one quiet, muted line
+that came in 900 ms late and breathed, and a small hop of the object now and
+then. Now every scene says it and shows it, with no button added: the object
+is still the only way on.
+
+- **Said.** One line next to the object, under it, verb first, naming the
+  object: Swipe the arrow up to begin, Tap the notification, Drag the page
+  into the frame, Tap the mic, Tap the arrow to find yourself, Tap the
+  shield, Pull the stub down to board. 17 pt semibold in the portal's accent
+  (`#A9C8E6`, the colour that means "you can press this"), steady, at least
+  7:1 on the night and on the light behind the object (WCAG AA asks 4.5:1).
+  It follows the phone's text size (never smaller, up to a quarter larger)
+  and stays on one line, shrinking to fit a narrow phone. It comes in with
+  the object and goes once the student has acted. On a short stage it moves
+  up to stay on the screen, never over its object; the boarding pass gives
+  up to a fifth of its size on a short phone so the line fits under it
+  (`passScale`), and a screen too short for everything scrolls far enough to
+  read it.
+- **Shown.** A touch, a bead of the portal's glass tinted with the accent,
+  does the scene's own gesture on the object, where the object really is
+  (each scene's geometry: `welcomeDemo`, `notificationsDemo`, `scanDemo`,
+  `voiceDemo`, `locationDemo`, `trackingDemo`, `boardingDemo`). A tap comes
+  down, a little low and right of a round object's middle as a thumb would,
+  presses (its shadow tightens) and a ring goes out from the object's own
+  edge, the card's rounded outline or the orb's circle. A swipe, a drag or a
+  pull travels the gesture's way with a soft tail of light behind it: the
+  welcome's touch flicks up from the arrow into the board's foot; the
+  camera's takes the page from the hand most of the way into the frame (the
+  corners close on it, no flash) and lets it settle back; the pass's pulls the
+  stub down from just under the perforation to the pass's foot. The object
+  answers the touch as it would a finger: the arrow lifts with the flick, the
+  page goes with the drag, the stub gives under the pull, the map's arrow
+  hops as its button is pressed. Each touch goes exactly as far as the
+  gesture needs: a student who does what it shows moves on
+  (`test/onboarding_guidance_test.dart` copies each one at its own pace).
+  It starts 0.3 s after the object is ready (the camera's once the page has
+  lifted into the hand), takes about a second, and comes back every 2.8 to
+  3.6 s. A finger anywhere on the picture sends it away at once (it fades in
+  80 ms); let go without having acted and it comes back 1.4 s later; once the
+  student has acted it is gone. The scene's own ring that went out from the
+  mic now and then is gone: the touch's ring replaces it.
+- **Insisting.** After 6 s with nothing touched, the cue speaks up over
+  0.8 s: the line turns white and grows a little, the touch is larger with a
+  stronger light, its ring wider and brighter.
+- **Reduce Motion.** No touch moves: a still pair of chevrons points the
+  gesture's way, where the touch would be (at the object for a tap, from
+  above it, or from outside the map for its arrow; up between the arrow and
+  the board; on the passport, an arrow from the page to the frame, in the
+  page's ink; down under the pass), and the line stays. Insisting, the line
+  turns white and the chevrons brighten and grow a little.
+
+None of it takes a touch or is read out: both layers let the touch through
+to the object under them (`IgnorePointer`). Every press is felt; the guide
+makes no sound and no haptic of its own.
+
+The camera's page follows the finger from the moment it is touched
+(`DragStartBehavior.down`): before, the first 36 pt of a drag were the pan's
+slop and moved nothing, so the page trailed the finger and a drag as long as
+the page's way into the frame fell short.
 
 **Glass** (`glass.dart`). The portal's material, ported from its CSS: clear,
 not frosted, a smoked face, a rim that is hot where it faces the light at the
@@ -276,10 +340,12 @@ lands on the sign-in's.
 Reduce Motion skips the flights and the morphs: the objects stand still (a
 finger still moves the arrow, the page and the stub, which is the student's
 own motion), the prompt comes the moment the object is touched, and the
-steps cross-fade; the sounds still play. Objects are illustrations at a fixed
-text size; the words above them follow the phone's text size, smaller on
-short screens, and below 220 pt of room the screen scrolls. Android's back
-goes one step back.
+steps cross-fade; the sounds still play. What to do is a still chevron
+instead of the moving touch, and the line under the object stays. Objects
+are illustrations at a fixed text size; the words above them follow the
+phone's text size, smaller on short screens, and so does the line saying
+what to do; below 220 pt of room the screen scrolls. Android's back goes one
+step back.
 
 ## Required device verification
 
@@ -287,8 +353,14 @@ goes one step back.
   the arrow alone, and frame one of the onboarding matches it; every prompt
   appears the moment its object is acted on.
 - The gestures on a real screen: the throw (and a short pull springing back),
-  the page dragged into the frame with a thumb, the stub pulled, each hint
-  readable under its object, nothing under the home indicator.
+  the page dragged into the frame with a thumb, the stub pulled, each line
+  saying what to do readable next to its object, nothing under the home
+  indicator.
+- What to do, on a real screen, with someone who has not seen the app: the
+  touch is seen on every object and its gesture understood without
+  explanation; it goes the moment a finger lands and comes back after a
+  wrong try; after 6 s it speaks up; it never covers the words, and the
+  words never cover the object. Its pace on a 60 Hz and a 120 Hz screen.
 - The sounds: audible on the phone's speaker with the silent switch on and
   off, in time with the picture; the volume buttons set their level; music
   already playing keeps playing; nothing plays after the app goes to the
@@ -301,7 +373,9 @@ goes one step back.
 - Android 12 and older (no notification prompt): the notifications step is
   skipped. Android 13+: it is shown.
 - A refused access: no screen next time; the old reminder offers Settings.
-- VoiceOver and TalkBack through every step; Reduce Motion; largest text.
+- VoiceOver and TalkBack through every step (each object read as its name,
+  button, then what to do; the step's number on the progress line; the
+  stub its own button); Reduce Motion (the still chevrons); largest text.
 - After boarding: the push token registers on sign-in without a second
   prompt, the status bar follows the portal again, an incoming adviser call
   shows over the onboarding.
@@ -315,8 +389,8 @@ goes one step back.
   way it is pulled; a short pull springs back), the swoop (it ends on the
   stage's arrow, its size and way round, and stays on screen) and the glide
   (level, pointing its own way), the fold timed to the docking for both
-  flights, the locate arrow on the lens's edge, the idle nudge, every object
-  inside its stage, the arrow's geometry, the whole walk through with fake
+  flights, the locate arrow on the lens's edge, every object inside its
+  stage, the arrow's geometry, the whole walk through with fake
   permissions (one gesture per object, the prompt the moment it is touched,
   no button and no Allow on screen, a chime per yes, the shutter, no sound on
   a press or a step), every cue shipped as a file and no file left over, the
@@ -324,6 +398,26 @@ goes one step back.
   flying on once the dot is found, back, the stub torn by hand and the arrow
   landing on the sign-in's own, and every step on a 320 x 568 phone, an iPhone
   SE and a large phone with large text.
+- What to do (`test/onboarding_guidance_test.dart`): every step's line is
+  verb first and names its object, and every step tells a screen reader what
+  to do; the touch's timeline (a tap comes down, presses and rings from the
+  object's edge; a swipe, a drag and a pull start on the object and go the
+  gesture's way; each rests longer than it moves, every few seconds; the
+  object answers it and is still again before the next); every scene shows
+  its line and its touch within a moment of the object being ready, the touch
+  on a point that hits the object; the gesture each touch shows, copied by a
+  finger at its own pace and distance, moves the onboarding on (four taps,
+  the swipe, the drag, the pull), and the touch then stops for good; a
+  finger on the screen sends it away at once and it comes back after letting
+  go; after 6 s it insists (the line white); with Reduce Motion a still
+  chevron pointing the gesture's way, not on the words; once acted on,
+  nothing is drawn; each object's button carries its name and what to do,
+  and the line is not read twice; the step's number; the line's contrast on
+  the night and the light behind the object; the line under its object and
+  never on it, on four phones and text sizes; the pass's room.
+- Rendered every scene with its guidance (the touch mid-gesture, insisting,
+  and Reduce Motion) in the Flutter test renderer, on a large phone, a
+  320 x 568 phone and an iPhone SE with large text, and looked at each.
 - Rendered every screen and the full flow at 60 fps in the Flutter test
   renderer, with mock-ups of iOS's prompts and its notification banner for
   the recording only, and mixed the sounds in at the frames they were played,

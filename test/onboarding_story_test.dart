@@ -6,7 +6,6 @@ import 'package:foorsa_student/src/onboarding/arrow_flight.dart';
 import 'package:foorsa_student/src/onboarding/glass.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_flow.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_page.dart';
-import 'package:foorsa_student/src/onboarding/scene_hint.dart';
 import 'package:foorsa_student/src/onboarding/scene_location.dart';
 import 'package:foorsa_student/src/onboarding/scene_welcome.dart';
 import 'package:foorsa_student/src/onboarding/shape_morph.dart';
@@ -109,15 +108,6 @@ void main() {
       expect(at.dx, greaterThan(0));
       expect(at.dy, greaterThan(0), reason: 'below the middle, near a thumb');
     }
-  });
-
-  test('an object waits a moment before it shows it can be acted on', () {
-    expect(idleNudge(0), 0);
-    expect(idleNudge(2.3), 0);
-    expect(idleNudge(2.4 + 0.45), closeTo(1, 1e-9));
-    expect(idleNudge(2.4 + 1.5), 0);
-    // And again, every few seconds.
-    expect(idleNudge(2.4 + 4.2 + 0.45), closeTo(1, 1e-9));
   });
 
   test('a swoop ends on the stage\'s arrow, the size and way round it is', () {

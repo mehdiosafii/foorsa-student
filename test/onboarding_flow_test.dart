@@ -82,7 +82,7 @@ void main() {
       () {
     for (final step in BoardingStep.values) {
       final copy = copyFor(step);
-      for (final words in [copy.action, copy.hint, copy.body]) {
+      for (final words in [copy.action, copy.hint, copy.spoken, copy.body]) {
         expect(words.toLowerCase(), isNot(contains('allow')),
             reason: step.name);
         expect(
@@ -109,6 +109,24 @@ void main() {
       // The gesture is said in a few words, as a phone says it.
       expect(copy.hint.length, lessThanOrEqualTo(32), reason: step.name);
       expect(copy.hint.endsWith('.'), isFalse, reason: step.name);
+    }
+  });
+
+  test(
+      'every screen says exactly what to do, the gesture first, and tells a '
+      'screen reader too', () {
+    for (final step in BoardingStep.values) {
+      final copy = copyFor(step);
+      // Verb first, then the object it is done to.
+      expect(copy.hint.split(' ').first, isIn(['Swipe', 'Tap', 'Drag', 'Pull']),
+          reason: step.name);
+      expect(copy.hint.split(' ').length, greaterThanOrEqualTo(3),
+          reason: '${step.name}: the gesture and its object');
+      // A screen reader's double tap does what the gesture does, and the
+      // student is told so after the object's name.
+      expect(copy.spoken, startsWith('Double-tap '), reason: step.name);
+      expect(copy.spoken.endsWith('.'), isTrue, reason: step.name);
+      expect(copy.spoken.length, lessThanOrEqualTo(56), reason: step.name);
     }
   });
 

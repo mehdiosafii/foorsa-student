@@ -6,14 +6,17 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import 'arrow_flight.dart';
 import 'boarding_style.dart';
+import 'gesture_demo.dart';
 import 'scene_departures.dart';
 import 'scene_hint.dart';
+import 'stage_forms.dart';
 
 /// The resting arrow's height.
 const launchArrowHeight = 40.0;
@@ -37,6 +40,20 @@ double launchAim(Offset drag) {
   return restHeading + turn * lifted;
 }
 
+/// The welcome's gesture: from the resting arrow straight up, into the
+/// board's foot.
+GestureDemo welcomeDemo(Size stage) {
+  final arrow =
+      Offset(stage.width / 2, stage.height / 2 + launchArrowDrop(stage));
+  final boardFoot =
+      stage.height / 2 + boardCell(stage.width) * 1.44 / 2 + boardCase;
+  final reach = (arrow.dy - boardFoot + 12).clamp(60.0, 120.0).toDouble();
+  return GestureDemo.move(DemoGesture.swipe, arrow, arrow - Offset(0, reach),
+      // Still: between the board and the arrow, pointing up.
+      cueAt:
+          Offset(arrow.dx, (boardFoot + arrow.dy - launchArrowHeight / 2) / 2));
+}
+
 class WelcomeScene extends StatelessWidget {
   const WelcomeScene({
     super.key,
@@ -46,6 +63,7 @@ class WelcomeScene extends StatelessWidget {
     required this.hint,
     required this.label,
     required this.onAct,
+    this.spoken,
     this.onFlip,
   });
 
@@ -54,10 +72,13 @@ class WelcomeScene extends StatelessWidget {
 
   /// The student may act (the takeoff is over, nothing is moving).
   final bool armed;
+
+  /// What to do, said under the arrow and shown on it.
   final String hint;
 
-  /// What a screen reader calls the arrow.
+  /// What a screen reader calls the arrow, and what it says to do with it.
   final String label;
+  final String? spoken;
 
   /// The arrow is thrown: where it is on the screen and how fast it goes.
   final SceneAct onAct;
@@ -66,32 +87,35 @@ class WelcomeScene extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, box) {
-      final drop = launchArrowDrop(box.biggest);
-      return Stack(clipBehavior: Clip.none, children: [
-        Positioned.fill(
-            child: DeparturesScene(still: still, feel: feel, onFlip: onFlip)),
-        // The lower part of the stage is the arrow's: a swipe up anywhere
-        // there throws it.
-        Positioned(
-          left: 0,
-          right: 0,
-          top: box.maxHeight / 2 + drop - 70,
-          height: 140,
-          child: LaunchArrow(
-            still: still,
-            feel: feel,
-            armed: armed,
-            label: label,
-            onAct: onAct,
+      final arrow = box.maxHeight / 2 + launchArrowDrop(box.biggest);
+      return SceneGuide(
+        instruction: hint,
+        demo: welcomeDemo(box.biggest),
+        instructionTop: arrow + 34,
+        clearOf: arrow + launchArrowHeight / 2,
+        active: armed,
+        still: still,
+        child: Stack(clipBehavior: Clip.none, children: [
+          Positioned.fill(
+              child: DeparturesScene(still: still, feel: feel, onFlip: onFlip)),
+          // The lower part of the stage is the arrow's: a swipe up anywhere
+          // there throws it.
+          Positioned(
+            left: 0,
+            right: 0,
+            top: arrow - 70,
+            height: 140,
+            child: LaunchArrow(
+              still: still,
+              feel: feel,
+              armed: armed,
+              label: label,
+              spoken: spoken,
+              onAct: onAct,
+            ),
           ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: box.maxHeight / 2 + drop + 34,
-          child: GestureHint(hint, still: still, shown: armed),
-        ),
-      ]);
+        ]),
+      );
     });
   }
 }
@@ -105,12 +129,14 @@ class LaunchArrow extends StatefulWidget {
     required this.armed,
     required this.label,
     required this.onAct,
+    this.spoken,
   });
 
   final bool still;
   final Feel feel;
   final bool armed;
   final String label;
+  final String? spoken;
   final SceneAct onAct;
 
   @override
@@ -125,7 +151,6 @@ class _LaunchArrowState extends State<LaunchArrow>
       AnimationController.unbounded(vsync: this);
   late final Ticker _ticker;
   final ValueNotifier<double> _clock = ValueNotifier<double>(0);
-  double _idleFrom = 0;
   bool _launched = false;
   int _ticks = 0;
 
@@ -219,17 +244,12 @@ class _LaunchArrowState extends State<LaunchArrow>
   }
 
   @override
-  void didUpdateWidget(LaunchArrow old) {
-    super.didUpdateWidget(old);
-    if (widget.armed && !old.armed) _idleFrom = _clock.value;
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
       enabled: widget.armed,
       label: widget.label,
+      hint: widget.spoken,
       excludeSemantics: true,
       onTap: widget.armed ? _tap : null,
       child: GestureDetector(
@@ -242,7 +262,9 @@ class _LaunchArrowState extends State<LaunchArrow>
           painter: _LaunchPainter(
             drag: _drag,
             clock: _clock,
-            idleFrom: () => _idleFrom,
+            // It answers the guide's touch: drawn up a little as the touch
+            // swipes (scene_hint.dart).
+            nudge: SceneGuide.responseOf(context),
             launched: _launched,
             still: widget.still,
             armed: widget.armed,
@@ -257,15 +279,15 @@ class _LaunchPainter extends CustomPainter {
   _LaunchPainter({
     required this.drag,
     required this.clock,
-    required this.idleFrom,
+    required this.nudge,
     required this.launched,
     required this.still,
     required this.armed,
-  }) : super(repaint: Listenable.merge([drag, clock]));
+  }) : super(repaint: Listenable.merge([drag, clock, nudge]));
 
   final ValueNotifier<Offset> drag;
   final ValueNotifier<double> clock;
-  final double Function() idleFrom;
+  final ValueListenable<double> nudge;
   final bool launched;
   final bool still;
   final bool armed;
@@ -275,9 +297,9 @@ class _LaunchPainter extends CustomPainter {
     if (launched) return;
     final t = clock.value;
     final rest = size.center(Offset.zero);
-    // It floats, and now and then hops up, as if it could not wait.
+    // It floats, and hops up as the guide's touch swipes it.
     final bob = still ? 0.0 : 2.2 * math.sin(t * 2 * math.pi / 2.6);
-    final hop = still || !armed ? 0.0 : idleNudge(t - idleFrom(), after: 1.8);
+    final hop = still || !armed ? 0.0 : nudge.value;
     final at = rest + drag.value + Offset(0, bob - 14 * hop);
     final lifted = (-drag.value.dy / 120).clamp(0.0, 1.0);
 
@@ -314,7 +336,10 @@ class _LaunchPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_LaunchPainter old) =>
-      old.launched != launched || old.still != still || old.armed != armed;
+      old.launched != launched ||
+      old.still != still ||
+      old.armed != armed ||
+      old.nudge != nudge;
 }
 
 double _tanh(double x) {

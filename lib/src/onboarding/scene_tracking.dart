@@ -9,10 +9,21 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'gesture_demo.dart';
 import 'glass.dart';
 import 'lucide.dart';
 import 'scene_hint.dart';
 import 'stage_forms.dart';
+
+/// The tracking screen's gesture: a tap on the shield.
+GestureDemo trackingDemo(Size stage) {
+  final shield = stage.center(Offset.zero);
+  return GestureDemo.tap(
+      thumbOn(shield, shieldSide / 2),
+      RRect.fromRectAndRadius(
+          Rect.fromCircle(center: shield, radius: shieldSide / 2),
+          const Radius.circular(shieldSide / 2)));
+}
 
 class TrackingScene extends StatefulWidget {
   const TrackingScene({
@@ -24,12 +35,14 @@ class TrackingScene extends StatefulWidget {
     required this.hint,
     required this.onAct,
     required this.outcome,
+    this.spoken,
   });
   final bool still;
   final Feel feel;
   final bool armed;
   final String label;
   final String hint;
+  final String? spoken;
   final SceneAct onAct;
   final ValueListenable<bool?> outcome;
 
@@ -49,47 +62,47 @@ class _TrackingSceneState extends State<TrackingScene>
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, box) {
       final middle = box.maxHeight / 2;
-      return Stack(clipBehavior: Clip.none, children: [
-        Positioned(
-          left: box.maxWidth / 2 - 110,
-          top: middle - 110,
-          width: 220,
-          height: 220,
-          child:
-              CustomPaint(painter: _RingsPainter(clock, still: widget.still)),
-        ),
-        Positioned(
-          left: box.maxWidth / 2 - shieldSide / 2,
-          top: middle - shieldSide / 2,
-          width: shieldSide,
-          height: shieldSide,
-          child: ObjectControl(
-            label: widget.label,
-            armed: widget.armed,
-            feel: widget.feel,
-            scale: 0.94,
-            onTap: () => widget.onAct(),
-            child: const GlassPane(
-              glass: Glass.tile,
-              circle: true,
-              child: Center(
-                child: Lucide(LucideIcons.shieldCheck,
-                    size: 40, color: Boarding.heading, strokeWidth: 1.7),
+      return SceneGuide(
+        instruction: widget.hint,
+        demo: trackingDemo(box.biggest),
+        // Under the rings round the shield, which are part of it.
+        instructionTop: middle + 110 + 6,
+        clearOf: middle + 100,
+        active: widget.armed,
+        still: widget.still,
+        child: Stack(clipBehavior: Clip.none, children: [
+          Positioned(
+            left: box.maxWidth / 2 - 110,
+            top: middle - 110,
+            width: 220,
+            height: 220,
+            child:
+                CustomPaint(painter: _RingsPainter(clock, still: widget.still)),
+          ),
+          Positioned(
+            left: box.maxWidth / 2 - shieldSide / 2,
+            top: middle - shieldSide / 2,
+            width: shieldSide,
+            height: shieldSide,
+            child: ObjectControl(
+              label: widget.label,
+              hint: widget.spoken,
+              armed: widget.armed,
+              feel: widget.feel,
+              scale: 0.94,
+              onTap: () => widget.onAct(),
+              child: const GlassPane(
+                glass: Glass.tile,
+                circle: true,
+                child: Center(
+                  child: Lucide(LucideIcons.shieldCheck,
+                      size: 40, color: Boarding.heading, strokeWidth: 1.7),
+                ),
               ),
             ),
           ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: middle + 110 + 6,
-          child: ValueListenableBuilder<bool?>(
-            valueListenable: widget.outcome,
-            builder: (context, answer, _) => GestureHint(widget.hint,
-                still: widget.still, shown: widget.armed && answer == null),
-          ),
-        ),
-      ]);
+        ]),
+      );
     });
   }
 }
