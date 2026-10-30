@@ -31,6 +31,9 @@ struct FoorsaScannerProfile {
   let instruction: String
   let layout: Layout
   let usesImagegen: Bool
+  /// The side of a card this capture is for ("front" or "back"), when the
+  /// portal says. Older portals send none, and either side is accepted.
+  let side: String?
 
   // A card contains far less text than a full paper page and can be legible at
   // a smaller camera footprint. Keep corner accuracy and edge margins equal.
@@ -40,6 +43,8 @@ struct FoorsaScannerProfile {
     let arguments = arguments as? [String: Any]
     let source = arguments?["profile"] as? [String: Any]
     usesImagegen = source?["outputMode"] as? String == "imagegen"
+    let rawSide = (source?["side"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    side = rawSide == "front" || rawSide == "back" ? rawSide : nil
     let rawTitle = (source?["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
     let rawInstruction = (source?["instruction"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
     title = rawTitle.flatMap { $0.isEmpty || $0.count > 70 ? nil : $0 } ?? "Scan document"
