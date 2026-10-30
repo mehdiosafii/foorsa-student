@@ -87,7 +87,7 @@ final class FoorsaScannerViewController: UIViewController {
   private var latestImageSize: CGSize?
   private var latestDetectionTime: TimeInterval = 0
   private var liveLighting: ScannerLiveLighting = .good
-  private var readySince: TimeInterval?
+  private var autoShutter = ScannerAutoShutter()
   private var lastEvidenceTime: TimeInterval = 0
   private var lastEvidenceQuadrilateral: ScannerQuadrilateral?
   private var analysisStartedAt: TimeInterval = 0
@@ -98,6 +98,9 @@ final class FoorsaScannerViewController: UIViewController {
   private var capturePolicy: ScannerImagegenCapturePolicy?
   private var lightingAtFirstShot: ScannerLiveLighting = .good
   private var awaitingSteadyShot = false
+  private var awaitingSteadyShotSince: TimeInterval?
+  /// Focus waits that ran out in this capture: after the first, a photo is taken where it is.
+  private var settleExpiries = 0
   private var awaitingMovedShot: TimeInterval?
   private var lastShotQuadrilateral: ScannerQuadrilateral?
   private var lastPhotoFailure: ScannerImageProcessor.PhotoProcessingFailure?
@@ -119,7 +122,8 @@ final class FoorsaScannerViewController: UIViewController {
   private var lightingRetrySince: TimeInterval?
   private static let captureRetryMessage = "Reframe the page"
   private static let manualShutterDelay: TimeInterval = 7
-  private static let lightingGrace: TimeInterval = 1.5
+  /// After a focus wait ran out, how long a steadier page is waited for before the photo.
+  private static let steadyShotLimit: TimeInterval = 1.5
   private static let angleRequestLimit: TimeInterval = 4
   private var retryTitle = captureRetryMessage
   private var retryDetail = "Reframe the page, keep all four corners visible, and hold still."
@@ -559,6 +563,8 @@ final class FoorsaScannerViewController: UIViewController {
     capturePolicy = ScannerImagegenCapturePolicy(startedAt: now)
     lightingAtFirstShot = manual ? .good : liveLighting
     awaitingSteadyShot = false
+    awaitingSteadyShotSince = nil
+    settleExpiries = 0
     awaitingMovedShot = nil
     lastShotQuadrilateral = nil
     lastPhotoFailure = nil
@@ -570,7 +576,7 @@ final class FoorsaScannerViewController: UIViewController {
     activePhotoIDs.removeAll(keepingCapacity: true)
     tracker.reset()
     shotTracker.reset()
-    readySince = nil
+    autoShutter.reset()
     lightingRetryAnchor = nil
     lastCaptureTime = now
     setCaptureControls(enabled: false)
@@ -676,17 +682,20 @@ final class FoorsaScannerViewController: UIViewController {
       expiry["documentIsStable"] = documentIsStable
       diagnosticEvent?(expiry)
 #endif
-      if manualCapture {
-        // A tap means now: take the photo even if the lens is still moving.
+      if manualCapture || settleExpiries > 0 {
+        // A tap means now: take the photo even if the lens is still moving. So does a second
+        // wait that ran out: the camera has had its chance, and the photo checks judge it.
         takePhoto(camera: camera)
         return
       }
+      settleExpiries += 1
       captureSettling = false
       captureSettlePolicy.cancel()
       captureSettleAnchor = nil
       burstRemaining = 0
       // Wait for the page to be steady again instead of abandoning the hold.
       awaitingSteadyShot = true
+      awaitingSteadyShotSince = now
       shotTracker.reset()
       overlay.progress = 0
       guidanceView.show(title: "Hold still", detail: documentIsStable
@@ -764,6 +773,7 @@ final class FoorsaScannerViewController: UIViewController {
     captureSettleAnchor = nil
     capturePolicy = nil
     awaitingSteadyShot = false
+    awaitingSteadyShotSince = nil
     awaitingMovedShot = nil
     captureCancellation?.cancel()
     captureCancellation = nil
@@ -776,7 +786,7 @@ final class FoorsaScannerViewController: UIViewController {
     burstCandidates.removeAll()
     tracker.reset()
     shotTracker.reset()
-    readySince = nil
+    autoShutter.reset()
     setCaptureControls(enabled: true)
     shutterIdleSince = CACurrentMediaTime()
     updateShutterVisibility(at: shutterIdleSince)
@@ -937,6 +947,7 @@ final class FoorsaScannerViewController: UIViewController {
       // A result captured before rotation belongs to the previous preview.
       // Revoke its hold progress before another orientation can auto-capture.
       tracker.reset()
+      autoShutter.reset()
       smoother.reset()
       restartTextReading()
       latestQuadrilateral = nil
@@ -970,7 +981,7 @@ final class FoorsaScannerViewController: UIViewController {
     }
     tracker.reset()
     smoother.reset()
-    readySince = nil
+    autoShutter.reset()
     latestQuadrilateral = nil
     latestImageSize = nil
     overlay.quadrilateral = nil
@@ -1044,6 +1055,10 @@ final class FoorsaScannerViewController: UIViewController {
     let fresh = CACurrentMediaTime() - time <= ScannerStabilityTracker.maximumObservationAge
     var observation = fresh ? incoming : ScannerLiveObservation.none
     var countsTowardHold = observation.framing == .ready
+    // A whole page in view, steady or not, sharp or not: automatic capture
+    // does not wait on a perfect hold for ever (ScannerAutoShutter).
+    let wholePage = observation.framing == .ready || observation.framing == .blurry
+    var countsAsPage = wholePage
     // Passports: the booklet-aware cascade decides first. A document-model
     // page drives capture only when it matches the confirmed photo page, or
     // once the cascade has had three seconds without finding one.
@@ -1051,11 +1066,12 @@ final class FoorsaScannerViewController: UIViewController {
       if observation.confirmedByEvidence {
         lastEvidenceTime = time
         lastEvidenceQuadrilateral = quad
-      } else if observation.framing == .ready {
+      } else if wholePage {
         let matchesEvidence = time - lastEvidenceTime < 1.5 && (lastEvidenceQuadrilateral.map {
           $0.maximumCornerDistance(to: quad) <= 0.035 } ?? false)
         let cascadeHadItsChance = time - max(lastEvidenceTime, analysisStartedAt) >= 3
-        countsTowardHold = matchesEvidence || cascadeHadItsChance
+        countsAsPage = matchesEvidence || cascadeHadItsChance
+        if observation.framing == .ready { countsTowardHold = countsAsPage }
       }
     }
     if observation.framing == .ready, observation.lighting == .good, cameraNeedsMoreLight() {
@@ -1128,19 +1144,15 @@ final class FoorsaScannerViewController: UIViewController {
       guidanceView.show(ScannerLiveGuidance.copy(framing: shownFraming, lighting: observation.lighting,
         layout: profile.layout), holding: readyQuad != nil)
     }
-    guard state.ready else {
-      readySince = nil
-      return
-    }
-    if readySince == nil { readySince = time }
-    let clearFor = time - (readySince ?? time)
-    // Give the student a moment to fix shadow, glare or dim light, then
-    // capture anyway: a slightly shadowed page beats no page. The reading has
-    // its moment too: a clear page is taken once it is over, with no tap,
-    // unless the reading saw the wrong paper or the wrong side of a card.
-    let lightingSettled = observation.lighting == .good || clearFor >= Self.lightingGrace
-    if lightingSettled && reading.capturesWhenClear(for: clearFor, kind: profile.paperKind)
-        && time - lastCaptureTime > 1.2 {
+    // Taken with no tap: steady and read, steady for a moment, or in view long
+    // enough (ScannerAutoShutter). A soft frame or a tremor no longer starts the
+    // wait over; shadow, glare or dim light get a moment to be fixed first; the
+    // wrong paper, or the wrong side of a card, is never taken.
+    let page: ScannerAutoShutter.Page = state.ready ? .steady
+      : (countsAsPage && quad != nil ? .inView : .missing)
+    let due = autoShutter.observe(page, at: time, reading: reading, kind: profile.paperKind,
+      lightingGood: observation.lighting == .good)
+    if due && time - lastCaptureTime > 1.2 {
       captureMatchedReading = reading.passed
       beginCapture()
     }
@@ -1170,8 +1182,13 @@ final class FoorsaScannerViewController: UIViewController {
     overlay.progress = state.progress
     guidanceView.show(ScannerLiveGuidance.copy(framing: readyQuad == nil ? observation.framing : .ready,
       lighting: .good, layout: profile.layout), holding: readyQuad != nil)
-    guard state.ready else { return }
+    // Bounded like the angle request: a whole page still in view is taken
+    // where it is once the wait is over, never left waiting for a steadier one.
+    let waitIsOver = time - (awaitingSteadyShotSince ?? time) >= Self.steadyShotLimit
+      && (observation.framing == .ready || observation.framing == .blurry)
+    guard state.ready || waitIsOver else { return }
     awaitingSteadyShot = false
+    awaitingSteadyShotSince = nil
     shotTracker.reset()
     advanceCapture()
   }

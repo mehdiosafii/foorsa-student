@@ -59,7 +59,7 @@ previous Chinese university papers are exempt, since they may carry such lines.
 **A clear page does not wait on the reading for long** (the owner, 30 Oct
 2026: "it should be automatic once the shot is clear"; until then a page
 the reading could not confirm waited for the shutter). Once the page is
-steady and clear, the reading has `clearPageGrace`: 1.2 s for a paper, 2 s
+steady and clear, the reading has `clearPageGrace`: 0.8 s for a paper, 1.5 s
 for a passport or a card, whose lines fill the student's details when the
 server's reader cannot answer. If it has not passed by then, the camera
 takes the page anyway. Only a reading that sees the wrong paper, or the
@@ -68,6 +68,29 @@ different paper", "Turn the card over"); the shutter is there for that. Both
 platforms ask `capturesWhenClear` (`ScannerTextGateStatus` on the iPhone,
 `ScanTextGateStatus` on Android), and a page taken this way returns its
 reading with `matched: false`.
+
+**No unbroken run of perfect frames is needed** (the owner, 30 Oct 2026, on
+build 54: the scanner still needed the button). Build 54 counted the grace
+from the last frame that was steady and clear, so one soft frame, a tremor
+of the hand or a dim room started it over, and the shutter appeared first.
+`ScannerAutoShutter` (iPhone) and `ScanAutoShutter` (Android) decide frame by
+frame, the first way in that is due winning:
+
+- steady and read: the hold is complete and the reading passed;
+- steady: the hold has been complete for the grace, counted from the first
+  time it was, through any frame missed since (shadow, glare or dim light add
+  `lightingGrace`, 1.5 s, to be fixed first);
+- in view: a whole page has been in view for `inViewLimit` (2.5 s for a
+  paper, 3.5 s for a passport or a card), steady or not, sharp or not.
+
+None of them while the reading holds the capture; the clocks start over once
+the page has been out of view for 0.8 s. A passport's page counts as in view
+on the same terms as its hold (the booklet-aware cascade first, the document
+model after three seconds). Once the camera starts, its waits are bounded
+too: a focus wait that runs out is followed by at most 1.5 s for a steadier
+page (`steadyShotLimit`), and a second focus wait that runs out takes the
+photo where it is, as a tap does. The photo checks (sharpness, the page's
+edges, the views kept for the AI copy) judge every photo as before.
 
 **Guidance instead of a premature capture.** Framing comes first, then what
 the reading still needs: "Show the photo page with the two lines at the

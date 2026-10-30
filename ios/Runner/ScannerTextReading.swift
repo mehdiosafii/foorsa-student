@@ -1279,7 +1279,7 @@ struct ScannerTextGateStatus: Equatable {
   /// longer: those lines fill the student's details when the server's reader
   /// cannot answer.
   static func clearPageGrace(for kind: ScannerPaperKind) -> TimeInterval {
-    kind == .paper ? 1.2 : 2
+    kind == .paper ? 0.8 : 1.5
   }
 
   /// Whether a page that has been clear and steady for `clearFor` seconds is
@@ -1291,6 +1291,79 @@ struct ScannerTextGateStatus: Equatable {
     if allowsCapture { return true }
     if guidance?.holdsCapture == true { return false }
     return clearFor >= Self.clearPageGrace(for: kind)
+  }
+}
+
+/// When a page in view is taken with no tap (the owner, 30 Oct 2026: "it should be automatic
+/// once the shot is clear"; on build 54 it still needed the button). Build 54 took a page only
+/// after an unbroken run of clear, steady frames: one soft frame, a tremor of the hand or a dim
+/// room started the wait over, and the shutter appeared before it ended. Frame by frame, the
+/// first way in that is due wins:
+/// - steady and read: the hold is complete and the reading passed (or this phone cannot read);
+/// - steady: the hold has been complete for the paper's grace (`clearPageGrace`), counted from
+///   the first time it was, through any frame missed since;
+/// - in view: a whole page has been in view for `inViewLimit`, steady or not, sharp or not.
+///   The camera's own focus wait and the photo checks still judge every photo.
+/// Never while the reading has seen the wrong paper or the wrong side of a card: the shutter
+/// that appears after a few seconds is there for that. The clocks start over once the page has
+/// been out of view for `pageLossReset`.
+struct ScannerAutoShutter {
+  enum Page: Equatable {
+    /// No whole page in this frame: none, or one cut off, too small or the wrong shape.
+    case missing
+    /// A whole page, not (yet) steady or sharp enough to count toward the hold.
+    case inView
+    /// The hold is complete.
+    case steady
+  }
+
+  static let pageLossReset: TimeInterval = 0.8
+  /// A page in shadow, glare or dim light has this long to be fixed before it is taken anyway:
+  /// a slightly shadowed page beats no page.
+  static let lightingGrace: TimeInterval = 1.5
+
+  /// How long a whole page stays in view before it is taken, steady or not.
+  static func inViewLimit(for kind: ScannerPaperKind) -> TimeInterval {
+    kind == .paper ? 2.5 : 3.5
+  }
+
+  private(set) var inViewSince: TimeInterval?
+  private(set) var steadySince: TimeInterval?
+  private var lastSeen: TimeInterval?
+
+  /// How long the page has been steady, through any frame missed since; 0 before it ever was.
+  func steadyFor(at time: TimeInterval) -> TimeInterval {
+    steadySince.map { max(0, time - $0) } ?? 0
+  }
+
+  /// One preview frame. True when the page in it is to be taken now.
+  mutating func observe(_ page: Page, at time: TimeInterval, reading: ScannerTextGateStatus,
+                        kind: ScannerPaperKind, lightingGood: Bool) -> Bool {
+    guard time.isFinite else {
+      reset()
+      return false
+    }
+    guard page != .missing else {
+      if let lastSeen, time - lastSeen >= Self.pageLossReset { reset() }
+      return false
+    }
+    lastSeen = time
+    if inViewSince == nil { inViewSince = time }
+    if page == .steady, steadySince == nil { steadySince = time }
+    if reading.guidance?.holdsCapture == true { return false }
+    if page == .steady {
+      let steady = steadyFor(at: time)
+      if (lightingGood || steady >= Self.lightingGrace) && reading.capturesWhenClear(for: steady, kind: kind) {
+        return true
+      }
+    }
+    return time - (inViewSince ?? time) >= Self.inViewLimit(for: kind)
+  }
+
+  mutating func reset() {
+    inViewSince = nil
+    steadySince = nil
+    lastSeen = nil
   }
 }
 
