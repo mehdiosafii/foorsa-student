@@ -85,10 +85,11 @@ struct ScannerTextReadingTests {
     passportGate()
     cardGate()
     paperGate()
+    clearPageCapture()
     geometry()
     pageTrackingAndReader()
     liveReading()
-    print("PASS: ICAO 9303 check digits, TD3/TD1 parsing and look-alike repair, length repair, multi-frame voting, passport/card/paper right-document gate, guidance, turn search, page tracking, reader fallback, bounded live reading")
+    print("PASS: ICAO 9303 check digits, TD3/TD1 parsing and look-alike repair, length repair, multi-frame voting, passport/card/paper right-document gate, clear-page capture, guidance, turn search, page tracking, reader fallback, bounded live reading")
   }
 
   static func checkDigitsAndNormalization() {
@@ -397,6 +398,33 @@ struct ScannerTextReadingTests {
     precondition(ScannerCardFront.numbers(in: ["12345678"]) == ["12345678"])
     precondition(ScannerCardFront.numbers(in: ["1234567", "123456789"]).isEmpty)
     precondition(ScannerCardFront.hasKeyword(["Royaume du Maroc"]) && !ScannerCardFront.hasKeyword(["MOHAMED"]))
+  }
+
+  // The owner, 30 Oct 2026: "it should be automatic once the shot is clear". A
+  // clear, steady page no longer waits on the reading for long: only the wrong
+  // paper, or the wrong side of a card, keeps it waiting.
+  static func clearPageCapture() {
+    let passed = ScannerTextGateStatus.passedReading
+    precondition(passed.capturesWhenClear(for: 0, kind: .passport))
+    precondition(ScannerTextGateStatus.cannotRead.capturesWhenClear(for: 0, kind: .paper))
+    for kind in [ScannerPaperKind.passport, .idCard, .paper] {
+      let grace = ScannerTextGateStatus.clearPageGrace(for: kind)
+      for guidance in [ScannerTextGuidance.reading, .showMachineLines, .moveCloserMachineLines, .glareOnMachineLines,
+                       .showWholeMachineLines, .showCardDetails, .glareOnText, .moveCloserText, .showPrintedText,
+                       .textRunsPastEdge] {
+        let waiting = ScannerTextGateStatus.waiting(guidance)
+        precondition(!guidance.holdsCapture)
+        precondition(!waiting.capturesWhenClear(for: grace - 0.05, kind: kind))
+        precondition(waiting.capturesWhenClear(for: grace, kind: kind))
+      }
+      for guidance in [ScannerTextGuidance.differentPaper, .turnCardToFront, .turnCardToBack] {
+        precondition(guidance.holdsCapture)
+        precondition(!ScannerTextGateStatus.waiting(guidance).capturesWhenClear(for: 60, kind: kind))
+      }
+    }
+    // The lines on a passport or a card get a little longer than a paper's rows.
+    precondition(ScannerTextGateStatus.clearPageGrace(for: .paper) < ScannerTextGateStatus.clearPageGrace(for: .passport))
+    precondition(ScannerTextGateStatus.clearPageGrace(for: .passport) <= 2)
   }
 
   static func paperGate() {

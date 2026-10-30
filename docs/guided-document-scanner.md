@@ -56,6 +56,19 @@ A passport's or an ID card's valid machine lines in a diploma's (or any
 paper's) step read as a different paper; visa documents, other documents and
 previous Chinese university papers are exempt, since they may carry such lines.
 
+**A clear page does not wait on the reading for long** (the owner, 30 Oct
+2026: "it should be automatic once the shot is clear"; until then a page
+the reading could not confirm waited for the shutter). Once the page is
+steady and clear, the reading has `clearPageGrace`: 1.2 s for a paper, 2 s
+for a passport or a card, whose lines fill the student's details when the
+server's reader cannot answer. If it has not passed by then, the camera
+takes the page anyway. Only a reading that sees the wrong paper, or the
+wrong side of a card, holds the capture (`holdsCapture`: "This looks like a
+different paper", "Turn the card over"); the shutter is there for that. Both
+platforms ask `capturesWhenClear` (`ScannerTextGateStatus` on the iPhone,
+`ScanTextGateStatus` on Android), and a page taken this way returns its
+reading with `matched: false`.
+
 **Guidance instead of a premature capture.** Framing comes first, then what
 the reading still needs: "Show the photo page with the two lines at the
 bottom", "Move closer — the bottom lines are too small", "Glare on the bottom
@@ -63,7 +76,8 @@ lines" (tilt the page), "Show both bottom lines", "This looks like a different
 paper", "Turn the card over", "Move closer so the text is readable", "Show the
 whole page" (some text runs past the edge), "Hold still · Reading…". The
 outline does not turn green until the reading passes; when it passes the
-capture starts at once.
+capture starts at once, and otherwise once the clear page's grace is over
+(above).
 
 **Fallbacks.** The manual shutter stays: on iPhone it appears seven seconds
 after the scanner opens or retries, as before (accessibility, and papers the

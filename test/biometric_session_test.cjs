@@ -196,17 +196,20 @@ test('a refused unlock leaves the sign-in screen as it was and says why', async 
   assert.deepEqual(plain(await p.window.__foorsaBiometrics.unlock()), {ok: false, reason: 'unavailable'});
 });
 
-test('the sign-in screen opens the prompt by itself once per launch', async () => {
+test('the prompt opens only from a tap, never by itself', async () => {
+  // The owner, 30 Oct 2026: "you need to click the face id logo".
   const tab = new Map();
   const p = portal({tab, config: {protected: true}}); p.ready();
   p.native(async () => ({ok: false, reason: 'cancelled'}));
-  assert.equal((await p.window.__foorsaBiometrics.unlock({auto: true})).reason, 'cancelled');
   assert.equal((await p.window.__foorsaBiometrics.unlock({auto: true})).reason, 'skipped');
-  assert.equal(p.calls.length, 1);
+  assert.equal(p.calls.length, 0);
   assert.equal((await p.window.__foorsaBiometrics.unlock()).reason, 'cancelled');
+  assert.equal((await p.window.__foorsaBiometrics.unlock()).reason, 'cancelled');
+  assert.equal(p.calls.length, 2);
   const relaunch = portal({tab, config: {protected: true, boot: 'boot-2'}}); relaunch.ready();
   relaunch.native(async () => ({ok: false, reason: 'cancelled'}));
-  assert.equal((await relaunch.window.__foorsaBiometrics.unlock({auto: true})).reason, 'cancelled');
+  assert.equal((await relaunch.window.__foorsaBiometrics.unlock({auto: true})).reason, 'skipped');
+  assert.equal(relaunch.calls.length, 0);
 });
 
 test('Settings turns it on for the open session and off without signing the student out', async () => {

@@ -9,7 +9,6 @@
   const kindKey = 'foorsa_portal_kind';
   const protectedKey = 'foorsa_biometric_session';
   const bootKey = 'foorsa_biometric_boot';
-  const autoKey = 'foorsa_biometric_auto';
   const rawGet = Storage.prototype.getItem;
   const rawSet = Storage.prototype.setItem;
   const rawRemove = Storage.prototype.removeItem;
@@ -199,12 +198,11 @@
     },
     // The OS prompt opens; on success the saved session becomes this tab's
     // session and the portal carries on as if the password had been typed.
-    // `auto` runs at most once per app launch (the screen opening by itself).
+    // Only from a tap on the sign-in screen's icon (the owner, 30 Oct 2026:
+    // "you need to click the face id logo"): `auto`, the screen opening the
+    // prompt by itself, is refused, whatever release of the portal asks.
     async unlock(options) {
-      if (options && options.auto) {
-        if (rawGet.call(sessionStorage, autoKey) === config.boot) return {ok: false, reason: 'skipped'};
-        rawSet.call(sessionStorage, autoKey, config.boot);
-      }
+      if (options && options.auto) return {ok: false, reason: 'skipped'};
       const result = await call('unlock');
       if (!result || result.ok !== true || typeof result.token !== 'string' || !result.token) {
         return {ok: false, reason: reasonOf(result)};

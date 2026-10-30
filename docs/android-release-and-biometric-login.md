@@ -79,7 +79,12 @@ native "Welcome back" overlay of 1.2.20 is gone.
 
 - **After a password sign-in** (a successful student `/api/portal/me`
   response), the shell offers Face ID / Touch ID on iOS or strong fingerprint /
-  face recognition on Android 9 and later. **Not now** is remembered for seven
+  face recognition on Android 9 and later, as one question and two answers
+  (`quick_sign_in_offer.dart`, since 1.2.23: "Sign in with Face ID next
+  time?", **Not Now** / **Use Face ID**; the owner, 30 Oct 2026: the popup
+  "needs to be simpler"). On iOS it is the system's own alert, on Android a
+  plain dialog, in the theme the student chose. No note follows a yes: the
+  system's Face ID check has just said it. **Not now** is remembered for seven
   days, per student on this device. Ambassador sessions and the mandatory
   password-change screen are excluded. In 1.2.20 the bridge received its
   nonce only before a document scan, so this offer never appeared; the shell
@@ -87,8 +92,10 @@ native "Welcome back" overlay of 1.2.20 is gone.
   bridge also asks for it when the WebView platform is ready.
 - **The sign-in screen** asks `window.__foorsaBiometrics.status()` and, when a
   login is saved, shows a Face ID (or fingerprint) icon at the end of the Sign
-  in button and opens the OS prompt by itself once per launch
-  (`unlock({auto: true})`). The
+  in button. The OS prompt opens only when the student taps that icon (the
+  owner, 30 Oct 2026: "you need to click the face id logo"): the portal no
+  longer asks for it by itself, and since 1.2.23 the bridge refuses
+  `unlock({auto: true})` whatever release of the portal asks. The
   shell reads the vault through the OS prompt, validates the token with the
   server and returns it to the trusted main frame only; the bridge installs it
   as this launch's tab session and the portal carries on as after a typed
