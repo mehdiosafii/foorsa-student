@@ -31,6 +31,7 @@ import 'boot_loader_gate.dart';
 import 'config.dart';
 import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
+import 'quick_sign_in_offer.dart';
 import 'shell_appearance.dart';
 import 'shell_capabilities.dart';
 import 'shell_haptics.dart';
@@ -317,20 +318,9 @@ class _ShellPageState extends State<ShellPage> {
           !await _biometricSessionIsCurrent(session.token, nonce) || !mounted) {
         return null;
       }
-      final enable = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
-        scrollable: true,
-        icon: Icon(_biometrics.kind == 'face' ? Icons.face_retouching_natural : Icons.fingerprint, size: 42),
-        title: const Text('Sign in faster next time'),
-        content: Text('Use ${_biometrics.label} to sign in to Foorsa on this phone. '
-          'Your login is saved securely on this device. Foorsa never sees your face or fingerprint. '
-          'You can turn this off in Profile › Settings.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text('Use ${_biometrics.label}')),
-        ],
-      ));
+      final enable = await showQuickSignInOffer(context, label: _biometrics.label, dark: _isDark(context));
       if (generation != _biometricGeneration || !await _biometricSessionIsCurrent(session.token, nonce)) return null;
-      if (enable != true) { await _biometrics.defer(session.owner); return null; }
+      if (!enable) { await _biometrics.defer(session.owner); return null; }
       if (!await _biometrics.save(session)) return null;
       if (generation != _biometricGeneration || !await _biometricSessionIsCurrent(session.token, nonce)) {
         await _biometrics.forget();
@@ -340,8 +330,8 @@ class _ShellPageState extends State<ShellPage> {
         await _biometrics.forget();
         throw StateError('The session changed before it could be protected');
       }
+      // No note on success: the system's own Face ID check has just said it.
       _biometricWasEnabled = true;
-      _biometricNotice('${_biometrics.label} sign-in is on for this phone.');
     } catch (_) {
       _biometricNotice('Quick sign-in could not be saved. You can keep using your password.');
     } finally {
