@@ -1015,13 +1015,24 @@ enum ScannerPageLightingProbe {
   }
 }
 
-/// A page is taken as a short burst: the next photo is shot while the last
-/// one is checked. The system shutter would sound on every one of them, so
-/// only a page's first photo sounds; the rest are silenced where iOS allows
-/// it (iOS 18+, and not in regions that require the sound).
+/// The scanner is silent (the owner, 30 Oct 2026: "when scanning you hear
+/// shutter multiple times it needs to stay silent"). A page is a short burst,
+/// the next photo shot while the last is checked, and a capture can start
+/// again, so even one sound per capture repeated through a scan. From iOS 18
+/// every photo asks the system for silence (`isShutterSoundSuppressionEnabled`,
+/// which iOS refuses where the sound is required); before iOS 18, which has no
+/// such setting, the shutter sound is released as the photo is taken, except
+/// in a region whose rules require it.
 enum ScannerShutterSound {
-  /// `photoNumber` counts the photos of the current page, starting at 1.
-  static func plays(photoNumber: Int) -> Bool { photoNumber <= 1 }
+  /// Regions whose rules require a camera to sound its shutter.
+  static let requiredRegions: Set<String> = ["JP", "KR"]
+
+  /// Whether the scanner may silence the shutter before iOS 18, from the
+  /// phone's region (`nil` when the phone names none).
+  static func silenceAllowed(region: String?) -> Bool {
+    guard let region = region?.trimmingCharacters(in: .whitespaces), !region.isEmpty else { return true }
+    return !requiredRegions.contains(region.uppercased())
+  }
 }
 
 /// Imagegen capture keeps taking clear photos in one hold until enough are
