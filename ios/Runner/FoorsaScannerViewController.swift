@@ -1113,8 +1113,9 @@ final class FoorsaScannerViewController: UIViewController {
       lightingRetrySince = nil
     }
     let state = tracker.observe(readyQuad, at: time, processingDuration: processingDuration)
-    // Steady is not enough: the reading must also say this is the paper the
-    // step asked for. Until it does, the outline never turns green.
+    // Steady first; then the reading, which says this is the paper the step
+    // asked for. Until it does, the outline never turns green, but a clear
+    // page does not wait on it for long (ScannerTextGateStatus.capturesWhenClear).
     let reading = textSession.status(glare: observation.lighting == .glare)
     setTextReading(level: textLevel(for: observation, readyQuad: readyQuad, reading: reading))
     overlay.progress = reading.allowsCapture ? state.progress : min(state.progress, 0.85)
@@ -1132,10 +1133,14 @@ final class FoorsaScannerViewController: UIViewController {
       return
     }
     if readySince == nil { readySince = time }
+    let clearFor = time - (readySince ?? time)
     // Give the student a moment to fix shadow, glare or dim light, then
-    // capture anyway: a slightly shadowed page beats no page.
-    let lightingSettled = observation.lighting == .good || time - (readySince ?? time) >= Self.lightingGrace
-    if lightingSettled && reading.allowsCapture && time - lastCaptureTime > 1.2 {
+    // capture anyway: a slightly shadowed page beats no page. The reading has
+    // its moment too: a clear page is taken once it is over, with no tap,
+    // unless the reading saw the wrong paper or the wrong side of a card.
+    let lightingSettled = observation.lighting == .good || clearFor >= Self.lightingGrace
+    if lightingSettled && reading.capturesWhenClear(for: clearFor, kind: profile.paperKind)
+        && time - lastCaptureTime > 1.2 {
       captureMatchedReading = reading.passed
       beginCapture()
     }

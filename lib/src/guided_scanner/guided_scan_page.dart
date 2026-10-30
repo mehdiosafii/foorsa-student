@@ -52,8 +52,12 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   Future<void>? _pendingStart;
   final _analyzer = const ScanFrameAnalyzer();
   final _gate = ScanAutoCaptureGate();
+  // Since when the page has been clear and steady: the reading has a short
+  // moment (ScanTextGateStatus.capturesWhenClear), then the camera takes it.
+  DateTime? _clearSince;
   // The live reading: steady is not enough, the page must also read as the
-  // paper this step asked for before the camera takes it by itself.
+  // paper this step asked for before the camera takes it by itself, or have
+  // been clear for a moment while the reading still looks.
   late final ScanTextReadingSession _reading =
       ScanTextReadingSession.forProfile(widget.profile);
   final _textChannel = LiveTextChannel();
@@ -137,6 +141,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         _pendingDispose = _disposeCamera(previous);
       }
       _gate.reset();
+      _clearSince = null;
       _restartReading();
       _previous = null;
       _lastProcessed = null;
@@ -288,6 +293,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     if (_reading.observePage(result.bounds, now)) _restartReading();
     _readText(image, result, now);
     final steady = _gate.observe(result, now);
+    _clearSince = steady ? (_clearSince ?? now) : null;
     final reading = _reading.status(glare: result.hint == ScanHint.reduceGlare);
     if (mounted) {
       setState(() {
@@ -297,7 +303,12 @@ class _GuidedScanPageState extends State<GuidedScanPage>
             ? _gate.progress : math.min(_gate.progress, 0.85);
       });
     }
-    if (steady && reading.allowsCapture) {
+    // A clear page is taken with no tap once the reading passed, or once it
+    // has been clear for a moment while the reading still looks; never while
+    // the reading sees the wrong paper or the wrong side of a card.
+    final clearSince = _clearSince;
+    if (steady && clearSince != null &&
+        reading.capturesWhenClear(now.difference(clearSince), _reading.kind)) {
       _captureMatched = reading.passed;
       unawaited(_takePhoto(automatic: true));
     }
@@ -398,6 +409,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         _cameraGeneration++;
       }
       _gate.reset();
+      _clearSince = null;
       _previous = null;
       setState(() {
         _busy = false;
@@ -475,6 +487,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
   Future<void> _toggleAuto() async {
     _gate.reset();
+    _clearSince = null;
     _restartReading();
     _previous = null;
     _lastProcessed = null;

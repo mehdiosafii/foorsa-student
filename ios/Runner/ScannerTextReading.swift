@@ -1191,6 +1191,11 @@ enum ScannerTextGuidance: String, Equatable {
   /// Holding still is what helps now.
   var asksToHold: Bool { self == .reading }
 
+  /// The reading saw the wrong paper, or the wrong side of a card: the student
+  /// has to act, so a clear page is not taken for it. Every other guidance is
+  /// the reading still looking, which a clear page does not wait on for long.
+  var holdsCapture: Bool { self == .differentPaper || self == .turnCardToFront || self == .turnCardToBack }
+
   func copy(for kind: ScannerPaperKind) -> ScannerGuidanceCopy {
     switch self {
     case .reading:
@@ -1266,6 +1271,26 @@ struct ScannerTextGateStatus: Equatable {
 
   static func waiting(_ guidance: ScannerTextGuidance) -> ScannerTextGateStatus {
     ScannerTextGateStatus(passed: false, allowsCapture: false, guidance: guidance)
+  }
+
+  /// How long a clear, steady page waits for the reading before it is taken
+  /// anyway (the owner, 30 Oct 2026: "it should be automatic once the shot is
+  /// clear"). A passport or a card gives the reading of its lines a little
+  /// longer: those lines fill the student's details when the server's reader
+  /// cannot answer.
+  static func clearPageGrace(for kind: ScannerPaperKind) -> TimeInterval {
+    kind == .paper ? 1.2 : 2
+  }
+
+  /// Whether a page that has been clear and steady for `clearFor` seconds is
+  /// taken now: at once when the reading passed (or the phone cannot read),
+  /// once the grace is over while the reading is still looking, and never
+  /// while it has seen the wrong paper or the wrong side of a card (the
+  /// shutter that appears after a few seconds is there for that).
+  func capturesWhenClear(for clearFor: TimeInterval, kind: ScannerPaperKind) -> Bool {
+    if allowsCapture { return true }
+    if guidance?.holdsCapture == true { return false }
+    return clearFor >= Self.clearPageGrace(for: kind)
   }
 }
 

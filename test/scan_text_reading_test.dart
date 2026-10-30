@@ -547,6 +547,46 @@ void main() {
     });
   });
 
+  // The owner, 30 Oct 2026: "it should be automatic once the shot is clear". A clear, steady page
+  // no longer waits on the reading for long: only the wrong paper, or the wrong side of a card,
+  // keeps it waiting (the iPhone's ScannerTextGateStatus.capturesWhenClear says the same).
+  group('a clear page is taken without a tap', () {
+    test('at once when the reading passed, or the phone cannot read', () {
+      expect(ScanTextGateStatus.passedReading.capturesWhenClear(Duration.zero, ScanPaperKind.passport), isTrue);
+      expect(ScanTextGateStatus.cannotRead.capturesWhenClear(Duration.zero, ScanPaperKind.paper), isTrue);
+    });
+
+    test('after a short moment while the reading is still looking', () {
+      const looking = [
+        ScanTextGuidance.reading, ScanTextGuidance.showMachineLines, ScanTextGuidance.moveCloserMachineLines,
+        ScanTextGuidance.glareOnMachineLines, ScanTextGuidance.showWholeMachineLines, ScanTextGuidance.showCardDetails,
+        ScanTextGuidance.glareOnText, ScanTextGuidance.moveCloserText, ScanTextGuidance.showPrintedText,
+        ScanTextGuidance.textRunsPastEdge,
+      ];
+      for (final kind in ScanPaperKind.values) {
+        final grace = ScanTextGateStatus.clearPageGrace(kind);
+        for (final guidance in looking) {
+          final waiting = ScanTextGateStatus.waiting(guidance);
+          expect(guidance.holdsCapture, isFalse);
+          expect(waiting.capturesWhenClear(grace - const Duration(milliseconds: 50), kind), isFalse, reason: '$kind $guidance');
+          expect(waiting.capturesWhenClear(grace, kind), isTrue, reason: '$kind $guidance');
+        }
+      }
+      // A passport's or a card's lines get a little longer than a paper's rows, and never long.
+      expect(ScanTextGateStatus.clearPageGrace(ScanPaperKind.paper) < ScanTextGateStatus.clearPageGrace(ScanPaperKind.passport), isTrue);
+      expect(ScanTextGateStatus.clearPageGrace(ScanPaperKind.idCard) <= const Duration(seconds: 2), isTrue);
+    });
+
+    test('never while the reading sees the wrong paper or the wrong side of a card', () {
+      for (final guidance in [ScanTextGuidance.differentPaper, ScanTextGuidance.turnCardToFront, ScanTextGuidance.turnCardToBack]) {
+        expect(guidance.holdsCapture, isTrue);
+        for (final kind in ScanPaperKind.values) {
+          expect(ScanTextGateStatus.waiting(guidance).capturesWhenClear(const Duration(minutes: 1), kind), isFalse);
+        }
+      }
+    });
+  });
+
   group('the live reading returned with the capture', () {
     test('a confirmed passport returns its lines and fields', () {
       final reading = session('identity')

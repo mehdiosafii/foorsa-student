@@ -1274,6 +1274,12 @@ enum ScanTextGuidance {
   /// Holding still is what helps now.
   bool get asksToHold => this == ScanTextGuidance.reading;
 
+  /// The reading saw the wrong paper, or the wrong side of a card: the student
+  /// has to act, so a clear page is not taken for it. Every other guidance is
+  /// the reading still looking, which a clear page does not wait on for long.
+  bool get holdsCapture => this == ScanTextGuidance.differentPaper ||
+      this == ScanTextGuidance.turnCardToFront || this == ScanTextGuidance.turnCardToBack;
+
   ScanTextCopy copy(ScanPaperKind kind) => switch (this) {
         ScanTextGuidance.reading => switch (kind) {
             ScanPaperKind.passport => const ScanTextCopy('Hold still', 'Reading the two lines at the bottom…', 'Reading…'),
@@ -1339,6 +1345,25 @@ class ScanTextGateStatus {
   /// Automatic capture may go ahead: the reading passed, or this phone cannot read text at all.
   final bool allowsCapture;
   final ScanTextGuidance? guidance;
+
+  /// How long a clear, steady page waits for the reading before it is taken
+  /// anyway (the owner, 30 Oct 2026: "it should be automatic once the shot is
+  /// clear"). A passport or a card gives the reading of its lines a little
+  /// longer: those lines fill the student's details when the server's reader
+  /// cannot answer.
+  static Duration clearPageGrace(ScanPaperKind kind) => kind == ScanPaperKind.paper
+      ? const Duration(milliseconds: 1200) : const Duration(seconds: 2);
+
+  /// Whether a page that has been clear and steady for [clearFor] is taken
+  /// now: at once when the reading passed (or the phone cannot read), once the
+  /// grace is over while the reading is still looking, and never while it has
+  /// seen the wrong paper or the wrong side of a card (the shutter is there for
+  /// that).
+  bool capturesWhenClear(Duration clearFor, ScanPaperKind kind) {
+    if (allowsCapture) return true;
+    if (guidance?.holdsCapture == true) return false;
+    return clearFor >= clearPageGrace(kind);
+  }
 
   @override
   bool operator ==(Object other) =>
