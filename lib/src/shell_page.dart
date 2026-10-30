@@ -587,7 +587,10 @@ class _ShellPageState extends State<ShellPage> {
       if (!samePortal || callingNonce != _scannerNonce) {
         return {'cancelled': true};
       }
-      return {'files': [_fileEntry(picture.name, bytes)]};
+      return {
+        'files': [_fileEntry(picture.name, bytes)],
+        if (result.liveReading != null) 'liveReading': result.liveReading,
+      };
     } catch (_) {
       return {'error': 'The document camera could not open. Please try again.'};
     } finally {

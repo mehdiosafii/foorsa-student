@@ -1,8 +1,10 @@
 /// A banking-app-style guided document camera for the Flutter shell.
 ///
 /// The portal still owns cropping, enhancement, multi-page PDFs, upload, and
-/// asynchronous OCR. This route only chooses WHEN to take the photograph.
-/// It never sends a preview frame or personal document to any server.
+/// asynchronous OCR. This route only chooses WHEN to take the photograph: once
+/// the page is steady AND the reading on the phone (ML Kit's bundled model,
+/// live_text_reader.dart) says it is the paper the step asked for. It never
+/// sends a preview frame or personal document to any server.
 library;
 
 import 'dart:async';
@@ -14,16 +16,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'camera_luma.dart';
+import 'live_text_reader.dart';
 import 'scan_guidance.dart';
 import 'scan_document_profile.dart';
+import 'scan_text_reading.dart';
 
 class GuidedScanResult {
-  const GuidedScanResult.captured(this.file) : useLegacyCamera = false;
+  const GuidedScanResult.captured(this.file, {this.liveReading})
+      : useLegacyCamera = false;
   const GuidedScanResult.fallback()
-      : file = null, useLegacyCamera = true;
+      : file = null, useLegacyCamera = true, liveReading = null;
 
   final XFile? file;
   final bool useLegacyCamera;
+
+  /// What was read on the phone while the page was in view, checked and
+  /// bounded (scan_text_reading.dart), for this capture only. Null without a
+  /// text reader.
+  final Map<String, Object>? liveReading;
 }
 
 class GuidedScanPage extends StatefulWidget {
@@ -42,6 +52,18 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   Future<void>? _pendingStart;
   final _analyzer = const ScanFrameAnalyzer();
   final _gate = ScanAutoCaptureGate();
+  // The live reading: steady is not enough, the page must also read as the
+  // paper this step asked for before the camera takes it by itself.
+  late final ScanTextReadingSession _reading =
+      ScanTextReadingSession.forProfile(widget.profile);
+  final _textChannel = LiveTextChannel();
+  static const _textInterval = Duration(milliseconds: 300);
+  ScanTextGateStatus? _readingStatus;
+  bool _textBusy = false;
+  DateTime? _lastTextRead;
+  Duration _lastTextDuration = Duration.zero;
+  int _textEpoch = 0;
+  bool _captureMatched = false;
 
   ScanLumaGrid? _previous;
   ScanFrameAnalysis? _analysis;
@@ -63,7 +85,16 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Only the Android app carries a text model; an iPhone that falls back to
+    // this camera captures on steadiness alone, as before.
+    if (!Platform.isAndroid) _reading.markReaderUnavailable();
     _scheduleCameraStart();
+  }
+
+  void _restartReading() {
+    _reading.reset();
+    _textEpoch++;
+    _lastTextRead = null;
   }
 
   void _scheduleCameraStart() {
@@ -106,6 +137,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         _pendingDispose = _disposeCamera(previous);
       }
       _gate.reset();
+      _restartReading();
       _previous = null;
       _lastProcessed = null;
       if (mounted) setState(() => _streamSupported = false);
@@ -251,17 +283,77 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       viewportAspect: _viewportAspect ?? 0.5,
     );
     _previous = grid;
-    final capture = _gate.consume(result, now);
+    // The reading belongs to one page: it starts over when the page has been
+    // gone a moment or another outline takes its place.
+    if (_reading.observePage(result.bounds, now)) _restartReading();
+    _readText(image, result, now);
+    final steady = _gate.observe(result, now);
+    final reading = _reading.status(glare: result.hint == ScanHint.reduceGlare);
     if (mounted) {
       setState(() {
         _analysis = result;
-        _progress = _gate.progress;
+        _readingStatus = reading;
+        _progress = reading.allowsCapture
+            ? _gate.progress : math.min(_gate.progress, 0.85);
       });
     }
-    if (capture) unawaited(_takePhoto());
+    if (steady && reading.allowsCapture) {
+      _captureMatched = reading.passed;
+      unawaited(_takePhoto(automatic: true));
+    }
   }
 
-  Future<void> _takePhoto() async {
+  /// Hands the page to ML Kit a few times a second, one read at a time. The
+  /// frame callback never waits for it.
+  void _readText(CameraImage image, ScanFrameAnalysis analysis, DateTime now) {
+    final bounds = analysis.bounds;
+    if (bounds == null || _textBusy || _reading.readerUnavailable ||
+        image.format.group != ImageFormatGroup.yuv420 || image.planes.isEmpty) {
+      return;
+    }
+    final last = _lastTextRead;
+    final backoff = _lastTextDuration * 1.5;
+    final interval = backoff > _textInterval ? backoff : _textInterval;
+    if (last != null && now.difference(last) < interval) return;
+    final crop = LiveTextCrop.forPage(bounds,
+        sensorWidth: image.width, sensorHeight: image.height,
+        viewportAspect: _viewportAspect, turns: _reading.turnPolicy);
+    final plane = image.planes.first;
+    final luma = crop?.extract(plane.bytes,
+        rowStride: plane.bytesPerRow, pixelStride: plane.bytesPerPixel ?? 1);
+    if (crop == null || luma == null) return;
+    _textBusy = true;
+    _lastTextRead = now;
+    final epoch = _textEpoch;
+    final started = DateTime.now();
+    unawaited(_textChannel.read(luma, crop).then((result) {
+      _textBusy = false;
+      _lastTextDuration = DateTime.now().difference(started);
+      if (!mounted || _closing || _busy || epoch != _textEpoch) return;
+      switch (result.status) {
+        case LiveTextReadStatus.read:
+          _reading.ingest(crop.frame(result.lines));
+        case LiveTextReadStatus.failed:
+          _reading.readFailed();
+        case LiveTextReadStatus.unavailable:
+          _reading.markReaderUnavailable();
+        case LiveTextReadStatus.busy:
+          break;
+      }
+    }));
+  }
+
+  /// What was read, for this capture. A photo taken by hand returns whatever
+  /// had been read by then.
+  Map<String, Object>? _liveReadingFor({required bool automatic}) {
+    if (!Platform.isAndroid) return null;
+    final matched = automatic
+        ? _captureMatched : _reading.status(glare: false).passed;
+    return sanitizeLiveReading(_reading.liveReading(engine: 'mlkit_latin',
+        matched: matched, referenceYear: DateTime.now().year));
+  }
+
+  Future<void> _takePhoto({bool automatic = false}) async {
     final camera = _camera;
     if (_busy || camera == null || !camera.value.isInitialized) return;
     Future<XFile>? capture;
@@ -292,7 +384,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       _cameraGeneration++;
       await _disposeCamera(camera);
       if (!mounted) return;
-      Navigator.of(context).pop(GuidedScanResult.captured(photo));
+      Navigator.of(context).pop(GuidedScanResult.captured(photo,
+          liveReading: _liveReadingFor(automatic: automatic)));
       delivered = true;
     } catch (error) {
       final captureTimedOut = error is TimeoutException;
@@ -382,6 +475,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
   Future<void> _toggleAuto() async {
     _gate.reset();
+    _restartReading();
     _previous = null;
     _lastProcessed = null;
     final enabling = !_autoEnabled;
@@ -417,6 +511,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     final camera = _camera;
     _camera = null;
     if (camera != null) unawaited(_disposeCamera(camera));
+    unawaited(_textChannel.close());
     super.dispose();
   }
 
@@ -453,8 +548,13 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   @override
   Widget build(BuildContext context) {
     final camera = _camera;
-    final ready = _analysis?.autoReady == true && _streamSupported;
+    final readingWaits = _readingStatus?.allowsCapture == false;
+    final ready = _analysis?.autoReady == true && _streamSupported && !readingWaits;
     final cameraWorking = camera?.value.isInitialized == true;
+    // Framing comes first; once the page is aligned, what the reading still
+    // needs (the bottom lines, the other side, a different paper).
+    final readingHint = _analysis?.autoReady == true && readingWaits
+        ? _readingStatus?.guidance?.copy(_reading.kind).detail : null;
     final label = _captureError ??
         (_busy
           ? 'Capturing…'
@@ -464,7 +564,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
               ? 'Opening camera…'
               : !_autoEnabled || !_streamSupported
                 ? 'Tap the shutter when ready'
-                : _analysis?.hint.label ?? 'Align all four edges');
+                : readingHint ?? _analysis?.hint.label ?? 'Align all four edges');
     final accent = ready ? const Color(0xFF3DE5B4) : Colors.white;
 
     return Scaffold(
@@ -649,7 +749,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Automatic capture when clear and steady · manual capture always available',
+                    'Automatic capture once the right paper is clear and steady · manual capture always available',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white60, fontSize: 11, height: 1.3,

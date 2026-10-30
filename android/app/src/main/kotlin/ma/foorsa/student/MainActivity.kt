@@ -94,6 +94,11 @@ class MainActivity : FlutterFragmentActivity() {
                     result.error("save_failed", e.message, null)
                 }
             }
+        // The guided scanner's live reading (live_text_reader.dart): ML Kit's
+        // bundled Latin model, on the phone, offline.
+        val liveText = LiveTextReader()
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/live_text")
+            .setMethodCallHandler { call, result -> liveText.handle(call, result) }
         // The portal's textures, by name (shell_haptics.dart). Answers false
         // when the phone cannot play one, so Dart falls back to system impacts.
         val haptics = ShellHaptics(applicationContext)
