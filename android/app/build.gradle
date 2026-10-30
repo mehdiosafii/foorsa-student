@@ -66,6 +66,11 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
+    // The guided scanner's live text reading (LiveTextReader.kt). The bundled
+    // Latin model ships inside the app: it reads offline and in China, with no
+    // download and no Google Play services. Never swap in the unbundled
+    // play-services-mlkit-text-recognition, which fetches its model at runtime.
+    implementation "com.google.mlkit:text-recognition:16.0.1"
 }
 
 // The release pipeline supplies the student Firebase registration file.

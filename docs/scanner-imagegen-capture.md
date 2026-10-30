@@ -76,9 +76,14 @@ cancellation token.
 pages: [Data(previewJPEG)]
 originals: [Data(originalCameraJPEG), ...]   // imagegen only
 processing: 'imagegen'                       // imagegen only
-scannerBuild: 'custom-live-v11'
+scannerBuild: 'custom-live-v12'
 burstProcessing: { mode, photosTaken, retainedUsefulViews, framesUsed, manual }
+liveReading: { kind, matched, mrz, mrzValid, fields, lines, … }   // v12, see guided-document-scanner.md
 ```
+
+Since custom-live-v12 automatic capture also waits for the live text reading
+to say the page is the paper the step asked for (guided-document-scanner.md,
+"Live text reading and the right-document gate").
 
 The Dart bridge contract is unchanged: one preview, 1–6 nonempty JPEG
 originals for imagegen, none otherwise.

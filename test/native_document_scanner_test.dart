@@ -194,4 +194,60 @@ void main() {
     expect((await scanner.scan(profile: imagegenProfile))['originals'], hasLength(1));
   });
 
+  test('passes the checked live reading through and drops a malformed one, never the page', () async {
+    const one = 'P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<';
+    const two = 'L898902C36UTO7408122F1204159ZE184226B<<<<<10';
+    reply({
+      'pages': [Uint8List.fromList([1, 2, 3])],
+      'scannerBuild': 'custom-live-v12',
+      'capabilities': ['live_quadrilateral', 'live_text_reading', 'right_document_gate'],
+      'liveReading': {
+        'version': 1, 'kind': 'passport', 'engine': 'apple_vision', 'matched': true, 'frames': 3,
+        'mrzFormat': 'TD3', 'mrz': [one, two], 'mrzValid': true,
+        'fields': {'surname': 'ERIKSSON', 'givenNames': 'ANNA MARIA', 'documentNumber': 'L898902C3',
+          'birthDate': '1974-08-12', 'expiryDate': '2012-04-15', 'sex': 'F', 'nationality': 'UTO'},
+        'lines': ['PASSPORT', one, two],
+        'notForThePortal': 'dropped',
+      },
+    });
+    final result = await scanner.scan();
+    expect(result['scannerBuild'], 'custom-live-v12');
+    expect(result['capabilities'], containsAll(['live_text_reading', 'right_document_gate']));
+    final reading = result['liveReading'] as Map;
+    expect(reading['kind'], 'passport');
+    expect(reading['matched'], isTrue);
+    expect(reading['mrz'], [one, two]);
+    expect(reading['mrzValid'], isTrue);
+    expect((reading['fields'] as Map)['birthDate'], '1974-08-12');
+    expect(reading['lines'], ['PASSPORT', one, two]);
+    expect(reading.containsKey('notForThePortal'), isFalse);
+
+    reply({
+      'pages': [Uint8List.fromList([1, 2, 3])],
+      'liveReading': {'version': 1, 'kind': 'passport', 'engine': 'cloud_ocr'},
+    });
+    final dropped = await scanner.scan();
+    expect(dropped.containsKey('liveReading'), isFalse);
+    expect(dropped['files'], hasLength(1));
+    reply({'pages': [Uint8List.fromList([1])], 'liveReading': 'P<UTO'});
+    expect((await scanner.scan()).containsKey('liveReading'), isFalse);
+  });
+
+  test('tells the camera which side of a card the portal asked for, only when it does', () async {
+    Object? arguments;
+    messenger.setMockMethodCallHandler(NativeDocumentScanner.channel, (call) async {
+      arguments = call.arguments;
+      return {'pages': [Uint8List.fromList([1])]};
+    });
+    await scanner.scan(profile: GuidedDocumentProfile.fromPortal(
+        {'documentKey': 'parent_id', 'side': ' Back '}));
+    final native = (arguments as Map)['profile'] as Map;
+    expect(native['side'], 'back');
+    expect(native.keys, hasLength(6));
+    await scanner.scan(profile: GuidedDocumentProfile.fromPortal(
+        {'documentKey': 'parent_id', 'side': 'sideways'}));
+    expect(((arguments as Map)['profile'] as Map).containsKey('side'), isFalse);
+    await scanner.scan(profile: GuidedDocumentProfile.fromPortal({'documentKey': 'parent_id'}));
+    expect(((arguments as Map)['profile'] as Map).keys, hasLength(5));
+  });
 }
