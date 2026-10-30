@@ -15,6 +15,7 @@ import 'package:flutter/widgets.dart';
 
 import 'arrow_flight.dart';
 import 'boarding_style.dart';
+import 'gesture_demo.dart';
 import 'glass.dart';
 import 'scene_hint.dart';
 import 'stage_forms.dart';
@@ -30,6 +31,20 @@ const locateArrowHeight = 19.0;
 Offset locateOffset(double lensRadius) =>
     Offset(math.cos(math.pi / 4), math.sin(math.pi / 4)) * lensRadius;
 
+/// The location's gesture: a tap on the locate button, not the map. Still,
+/// a chevron points at the button from outside the lens.
+GestureDemo locationDemo(Size stage) {
+  final button = stage.center(Offset.zero) + locateOffset(lensRadius(stage));
+  const out = Offset(0.7071, 0.7071);
+  return GestureDemo.tap(
+      thumbOn(button, locateSide / 2),
+      RRect.fromRectAndRadius(
+          Rect.fromCircle(center: button, radius: locateSide / 2),
+          const Radius.circular(locateSide / 2)),
+      cueAt: button + out * (locateSide / 2 + 17),
+      cueAngle: -3 * math.pi / 4);
+}
+
 class LocationScene extends StatefulWidget {
   const LocationScene({
     super.key,
@@ -41,12 +56,14 @@ class LocationScene extends StatefulWidget {
     required this.onAct,
     required this.outcome,
     required this.away,
+    this.spoken,
   });
   final bool still;
   final Feel feel;
   final bool armed;
   final String label;
   final String hint;
+  final String? spoken;
 
   /// Tapped: the arrow, where it is on the screen, for the flight on.
   final SceneAct onAct;
@@ -64,7 +81,9 @@ class LocationScene extends StatefulWidget {
 class _LocationSceneState extends State<LocationScene>
     with SingleTickerProviderStateMixin, SceneClock<LocationScene> {
   final GlobalKey _button = GlobalKey();
-  double _idleFrom = 0;
+
+  /// How hard the guide's touch presses the button: the arrow answers.
+  final ValueNotifier<double> _nudge = ValueNotifier<double>(0);
 
   /// When the button was tapped, the map was tapped (the button answers,
   /// to show it is the one), and the dot was found.
@@ -87,12 +106,12 @@ class _LocationSceneState extends State<LocationScene>
       old.outcome.removeListener(_answered);
       widget.outcome.addListener(_answered);
     }
-    if (widget.armed && !old.armed) _idleFrom = clock.value;
   }
 
   @override
   void dispose() {
     widget.outcome.removeListener(_answered);
+    _nudge.dispose();
     super.dispose();
   }
 
@@ -124,118 +143,119 @@ class _LocationSceneState extends State<LocationScene>
       final r = lensRadius(stage);
       final middle = stage.center(Offset.zero);
       final button = middle + locateOffset(r);
-      return Stack(clipBehavior: Clip.none, children: [
-        Positioned.fill(
-          child: ExcludeSemantics(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: _poke,
-              child: CustomPaint(
-                painter: _MapPainter(clock,
-                    still: widget.still, radius: r, found: _foundAt),
+      return SceneGuide(
+        instruction: widget.hint,
+        demo: locationDemo(stage),
+        instructionTop: middle.dy + r + 26,
+        clearOf: math.max(middle.dy + r, button.dy + locateSide / 2),
+        active: widget.armed && _pressedAt < 0,
+        still: widget.still,
+        response: _nudge,
+        child: Stack(clipBehavior: Clip.none, children: [
+          Positioned.fill(
+            child: ExcludeSemantics(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _poke,
+                child: CustomPaint(
+                  painter: _MapPainter(clock,
+                      still: widget.still, radius: r, found: _foundAt),
+                ),
               ),
             ),
           ),
-        ),
-        // The prayer floats in above the dot once the phone knows where it
-        // is.
-        Positioned(
-          left: 0,
-          right: 0,
-          top: middle.dy - 64,
-          child: Center(
-            child: ValueListenableBuilder<double>(
-              valueListenable: clock,
-              builder: (context, t, child) {
-                final v = _foundAt < 0
-                    ? 0.0
-                    : widget.still
-                        ? 1.0
-                        : easeOut(t - _foundAt, 0.3, 0.95);
-                if (v <= 0) return const SizedBox.shrink();
-                return Transform.translate(
-                  offset: Offset(0, 8 * (1 - v)),
-                  child: Opacity(opacity: v, child: child),
-                );
-              },
-              child: const _PrayerLabel(),
+          // The prayer floats in above the dot once the phone knows where it
+          // is.
+          Positioned(
+            left: 0,
+            right: 0,
+            top: middle.dy - 64,
+            child: Center(
+              child: ValueListenableBuilder<double>(
+                valueListenable: clock,
+                builder: (context, t, child) {
+                  final v = _foundAt < 0
+                      ? 0.0
+                      : widget.still
+                          ? 1.0
+                          : easeOut(t - _foundAt, 0.3, 0.95);
+                  if (v <= 0) return const SizedBox.shrink();
+                  return Transform.translate(
+                    offset: Offset(0, 8 * (1 - v)),
+                    child: Opacity(opacity: v, child: child),
+                  );
+                },
+                child: const _PrayerLabel(),
+              ),
             ),
           ),
-        ),
-        Positioned(
-          left: button.dx - 32,
-          top: button.dy - 32,
-          width: 64,
-          height: 64,
-          child: Semantics(
-            button: true,
-            enabled: widget.armed,
-            label: widget.label,
-            excludeSemantics: true,
-            onTap: widget.armed ? _locate : null,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: widget.armed ? (_) => widget.feel('press') : null,
-              onTap: _locate,
-              child: Center(
-                child: SizedBox.square(
-                  key: _button,
-                  dimension: locateSide,
-                  child: GlassPane(
-                    glass: Glass.tile,
-                    circle: true,
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: widget.away,
-                      builder: (context, away, _) => away
-                          ? const SizedBox.expand()
-                          : CustomPaint(
-                              painter: _LocateArrowPainter(clock,
-                                  still: widget.still,
-                                  idleFrom: () => widget.armed ? _idleFrom : -1,
-                                  pressedAt: _pressedAt,
-                                  pokedAt: _pokedAt),
-                            ),
+          Positioned(
+            left: button.dx - 32,
+            top: button.dy - 32,
+            width: 64,
+            height: 64,
+            child: Semantics(
+              button: true,
+              enabled: widget.armed,
+              label: widget.label,
+              hint: widget.spoken,
+              excludeSemantics: true,
+              onTap: widget.armed ? _locate : null,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: widget.armed ? (_) => widget.feel('press') : null,
+                onTap: _locate,
+                child: Center(
+                  child: SizedBox.square(
+                    key: _button,
+                    dimension: locateSide,
+                    child: GlassPane(
+                      glass: Glass.tile,
+                      circle: true,
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: widget.away,
+                        builder: (context, away, _) => away
+                            ? const SizedBox.expand()
+                            : CustomPaint(
+                                painter: _LocateArrowPainter(clock,
+                                    still: widget.still,
+                                    nudge: _nudge,
+                                    pressedAt: _pressedAt,
+                                    pokedAt: _pokedAt),
+                              ),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: middle.dy + r + 26,
-          child: GestureHint(widget.hint,
-              still: widget.still, shown: widget.armed && _pressedAt < 0),
-        ),
-      ]);
+        ]),
+      );
     });
   }
 }
 
-/// The arrow in the locate button: it hops along its own way now and then
-/// while it waits, answers when the map is tapped, and lights once pressed.
+/// The arrow in the locate button: it hops along its own way as the guide's
+/// touch presses it, answers when the map is tapped, and lights once
+/// pressed.
 class _LocateArrowPainter extends CustomPainter {
   _LocateArrowPainter(this.clock,
       {required this.still,
-      required this.idleFrom,
+      required this.nudge,
       required this.pressedAt,
       required this.pokedAt})
-      : super(repaint: clock);
+      : super(repaint: Listenable.merge([clock, nudge]));
   final ValueNotifier<double> clock;
   final bool still;
-  final double Function() idleFrom;
+  final ValueListenable<double> nudge;
   final double pressedAt;
   final double pokedAt;
 
   @override
   void paint(Canvas canvas, Size size) {
     final t = clock.value;
-    final from = idleFrom();
-    final hop = still || from < 0 || pressedAt >= 0
-        ? 0.0
-        : idleNudge(t - from, after: 1.4, length: 0.7);
+    final hop = still || pressedAt >= 0 ? 0.0 : nudge.value;
     final poke = pokedAt < 0 || still
         ? 0.0
         : math.sin(math.pi * ((t - pokedAt) / 0.5).clamp(0.0, 1.0));

@@ -121,7 +121,7 @@ void main() {
 
     expect(find.text('Your journey to China starts here.'), findsOneWidget);
     // No button: the arrow is thrown, and the screen says so under it.
-    expect(find.text('Swipe up to begin'), findsOneWidget);
+    expect(find.text('Swipe the arrow up to begin'), findsOneWidget);
     expect(find.byType(ElevatedButton), findsNothing);
     expect(find.bySemanticsLabel('Get started'), findsOneWidget);
     await _act(tester, 'Get started');
@@ -170,6 +170,7 @@ void main() {
     expect(find.text('You’re ready to board.'), findsOneWidget);
     expect(find.text('FOORSA STUDENT'), findsOneWidget);
     expect(find.text('PULL TO BOARD'), findsOneWidget);
+    expect(find.text('Pull the stub down to board'), findsOneWidget);
     expect(
         find.bySemanticsLabel(RegExp('^Your boarding pass')), findsOneWidget);
 
@@ -257,10 +258,8 @@ void main() {
         key.currentState!.debugJumpTo(step);
         await _settle(tester);
         expect(tester.takeException(), isNull, reason: '${step.name} on $name');
-        if (step != BoardingStep.boarding) {
-          expect(find.text(copyFor(step).hint), findsOneWidget,
-              reason: step.name);
-        }
+        expect(find.text(copyFor(step).hint), findsOneWidget,
+            reason: step.name);
       }
       await tester.pumpWidget(const SizedBox());
     });

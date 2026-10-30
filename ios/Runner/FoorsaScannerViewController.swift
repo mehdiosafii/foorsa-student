@@ -135,10 +135,25 @@ final class FoorsaScannerViewController: UIViewController {
   private var landscapeConstraints: [NSLayoutConstraint] = []
   private var usesLandscapeControls = false
   private let shutterButton = UIButton(type: .custom)
+  // Live text reading (custom-live-v12): the page is read while it is in
+  // view, and automatic capture waits until the reading says it is the paper
+  // this step asked for. The session lives on the main thread; the analysis
+  // queue reads the level, turn and epoch under orientationLock.
+  private let textReader = ScannerLiveTextReader()
+  private let textSettings: ScannerTextReadSettings
+  private var textSession: ScannerTextReadingSession
+  private var textReadLevel: ScannerTextReadLevel?
+  private var textTurnPolicy: ScannerTextTurnPolicy
+  private var textEpoch: UInt = 0
+  private var captureMatchedReading = false
 
   init(profile: FoorsaScannerProfile, completion: @escaping Completion) {
     self.profile = profile
     self.completion = completion
+    let session = ScannerTextReadingSession(profile: profile)
+    textSession = session
+    textSettings = session.settings
+    textTurnPolicy = session.turnPolicy
     // The first hold tolerates one missed preview frame; later photos in the
     // same capture need only a short steady moment.
     tracker = ScannerStabilityTracker(requiredDuration: 0.6, minimumArea: profile.minimumCaptureArea,
@@ -534,6 +549,9 @@ final class FoorsaScannerViewController: UIViewController {
     diagnosticEvent?(["event": "capture_started", "manual": manual])
 #endif
     let now = CACurrentMediaTime()
+    // The reading that let this capture start is kept; reading pauses so the
+    // photos have the phone to themselves.
+    setTextReading(level: nil)
     isCapturing = true
     manualCapture = manual
     captureGeneration += 1
@@ -781,11 +799,16 @@ final class FoorsaScannerViewController: UIViewController {
       UIAccessibility.post(notification: .announcement, argument: "Page captured. Preparing your document.")
       var capabilities = ["live_quadrilateral", "stable_auto_capture", "one_hold_capture",
         "perspective_correction", "automatic_single_page", "live_framing_guidance",
-        "document_model_detection", "manual_fallback_shutter"]
+        "document_model_detection", "manual_fallback_shutter", "live_text_reading", "right_document_gate"]
       var processing: [String: Any] = ["mode": imagegen ? "imagegen" : "best_frame",
         "photosTaken": attempts, "retainedUsefulViews": count, "framesUsed": 1, "manual": manual]
       var response: [String: Any] = ["pages": [page], "engine": "avfoundation_vision",
-        "scannerBuild": "custom-live-v11"]
+        "scannerBuild": "custom-live-v12"]
+      // What was read while the page was in view, for this paper only. A
+      // photo taken by hand returns whatever had been read by then.
+      let matched = manual ? textSession.status(glare: false).passed : captureMatchedReading
+      response["liveReading"] = textSession.liveReading(engine: "apple_vision", matched: matched,
+        referenceYear: Calendar(identifier: .gregorian).component(.year, from: Date()))
       if imagegen {
         capabilities += ["original_camera_jpegs", "source_photo_ocr_preview", "async_crm_enhancement"]
         processing["originalPhotos"] = originals.count
@@ -915,6 +938,7 @@ final class FoorsaScannerViewController: UIViewController {
       // Revoke its hold progress before another orientation can auto-capture.
       tracker.reset()
       smoother.reset()
+      restartTextReading()
       latestQuadrilateral = nil
       latestImageSize = nil
       overlay.quadrilateral = nil
@@ -935,6 +959,7 @@ final class FoorsaScannerViewController: UIViewController {
     orientationLock.lock()
     analysisEpoch &+= 1
     analysisActive = active
+    textReadLevel = nil
     orientationLock.unlock()
     if active {
       analysisStartedAt = CACurrentMediaTime()
@@ -951,6 +976,58 @@ final class FoorsaScannerViewController: UIViewController {
     overlay.quadrilateral = nil
     overlay.progress = 0
     shutterButton.isHidden = true
+    // The paper may change while the camera is away.
+    restartTextReading()
+  }
+
+  /// How the next preview frame is read: carefully once the page is ready,
+  /// quickly while it is framed, not at all without a page.
+  private func setTextReading(level: ScannerTextReadLevel?) {
+    orientationLock.lock()
+    textReadLevel = level
+    textTurnPolicy = textSession.turnPolicy
+    orientationLock.unlock()
+  }
+
+  /// Another page, orientation or visit: reads already running belong to the
+  /// one before and are dropped when they arrive.
+  private func restartTextReading(sessionAlreadyReset: Bool = false) {
+    if !sessionAlreadyReset { textSession.reset() }
+    orientationLock.lock()
+    textEpoch &+= 1
+    textTurnPolicy = textSession.turnPolicy
+    orientationLock.unlock()
+    textReader.reset()
+  }
+
+  private func textLevel(for observation: ScannerLiveObservation, readyQuad: ScannerQuadrilateral?,
+                         reading: ScannerTextGateStatus) -> ScannerTextReadLevel? {
+    guard !textSession.readerUnavailable else { return nil }
+    if readyQuad != nil { return reading.passed ? .fast : .accurate }
+    return observation.framing == .ready ? .fast : nil
+  }
+
+  private func handleTextReading(_ outcome: ScannerTextReadOutcome, epoch: UInt) {
+    orientationLock.lock()
+    let current = analysisActive && epoch == textEpoch
+    orientationLock.unlock()
+    guard current, !finishing else { return }
+    switch outcome {
+    case let .read(frame):
+      textSession.ingest(frame)
+    case .failed:
+      textSession.readFailed()
+    case .skipped:
+      return
+    }
+    orientationLock.lock()
+    textTurnPolicy = textSession.turnPolicy
+    orientationLock.unlock()
+#if SCANNER_DIAGNOSTICS
+    // Counts only: what was read never leaves the reading session.
+    diagnosticEvent?(["event": "text_read", "frames": textSession.framesRead,
+      "passed": textSession.status(glare: false).passed, "readerUnavailable": textSession.readerUnavailable])
+#endif
   }
 
   private func handleLiveObservation(
@@ -993,6 +1070,12 @@ final class FoorsaScannerViewController: UIViewController {
     latestQuadrilateral = readyQuad ?? (observation.framing == .blurry ? quad : nil)
     latestImageSize = imageSize
     latestDetectionTime = time
+    // The reading belongs to one page: it starts over when the page has been
+    // gone a moment or another outline takes its place.
+    if !isCapturing, readyQuad != nil || quad == nil,
+       textSession.observePage(readyQuad, at: time) {
+      restartTextReading(sessionAlreadyReset: true)
+    }
     updatePreviewGeometry()
     overlay.style = readyQuad != nil ? .tracking : .adjusting
     renderQuadrilateral(smoother.update(quad), imageSize: imageSize)
@@ -1030,11 +1113,20 @@ final class FoorsaScannerViewController: UIViewController {
       lightingRetrySince = nil
     }
     let state = tracker.observe(readyQuad, at: time, processingDuration: processingDuration)
-    overlay.progress = state.progress
+    // Steady is not enough: the reading must also say this is the paper the
+    // step asked for. Until it does, the outline never turns green.
+    let reading = textSession.status(glare: observation.lighting == .glare)
+    setTextReading(level: textLevel(for: observation, readyQuad: readyQuad, reading: reading))
+    overlay.progress = reading.allowsCapture ? state.progress : min(state.progress, 0.85)
     let shownFraming: ScannerLiveFraming = observation.framing == .ready && readyQuad == nil
       ? .blurry : observation.framing
-    guidanceView.show(ScannerLiveGuidance.copy(framing: shownFraming, lighting: observation.lighting,
-      layout: profile.layout), holding: readyQuad != nil)
+    if shownFraming == .ready, readyQuad != nil, !reading.allowsCapture, let guidance = reading.guidance {
+      // Framing is right; what the reading still needs comes first.
+      guidanceView.show(guidance.copy(for: profile.paperKind), holding: guidance.asksToHold)
+    } else {
+      guidanceView.show(ScannerLiveGuidance.copy(framing: shownFraming, lighting: observation.lighting,
+        layout: profile.layout), holding: readyQuad != nil)
+    }
     guard state.ready else {
       readySince = nil
       return
@@ -1043,7 +1135,8 @@ final class FoorsaScannerViewController: UIViewController {
     // Give the student a moment to fix shadow, glare or dim light, then
     // capture anyway: a slightly shadowed page beats no page.
     let lightingSettled = observation.lighting == .good || time - (readySince ?? time) >= Self.lightingGrace
-    if lightingSettled && time - lastCaptureTime > 1.2 {
+    if lightingSettled && reading.allowsCapture && time - lastCaptureTime > 1.2 {
+      captureMatchedReading = reading.passed
       beginCapture()
     }
   }
@@ -1199,7 +1292,7 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
     let imageSize = orientation.orientedImageSize(for: rawSize)
     // Keep live and still analysis on the same pixel-aware detection path.
     // CIImage applies the camera orientation before geometry is normalized.
-    let observation: ScannerLiveObservation = autoreleasepool {
+    let analysis: (observation: ScannerLiveObservation, image: CIImage) = autoreleasepool {
       let oriented = CIImage(cvPixelBuffer: imageBuffer).oriented(orientation)
       let upright = oriented.transformed(by: CGAffineTransform(
         translationX: -oriented.extent.minX, y: -oriented.extent.minY
@@ -1220,13 +1313,31 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
         }
       }
 #endif
-      return ScannerRectangleDetector.detectLive(in: upright, profile: profile)
+      return (ScannerRectangleDetector.detectLive(in: upright, profile: profile), upright)
     }
+    let observation = analysis.observation
     isAnalyzing = false
     let processingDuration = CACurrentMediaTime() - now
+    // The text reader works on its own queue; this one never waits for it.
+    readText(on: analysis.image, observation: observation, at: now)
     DispatchQueue.main.async { [weak self] in
       self?.handleLiveObservation(observation, imageSize: imageSize, time: now,
         processingDuration: processingDuration, epoch: epoch)
+    }
+  }
+
+  /// On the analysis queue: offers a ready page to the text reader, which
+  /// skips it when a read is running or the last one began too recently.
+  private func readText(on image: CIImage, observation: ScannerLiveObservation, at time: TimeInterval) {
+    orientationLock.lock()
+    let level = textReadLevel
+    let turns = textTurnPolicy
+    let epoch = textEpoch
+    orientationLock.unlock()
+    guard let level, let quadrilateral = observation.quadrilateral, observation.framing == .ready else { return }
+    textReader.submit(image: image, quadrilateral: quadrilateral, level: level, settings: textSettings,
+      turns: turns, at: time) { [weak self] outcome in
+      DispatchQueue.main.async { self?.handleTextReading(outcome, epoch: epoch) }
     }
   }
 }

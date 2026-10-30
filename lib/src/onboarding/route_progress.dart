@@ -1,5 +1,6 @@
-/// How far along the setup is: one hairline, the part already flown lit, and
-/// the journey's airliner, small, at its tip.
+/// How far along the setup is: one hairline, the part already flown lit, the
+/// journey's airliner, small, at its tip, and under it which step this is of
+/// how many, as a departures board would print it.
 library;
 
 import 'package:flutter/widgets.dart';
@@ -8,23 +9,56 @@ import 'airliner.dart';
 import 'boarding_style.dart';
 
 class RouteProgress extends StatelessWidget {
-  const RouteProgress({super.key, required this.progress, this.width = 132});
+  const RouteProgress(
+      {super.key,
+      required this.progress,
+      this.width = 132,
+      this.step,
+      this.steps});
 
   /// 0 at the start, 1 at the end; the parent springs it.
   final Animation<double> progress;
   final double width;
 
+  /// Which step this is, of how many: printed under the line and said to a
+  /// screen reader. Without them, the line alone.
+  final int? step, steps;
+
+  /// "Step 2 of 5", or null without a count.
+  String? get where {
+    final of = steps, at = step;
+    if (of == null || at == null || of < 1) return null;
+    return 'Step ${at.clamp(1, of)} of $of';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final where = this.where;
     return AnimatedBuilder(
       animation: progress,
       builder: (context, _) => Semantics(
         label: 'Setting up',
-        value: '${(progress.value.clamp(0.0, 1.0) * 100).round()}%',
-        child: CustomPaint(
-          size: Size(width, 16),
-          painter: _LinePainter(progress.value.clamp(0.0, 1.0)),
-        ),
+        value: where ?? '${(progress.value.clamp(0.0, 1.0) * 100).round()}%',
+        excludeSemantics: true,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          CustomPaint(
+            size: Size(width, 16),
+            painter: _LinePainter(progress.value.clamp(0.0, 1.0)),
+          ),
+          if (where != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                where.toUpperCase(),
+                maxLines: 1,
+                // The bar it sits in is a fixed height.
+                textScaler:
+                    MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3),
+                style: Boarding.caption(
+                    color: Boarding.muted, size: 9.5, spacing: 1.8),
+              ),
+            ),
+        ]),
       ),
     );
   }

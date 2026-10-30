@@ -38,6 +38,14 @@ jobs:
             "$out/$test"
           done
 
+      - name: Live text reading and right-document gate (no camera)
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/scanner-tests"; mkdir -p "$out"
+          xcrun swiftc -O ios/Runner/ScannerGeometry.swift ios/Runner/ScannerTextReading.swift \
+            tools/scanner_text_reading_tests.swift -o "$out/scanner_text_reading_tests"
+          "$out/scanner_text_reading_tests"
+
       - name: Vision and image processing
         run: |
           set -euo pipefail
@@ -57,4 +65,5 @@ jobs:
           xcrun --sdk iphonesimulator swiftc -typecheck -sdk "$sdk" -target arm64-apple-ios15.0-simulator \
             ios/Runner/ScannerGeometry.swift ios/Runner/ScannerRectangleDetector.swift \
             ios/Runner/ScannerContentClarity.swift ios/Runner/ScannerImageProcessor.swift \
+            ios/Runner/ScannerTextReading.swift ios/Runner/ScannerLiveTextReader.swift \
             ios/Runner/FoorsaScannerViewController.swift

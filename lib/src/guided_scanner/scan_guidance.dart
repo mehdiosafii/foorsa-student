@@ -419,6 +419,15 @@ class ScanAutoCaptureGate {
 
   bool consume(ScanFrameAnalysis frame, DateTime now) {
     if (_triggered) return false;
+    final ready = observe(frame, now);
+    if (ready) _triggered = true;
+    return ready;
+  }
+
+  /// The same hold as [consume], without its one-shot latch: true for as
+  /// long as the page stays steady, so the live reading can decide the
+  /// moment of capture (scan_text_reading.dart).
+  bool observe(ScanFrameAnalysis frame, DateTime now) {
     final bounds = frame.bounds;
     if (!frame.autoReady || bounds == null) {
       _stableSince = null;
@@ -440,11 +449,7 @@ class ScanAutoCaptureGate {
       _goodFrames++;
     }
     _previousBounds = bounds;
-    if (_goodFrames >= 4
-        && now.difference(_stableSince!).inMilliseconds >= 650) {
-      _triggered = true;
-      return true;
-    }
-    return false;
+    return _goodFrames >= 4
+        && now.difference(_stableSince!).inMilliseconds >= 650;
   }
 }

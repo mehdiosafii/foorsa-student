@@ -56,6 +56,7 @@ class GuidedDocumentProfile {
     required this.zones,
     required this.pages,
     this.outputMode,
+    this.side,
   });
 
   final String documentKey;
@@ -66,6 +67,10 @@ class GuidedDocumentProfile {
   final String pages;
   final String? outputMode;
 
+  /// The side of a card this capture is for, 'front' or 'back', when the
+  /// portal says. Older portals send none, and either side is accepted.
+  final String? side;
+
   /// Small, non-sensitive hints for the native camera. Native code still
   /// validates every value and falls back to a general page guide.
   Map<String, Object> toNativeRequest() => {
@@ -75,6 +80,7 @@ class GuidedDocumentProfile {
     'layout': layout.name,
     'pages': pages,
     if (outputMode == 'imagegen') 'outputMode': 'imagegen',
+    if (side != null) 'side': side!,
   };
 
   bool get acceptsLandscape => true;
@@ -136,12 +142,16 @@ class GuidedDocumentProfile {
     final pages = ['one', 'multiple', 'two_page_form'].contains(requestedPages)
       ? requestedPages!
       : key == 'medical_check' ? 'two_page_form' : 'one';
+    final side = details?['side'];
+    final requestedSide = side is String ? side.trim().toLowerCase() : null;
 
     return GuidedDocumentProfile(
       documentKey: key, title: title,
       instruction: instruction, layout: layout,
       zones: List.unmodifiable(zones), pages: pages,
       outputMode: details?['outputMode'] == 'imagegen' ? 'imagegen' : null,
+      side: requestedSide == 'front' || requestedSide == 'back'
+        ? requestedSide : null,
     );
   }
 

@@ -14,6 +14,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'gesture_demo.dart';
 import 'glass.dart';
 import 'scene_hint.dart';
 import 'stage_forms.dart';
@@ -38,6 +39,17 @@ const _bodies = <String>[
   'Your class or calendar event is coming up.',
 ];
 
+/// The notifications' gesture: a tap on the front card, where a thumb would.
+GestureDemo notificationsDemo(Size stage) {
+  final card = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+          center: stage.center(Offset.zero),
+          width: cardWidth(stage.width),
+          height: cardHeight),
+      const Radius.circular(22));
+  return GestureDemo.tap(card.center + Offset(card.width * 0.2, 4), card);
+}
+
 class NotificationsScene extends StatefulWidget {
   const NotificationsScene({
     super.key,
@@ -48,6 +60,7 @@ class NotificationsScene extends StatefulWidget {
     required this.label,
     required this.hint,
     required this.onAct,
+    this.spoken,
   });
   final bool still;
   final Feel feel;
@@ -57,6 +70,7 @@ class NotificationsScene extends StatefulWidget {
   final bool armed;
   final String label;
   final String hint;
+  final String? spoken;
   final SceneAct onAct;
 
   @override
@@ -197,58 +211,57 @@ class _NotificationsSceneState extends State<NotificationsScene>
     return LayoutBuilder(builder: (context, constraints) {
       final width = cardWidth(constraints.maxWidth);
       final middle = constraints.maxHeight / 2;
-      return Stack(clipBehavior: Clip.none, children: [
-        Positioned(
-          left: (constraints.maxWidth - width) / 2,
-          top: middle - _stackHeight / 2,
-          width: width,
-          height: _stackHeight,
-          child: ObjectControl(
-            label: widget.label,
-            armed: widget.armed,
-            feel: widget.feel,
-            scale: 0.97,
-            onTap: () => widget.onAct(),
-            child: ValueListenableBuilder<int>(
-              valueListenable: _frame,
-              builder: (context, _, __) => Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Back to front, so the newest is drawn last.
-                  for (final note in _notes.reversed)
-                    if (note.alpha > 0.01)
-                      Positioned(
-                        key: ValueKey(note.id),
-                        left: 0,
-                        right: 0,
-                        top: (_stackHeight - cardHeight) / 2 + note.y,
-                        child: Opacity(
-                          opacity: note.alpha.clamp(0.0, 1.0),
-                          child: Transform.scale(
-                            scale: note.scale,
-                            alignment: Alignment.bottomCenter,
-                            child: _Card(
-                                body: note.body,
-                                front: note.slot == 0 || note.gone),
+      return SceneGuide(
+        instruction: widget.hint,
+        demo: notificationsDemo(constraints.biggest),
+        instructionTop: middle + _stackHeight / 2 + 18,
+        clearOf: middle + _stackHeight / 2,
+        active: widget.armed,
+        still: widget.still,
+        child: Stack(clipBehavior: Clip.none, children: [
+          Positioned(
+            left: (constraints.maxWidth - width) / 2,
+            top: middle - _stackHeight / 2,
+            width: width,
+            height: _stackHeight,
+            child: ObjectControl(
+              label: widget.label,
+              hint: widget.spoken,
+              armed: widget.armed,
+              feel: widget.feel,
+              scale: 0.97,
+              onTap: () => widget.onAct(),
+              child: ValueListenableBuilder<int>(
+                valueListenable: _frame,
+                builder: (context, _, __) => Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Back to front, so the newest is drawn last.
+                    for (final note in _notes.reversed)
+                      if (note.alpha > 0.01)
+                        Positioned(
+                          key: ValueKey(note.id),
+                          left: 0,
+                          right: 0,
+                          top: (_stackHeight - cardHeight) / 2 + note.y,
+                          child: Opacity(
+                            opacity: note.alpha.clamp(0.0, 1.0),
+                            child: Transform.scale(
+                              scale: note.scale,
+                              alignment: Alignment.bottomCenter,
+                              child: _Card(
+                                  body: note.body,
+                                  front: note.slot == 0 || note.gone),
+                            ),
                           ),
                         ),
-                      ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: middle + _stackHeight / 2 + 18,
-          child: ValueListenableBuilder<bool?>(
-            valueListenable: widget.outcome,
-            builder: (context, answer, _) => GestureHint(widget.hint,
-                still: widget.still, shown: widget.armed && answer == null),
-          ),
-        ),
-      ]);
+        ]),
+      );
     });
   }
 }

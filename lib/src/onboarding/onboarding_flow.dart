@@ -122,6 +122,7 @@ class BoardingCopy {
     required this.body,
     required this.action,
     required this.hint,
+    required this.spoken,
   });
 
   final String headline;
@@ -131,8 +132,13 @@ class BoardingCopy {
   /// screen's one way on.
   final String action;
 
-  /// The gesture, said quietly under the object.
+  /// What to do, said under the object and shown on it (scene_hint.dart):
+  /// a verb first, then the object, as a phone says it.
   final String hint;
+
+  /// What to do, for a screen reader, after the object's name: a screen
+  /// reader's double tap does what the gesture does.
+  final String spoken;
 }
 
 BoardingCopy copyFor(BoardingStep step) => switch (step) {
@@ -140,7 +146,8 @@ BoardingCopy copyFor(BoardingStep step) => switch (step) {
           headline: 'Your journey to China starts here.',
           body: 'Let’s get your phone ready. It takes a minute.',
           action: 'Get started',
-          hint: 'Swipe up to begin',
+          hint: 'Swipe the arrow up to begin',
+          spoken: 'Double-tap to throw the arrow up and begin.',
         ),
       BoardingStep.notifications => const BoardingCopy(
           headline: 'Never miss a moment.',
@@ -148,18 +155,21 @@ BoardingCopy copyFor(BoardingStep step) => switch (step) {
               'as they happen.',
           action: 'Continue',
           hint: 'Tap the notification',
+          spoken: 'Double-tap the notification to go on.',
         ),
       BoardingStep.camera => const BoardingCopy(
           headline: 'Scan papers in seconds.',
           body: 'Hold a paper up to the camera. The app does the rest.',
           action: 'Continue',
           hint: 'Drag the page into the frame',
+          spoken: 'Double-tap to put the page in the frame.',
         ),
       BoardingStep.microphone => const BoardingCopy(
           headline: 'Talk to your adviser.',
           body: 'Answer calls and send voice notes, right in the app.',
           action: 'Continue',
           hint: 'Tap the mic',
+          spoken: 'Double-tap the mic to go on.',
         ),
       BoardingStep.location => const BoardingCopy(
           headline: 'Feel at home in China.',
@@ -167,6 +177,7 @@ BoardingCopy copyFor(BoardingStep step) => switch (step) {
               'while you use the app.',
           action: 'Continue',
           hint: 'Tap the arrow to find yourself',
+          spoken: 'Double-tap the map’s arrow to find yourself.',
         ),
       BoardingStep.tracking => const BoardingCopy(
           headline: 'Help others find Foorsa.',
@@ -174,12 +185,13 @@ BoardingCopy copyFor(BoardingStep step) => switch (step) {
               'Nothing more.',
           action: 'Continue',
           hint: 'Tap the shield',
+          spoken: 'Double-tap the shield to go on.',
         ),
       BoardingStep.boarding => const BoardingCopy(
           headline: 'You’re ready to board.',
           body: 'Tear off the stub to sign in.',
           action: 'Board',
-          // Printed on the stub itself.
-          hint: 'Pull to board',
+          hint: 'Pull the stub down to board',
+          spoken: 'Double-tap to tear off the stub and sign in.',
         ),
     };

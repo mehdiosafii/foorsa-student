@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import 'scan_document_profile.dart';
+import 'scan_text_reading.dart';
 
 /// The iPhone scanner returns one already-cropped page per invocation. Keep the
 /// existing pages envelope so the portal bridge remains wire-compatible.
@@ -48,6 +49,9 @@ class NativeDocumentScanner {
       if (!imagegen && (response?['processing'] == 'imagegen' || originals != null)) {
         return {'error': 'The camera returned an unexpected capture mode. Please try again.'};
       }
+      // What the camera read while the page was in view. Checked and bounded;
+      // a malformed reading is dropped, never the scan.
+      final liveReading = sanitizeLiveReading(response?['liveReading']);
       return {
         if (imagegen) 'processing': 'imagegen',
         if (imagegen) 'originals': [
@@ -83,6 +87,7 @@ class NativeDocumentScanner {
                   'data:image/jpeg;base64,${base64Encode(pages[i] as Uint8List)}',
             },
         ],
+        if (liveReading != null) 'liveReading': liveReading,
       };
     } on MissingPluginException {
       return {

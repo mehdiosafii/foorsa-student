@@ -10,10 +10,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import 'boarding_style.dart';
+import 'gesture_demo.dart';
 import 'glass.dart';
 import 'lucide.dart';
 import 'scene_hint.dart';
 import 'stage_forms.dart';
+
+/// The microphone's gesture: a tap on the mic.
+GestureDemo voiceDemo(Size stage) {
+  final mic = stage.center(Offset.zero);
+  return GestureDemo.tap(
+      thumbOn(mic, micSide / 2),
+      RRect.fromRectAndRadius(Rect.fromCircle(center: mic, radius: micSide / 2),
+          const Radius.circular(micSide / 2)));
+}
 
 class VoiceScene extends StatefulWidget {
   const VoiceScene({
@@ -25,12 +35,14 @@ class VoiceScene extends StatefulWidget {
     required this.hint,
     required this.onAct,
     required this.outcome,
+    this.spoken,
   });
   final bool still;
   final Feel feel;
   final bool armed;
   final String label;
   final String hint;
+  final String? spoken;
   final SceneAct onAct;
 
   /// null until the student answers; then whether the mic is on.
@@ -46,7 +58,6 @@ class _VoiceSceneState extends State<VoiceScene>
   final ValueNotifier<double> _held = ValueNotifier<double>(0);
   bool _down = false;
   double _last = 0;
-  double _idleFrom = 0;
 
   /// The mic is on: the voice comes up for a moment.
   double _onAt = -1;
@@ -66,7 +77,6 @@ class _VoiceSceneState extends State<VoiceScene>
       old.outcome.removeListener(_answered);
       widget.outcome.addListener(_answered);
     }
-    if (widget.armed && !old.armed) _idleFrom = clock.value;
   }
 
   void _answered() {
@@ -96,57 +106,54 @@ class _VoiceSceneState extends State<VoiceScene>
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, box) {
       final middle = box.maxHeight / 2;
-      return Stack(clipBehavior: Clip.none, children: [
-        Positioned(
-          left: box.maxWidth / 2 - 160,
-          top: middle - 100,
-          width: 320,
-          height: 200,
-          child: CustomPaint(
-              painter: _VoicePainter(clock, _held,
-                  still: widget.still,
-                  nudge: () => widget.armed ? _idleFrom : double.infinity)),
-        ),
-        Positioned(
-          left: box.maxWidth / 2 - micSide / 2,
-          top: middle - micSide / 2,
-          width: micSide,
-          height: micSide,
-          // Raw pointers for the voice, so a long press still makes it
-          // louder; the tap is the control's.
-          child: Listener(
-            onPointerDown: (_) => _press(true),
-            onPointerUp: (_) => _press(false),
-            onPointerCancel: (_) => _press(false),
-            child: ObjectControl(
-              label: widget.label,
-              armed: widget.armed,
-              feel: widget.feel,
-              scale: 0.94,
-              onTap: () => widget.onAct(),
-              // The portal's lit glass, as its tiles are.
-              child: const GlassPane(
-                glass: Glass.tile,
-                circle: true,
-                child: Center(
-                  child: Lucide(LucideIcons.mic,
-                      size: 32, color: Boarding.heading, strokeWidth: 1.9),
+      return SceneGuide(
+        instruction: widget.hint,
+        demo: voiceDemo(box.biggest),
+        instructionTop: middle + micSide / 2 + 34,
+        clearOf: middle + micSide / 2,
+        active: widget.armed,
+        still: widget.still,
+        child: Stack(clipBehavior: Clip.none, children: [
+          Positioned(
+            left: box.maxWidth / 2 - 160,
+            top: middle - 100,
+            width: 320,
+            height: 200,
+            child: CustomPaint(
+                painter: _VoicePainter(clock, _held, still: widget.still)),
+          ),
+          Positioned(
+            left: box.maxWidth / 2 - micSide / 2,
+            top: middle - micSide / 2,
+            width: micSide,
+            height: micSide,
+            // Raw pointers for the voice, so a long press still makes it
+            // louder; the tap is the control's.
+            child: Listener(
+              onPointerDown: (_) => _press(true),
+              onPointerUp: (_) => _press(false),
+              onPointerCancel: (_) => _press(false),
+              child: ObjectControl(
+                label: widget.label,
+                hint: widget.spoken,
+                armed: widget.armed,
+                feel: widget.feel,
+                scale: 0.94,
+                onTap: () => widget.onAct(),
+                // The portal's lit glass, as its tiles are.
+                child: const GlassPane(
+                  glass: Glass.tile,
+                  circle: true,
+                  child: Center(
+                    child: Lucide(LucideIcons.mic,
+                        size: 32, color: Boarding.heading, strokeWidth: 1.9),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: middle + micSide / 2 + 34,
-          child: ValueListenableBuilder<bool?>(
-            valueListenable: widget.outcome,
-            builder: (context, answer, _) => GestureHint(widget.hint,
-                still: widget.still, shown: widget.armed && answer == null),
-          ),
-        ),
-      ]);
+        ]),
+      );
     });
   }
 }
@@ -162,15 +169,11 @@ double voiceLevel(double t) {
 }
 
 class _VoicePainter extends CustomPainter {
-  _VoicePainter(this.clock, this.held,
-      {required this.still, required this.nudge})
+  _VoicePainter(this.clock, this.held, {required this.still})
       : super(repaint: Listenable.merge([clock, held]));
   final ValueNotifier<double> clock;
   final ValueNotifier<double> held;
   final bool still;
-
-  /// Since when the mic has been waiting to be tapped.
-  final double Function() nudge;
 
   static const _bars = 13;
   static const _barWidth = 3.0;
@@ -181,23 +184,6 @@ class _VoicePainter extends CustomPainter {
     final t = still ? 1.2 : clock.value;
     final centre = size.center(Offset.zero);
     final boost = 1 + 0.6 * held.value;
-
-    // Now and then, while it waits, a ring goes out from the mic.
-    final since = t - nudge();
-    if (!still && since > 1.6) {
-      final phase = ((since - 1.6) % 4.2) / 1.4;
-      if (phase < 1) {
-        final r = micSide / 2 + 4 + 40 * Curves.easeOut.transform(phase);
-        canvas.drawCircle(
-            centre,
-            r,
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.4
-              ..color = Boarding.accent
-                  .withValues(alpha: 0.42 * math.pow(1 - phase, 1.6)));
-      }
-    }
 
     // Rings off the mic while it hears something.
     if (!still) {
