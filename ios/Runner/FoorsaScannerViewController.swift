@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 import ImageIO
 import UIKit
 import Vision
@@ -729,8 +730,8 @@ final class FoorsaScannerViewController: UIViewController {
       settings.isHighResolutionPhotoEnabled = true
     }
     if let camera, camera.isFlashAvailable { settings.flashMode = .off }
-    if #available(iOS 18.0, *), !ScannerShutterSound.plays(photoNumber: photosTaken),
-       photoOutput.isShutterSoundSuppressionSupported {
+    // Silent on every photo where iOS allows it (ScannerShutterSound).
+    if #available(iOS 18.0, *), photoOutput.isShutterSoundSuppressionSupported {
       settings.isShutterSoundSuppressionEnabled = true
     }
     activePhotoIDs.insert(settings.uniqueID)
@@ -1365,6 +1366,22 @@ extension FoorsaScannerViewController: AVCaptureVideoDataOutputSampleBufferDeleg
 }
 
 extension FoorsaScannerViewController: AVCapturePhotoCaptureDelegate {
+  /// Before iOS 18 there is no setting for the shutter: its system sound
+  /// (1108) is released as the photo is taken, so it does not play
+  /// (ScannerShutterSound). From iOS 18 the photo's settings ask for silence.
+  func photoOutput(_ output: AVCapturePhotoOutput, willCapturePhotoFor resolvedSettings: AVCaptureResolvedPhotoSettings) {
+    if #available(iOS 18.0, *) { return }
+    if ScannerShutterSound.silenceAllowed(region: Self.deviceRegion) {
+      AudioServicesDisposeSystemSoundID(1108)
+    }
+  }
+
+  /// The phone's region, as Settings names it.
+  private static var deviceRegion: String? {
+    if #available(iOS 16.0, *) { return Locale.current.region?.identifier }
+    return Locale.current.regionCode
+  }
+
   func photoOutput(
     _ output: AVCapturePhotoOutput,
     didFinishProcessingPhoto photo: AVCapturePhoto,

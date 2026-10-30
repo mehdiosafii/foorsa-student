@@ -59,6 +59,13 @@ jobs:
         run: |
           if [ "$EVENT" = workflow_dispatch ]; then
             echo 'changed=true' >> "$GITHUB_OUTPUT"
+          elif [ "$(date -u +%s)" -lt "$(date -u -d 2026-10-31T18:03:00Z +%s)" ]; then
+            # The owner, 30 Oct 2026: TestFlight only until the scheduled
+            # production release. Google refuses uploads before the reset
+            # upload key is valid (31 Oct 18:03 UTC), so a version bump before
+            # then is not sent; dispatched runs (that release) are not held.
+            echo '::notice::Not sent to Google Play before 31 Oct 18:03 UTC (scheduled release; reset upload key).'
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
           else
             python3 - "$BEFORE" <<'PY'
           import os, pathlib, subprocess, sys

@@ -16,10 +16,15 @@ struct ScannerAdaptiveCaptureTests {
       topRight: CGPoint(x: 0.73, y: 0.76), bottomRight: CGPoint(x: 0.73, y: 0.24),
       bottomLeft: CGPoint(x: 0.19, y: 0.15))
 
-    // One shutter sound per page: the burst's later photos are silent.
-    precondition(ScannerShutterSound.plays(photoNumber: 1))
-    precondition(!ScannerShutterSound.plays(photoNumber: 2))
-    precondition(!ScannerShutterSound.plays(photoNumber: 5))
+    // The scanner is silent wherever the rules allow it: before iOS 18 the
+    // region decides (iOS 18 decides by itself), and not in Japan or Korea.
+    precondition(ScannerShutterSound.silenceAllowed(region: "MA"))
+    precondition(ScannerShutterSound.silenceAllowed(region: "CN"))
+    precondition(ScannerShutterSound.silenceAllowed(region: "TN"))
+    precondition(ScannerShutterSound.silenceAllowed(region: nil))
+    precondition(ScannerShutterSound.silenceAllowed(region: ""))
+    precondition(!ScannerShutterSound.silenceAllowed(region: "JP"))
+    precondition(!ScannerShutterSound.silenceAllowed(region: "kr"))
 
     precondition(ScannerAdaptiveCaptureGuide.maximumAttempts == 8)
     precondition(ScannerAdaptiveCaptureGuide.maximumCandidates == 6)
