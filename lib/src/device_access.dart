@@ -91,7 +91,12 @@ class _AccessDialogState extends State<_AccessDialog>
   }
 
   Future<void> _refresh() async {
-    final values = await Future.wait(studentPermissions.map((p) => p.status));
+    final List<PermissionStatus> values;
+    try {
+      values = await Future.wait(studentPermissions.map((p) => p.status));
+    } catch (_) {
+      return;
+    }
     if (!mounted) return;
     setState(() => _statuses = Map.fromIterables(studentPermissions, values));
     if (values.every((s) => s.isGranted)) Navigator.of(context).pop();

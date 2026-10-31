@@ -392,7 +392,8 @@ class _ShellPageState extends State<ShellPage> {
     // Let the loading screen paint its first frame before the WebView's
     // platform-view init grabs the UI thread.
     unawaited(_prepareBiometrics());
-    PackageInfo.fromPlatform().then((v) => _packageInfo = v);
+    PackageInfo.fromPlatform().then<void>((v) => _packageInfo = v,
+        onError: (Object _) {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
       SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -852,20 +853,27 @@ class _ShellPageState extends State<ShellPage> {
       final cookieHeader =
           cookies.map((c) => '${c.name}=${c.value}').join('; ');
       final client = HttpClient();
-      final request = await client.getUrl(uri);
-      if (cookieHeader.isNotEmpty) request.headers.set('Cookie', cookieHeader);
-      request.headers.set(HttpHeaders.userAgentHeader,
-          '${AppConfig.userAgentProduct}/${_packageInfo?.version ?? ''}');
-      final response = await request.close();
-      if (response.statusCode >= 400) {
-        throw HttpException('HTTP ${response.statusCode}');
+      final File file;
+      try {
+        final request = await client.getUrl(uri);
+        if (cookieHeader.isNotEmpty) {
+          request.headers.set('Cookie', cookieHeader);
+        }
+        request.headers.set(HttpHeaders.userAgentHeader,
+            '${AppConfig.userAgentProduct}/${_packageInfo?.version ?? ''}');
+        final response =
+            await request.close().timeout(const Duration(seconds: 60));
+        if (response.statusCode >= 400) {
+          throw HttpException('HTTP ${response.statusCode}');
+        }
+        final dir = await getApplicationDocumentsDirectory();
+        final downloads = Directory('${dir.path}/FoorsaDownloads');
+        if (!await downloads.exists()) await downloads.create(recursive: true);
+        file = File('${downloads.path}/$name');
+        await response.pipe(file.openWrite());
+      } finally {
+        client.close(force: true);
       }
-      final dir = await getApplicationDocumentsDirectory();
-      final downloads = Directory('${dir.path}/FoorsaDownloads');
-      if (!await downloads.exists()) await downloads.create(recursive: true);
-      final file = File('${downloads.path}/$name');
-      await response.pipe(file.openWrite());
-      client.close();
       messenger?.hideCurrentSnackBar();
       final result = await OpenFilex.open(file.path);
       if (result.type != ResultType.done) {

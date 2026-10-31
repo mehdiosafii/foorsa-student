@@ -232,7 +232,7 @@ class StudentCalls extends ChangeNotifier {
         await end(notifyServer: false);
         return;
       }
-      if (DateTime.parse(call['expires_at']).isBefore(DateTime.now())) {
+      if (_expired(call['expires_at'])) {
         await end(notifyServer: false);
         return;
       }
@@ -264,7 +264,7 @@ class StudentCalls extends ChangeNotifier {
       final call = result['call'];
       if (call == null ||
           call['state'] != 'ringing' ||
-          DateTime.parse(call['expires_at']).isBefore(DateTime.now())) {
+          _expired(call['expires_at'])) {
         throw StateError('Call ended');
       }
       final stream = await navigator.mediaDevices.getUserMedia({
@@ -506,3 +506,7 @@ String _initial(Object? name) {
   final n = '${name ?? ''}'.trim();
   return n.isEmpty ? 'F' : String.fromCharCode(n.runes.first);
 }
+
+/// A missing or malformed expiry is not a reason to end a live call.
+bool _expired(Object? value) =>
+    DateTime.tryParse('${value ?? ''}')?.isBefore(DateTime.now()) ?? false;
