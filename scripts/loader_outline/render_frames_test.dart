@@ -35,10 +35,10 @@ void main() {
   testWidgets('renders the loader frames', (tester) async {
     await tester.runAsync(() async {
       for (final dark in [true, false]) {
-        for (final t in [0.0, 0.35, 0.8, 1.0, 1.2, 1.45, 1.8, 2.2, 2.5, 2.75, 3.0]) {
+        for (var t = 0.0; t < flightLoaderSeconds; t += 0.2) {
           await _frame(dark, t);
         }
-        await _frame(dark, 1.6, calm: true);
+        await _frame(dark, 3.2, calm: true);
       }
     });
   });
