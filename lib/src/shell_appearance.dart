@@ -5,13 +5,17 @@
 /// The app reads it back before its first frame, so its loading screen and
 /// its offline screen open in that theme: a student who chose dark on a phone
 /// set to light used to see a white loader, then the portal's navy one.
+///
+/// A student who never chose gets light (the owner, 31 Oct 2026: "light mode
+/// is the one in the app by default and they can change it later"), as the
+/// portal does; only one who picked System follows the phone.
 library;
 
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
-enum ShellAppearance { light, dark }
+enum ShellAppearance { light, dark, system }
 
 class ShellAppearanceStore {
   ShellAppearanceStore({Future<Directory> Function()? directory})
@@ -19,17 +23,27 @@ class ShellAppearanceStore {
 
   final Future<Directory> Function() _directory;
 
-  /// 'light' or 'dark'; anything else ('system', nonsense) follows the phone.
+  /// 'light', 'dark' or 'system'; anything else is no choice at all.
   static ShellAppearance? parse(Object? value) => switch (value) {
         'dark' => ShellAppearance.dark,
         'light' => ShellAppearance.light,
+        'system' => ShellAppearance.system,
         _ => null,
+      };
+
+  /// Whether the app's own screens are dark: the student's choice, the
+  /// phone's for System, and light for a student who never chose.
+  static bool isDark(ShellAppearance? appearance, {required bool phoneIsDark}) =>
+      switch (appearance) {
+        ShellAppearance.dark => true,
+        ShellAppearance.system => phoneIsDark,
+        ShellAppearance.light || null => false,
       };
 
   Future<File> _file() async =>
       File('${(await _directory()).path}${Platform.pathSeparator}portal_appearance');
 
-  /// What the portal said last; null when it never said, or said 'system'.
+  /// What the portal said last; null when it never said.
   /// Never throws: a theme must not stop the app from starting.
   Future<ShellAppearance?> read() async {
     try {
@@ -41,7 +55,7 @@ class ShellAppearanceStore {
     }
   }
 
-  /// Keeps [value] for the next start; null (the phone's theme) forgets it.
+  /// Keeps [value] for the next start; null forgets it.
   Future<void> write(ShellAppearance? value) async {
     try {
       final file = await _file();
@@ -51,7 +65,7 @@ class ShellAppearanceStore {
       }
       await file.writeAsString(value.name, flush: true);
     } catch (_) {
-      // Next start follows the phone, as before.
+      // Next start opens light, the default.
     }
   }
 }

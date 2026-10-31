@@ -35,14 +35,16 @@ void paintGlassArrow(Canvas canvas,
     double opacity = 1,
     double glow = 0,
     double shine = -1,
-    double lift = 1}) {
+    double lift = 1,
+    Glass glass = Glass.pearl,
+    double shineStrength = 1}) {
   if (opacity <= 0 || height <= 0) return;
   canvas.save();
   canvas.scale(height / 100);
   paintArrowGlow(canvas, 92, glow * opacity);
-  paintGlassBody(canvas, _shape, Glass.pearl, opacity: opacity, lift: lift);
-  if (shine > 0 && shine < 1) _shine(canvas, shine, opacity);
-  paintGlassRim(canvas, _shape, Glass.pearl, opacity: opacity);
+  paintGlassBody(canvas, _shape, glass, opacity: opacity, lift: lift);
+  if (shine > 0 && shine < 1) _shine(canvas, shine, opacity * shineStrength);
+  paintGlassRim(canvas, _shape, glass, opacity: opacity);
   canvas.restore();
 }
 

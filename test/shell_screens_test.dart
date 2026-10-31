@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:foorsa_student/src/flicker_spinner.dart';
+import 'package:foorsa_student/src/onboarding/flight_loader.dart';
 import 'package:foorsa_student/src/shell_screens.dart';
 
 Widget _phone(Widget child) => MaterialApp(home: child);
@@ -47,7 +47,7 @@ void main() {
   testWidgets('the loader sits where the portal draws its own, under the status bar', (tester) async {
     _iphone(tester);
     await tester.pumpWidget(_phone(const ShellLoadingScreen(dark: true)));
-    final centre = tester.getCenter(find.byType(FlickerSpinner));
+    final centre = tester.getCenter(find.byType(FlightLoader));
     // The web page starts under the status bar and runs to the bottom edge.
     expect(centre.dy, closeTo(47 + (844 - 47) / 2, 0.5));
     expect(centre.dx, closeTo(390 / 2, 0.5));

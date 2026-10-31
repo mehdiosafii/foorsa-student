@@ -30,11 +30,11 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 import 'boot_loader_gate.dart';
 import 'config.dart';
 import 'embedded_navigation.dart';
-import 'flicker_spinner.dart';
 import 'quick_sign_in_offer.dart';
 import 'shell_appearance.dart';
 import 'shell_capabilities.dart';
 import 'shell_haptics.dart';
+import 'onboarding/flight_loader.dart';
 import 'shell_screens.dart';
 import 'guided_scanner/guided_scan_page.dart';
 import 'guided_scanner/native_document_scanner.dart';
@@ -624,7 +624,7 @@ class _ShellPageState extends State<ShellPage> {
       showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
+        builder: (_) => const Center(child: FlightLoader(size: 30)),
       );
     }
     void dismissSpinner() {
@@ -757,7 +757,7 @@ class _ShellPageState extends State<ShellPage> {
       showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
+        builder: (_) => const Center(child: FlightLoader(size: 30)),
       );
     }
     void dismissSpinner() {
@@ -853,10 +853,9 @@ class _ShellPageState extends State<ShellPage> {
 
 
   /// Whether the loading and offline screens are dark: the student's choice
-  /// in the portal, else the phone's.
-  bool _isDark(BuildContext context) => _appearance == null
-      ? MediaQuery.platformBrightnessOf(context) == Brightness.dark
-      : _appearance == ShellAppearance.dark;
+  /// in the portal, the phone's for System, else light (the default).
+  bool _isDark(BuildContext context) => ShellAppearanceStore.isDark(_appearance,
+      phoneIsDark: MediaQuery.platformBrightnessOf(context) == Brightness.dark);
 
   void _applyAppearance(Object? value) {
     final next = ShellAppearanceStore.parse(value);
