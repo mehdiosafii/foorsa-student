@@ -15,13 +15,22 @@ void main() {
     if (await dir.exists()) await dir.delete(recursive: true);
   });
 
-  test('reads the portal\'s words, and anything else follows the phone', () {
+  test('reads the portal\'s words, and anything else is no choice', () {
     expect(ShellAppearanceStore.parse('dark'), ShellAppearance.dark);
     expect(ShellAppearanceStore.parse('light'), ShellAppearance.light);
-    expect(ShellAppearanceStore.parse('system'), isNull);
+    expect(ShellAppearanceStore.parse('system'), ShellAppearance.system);
     expect(ShellAppearanceStore.parse('purple'), isNull);
     expect(ShellAppearanceStore.parse(1), isNull);
     expect(ShellAppearanceStore.parse(null), isNull);
+  });
+
+  // The owner, 31 Oct 2026: light is the app's default; System follows the phone.
+  test('a student who never chose opens light, whatever the phone', () {
+    expect(ShellAppearanceStore.isDark(null, phoneIsDark: true), isFalse);
+    expect(ShellAppearanceStore.isDark(ShellAppearance.light, phoneIsDark: true), isFalse);
+    expect(ShellAppearanceStore.isDark(ShellAppearance.dark, phoneIsDark: false), isTrue);
+    expect(ShellAppearanceStore.isDark(ShellAppearance.system, phoneIsDark: true), isTrue);
+    expect(ShellAppearanceStore.isDark(ShellAppearance.system, phoneIsDark: false), isFalse);
   });
 
   test('keeps the choice for the next start', () async {
@@ -32,8 +41,9 @@ void main() {
     expect(await store.read(), ShellAppearance.light);
   });
 
-  test('going back to the phone\'s theme forgets it', () async {
-    await store.write(ShellAppearance.dark);
+  test('System is kept as a choice of its own', () async {
+    await store.write(ShellAppearance.system);
+    expect(await store.read(), ShellAppearance.system);
     await store.write(null);
     expect(await store.read(), isNull);
   });

@@ -43,6 +43,12 @@ double takeoffNight(double t) => _smooth((t - 1.7) / 1.4);
 
 /// The plane at rest: 168 pt, centred, pointing up and to the right.
 const _planeSide = 168.0;
+
+/// Where the plane is drawn: its 180 box placed at [at], turned to
+/// [heading], [scale] times its resting size (also the loader's,
+/// flight_loader.dart).
+Matrix4 takeoffPlanePose(Offset at, double heading, double scale) =>
+    _planePose(at, heading, scale);
 Matrix4 _planePose(Offset at, double heading, double scale) =>
     Matrix4.identity()
       ..translateByDouble(at.dx, at.dy, 0, 1)
@@ -52,8 +58,14 @@ Matrix4 _planePose(Offset at, double heading, double scale) =>
 
 const _restHeading = -math.pi / 4;
 
-class _Morph {
-  _Morph(this.from, this.to, this.fromPath, this.toPath);
+/// The way the arrow points, and the plane at rest: up and to the right.
+const takeoffRestHeading = _restHeading;
+
+/// One of the F's pieces flowing into one of the plane's: [from] and [to]
+/// are its outlines, point for point, the arrow centred and 100 pt tall and
+/// the plane at rest on the same origin.
+class TakeoffMorph {
+  TakeoffMorph(this.from, this.to, this.fromPath, this.toPath);
   final List<Offset> from;
   final List<Offset> to;
   final Path fromPath;
@@ -68,7 +80,7 @@ class _Morph {
 
 /// The F's three pieces flowing into the plane's three: the arrow into the
 /// fuselage and wings, each step into the tailplane nearest it.
-final List<_Morph> _morphs = () {
+final List<TakeoffMorph> takeoffMorphs = () {
   // The arrow as the launch screen draws it: centred, 100 pt tall.
   final pieces = arrowPieces(splashArrowHeight);
   final pose = _planePose(Offset.zero, _restHeading, 1).storage;
@@ -86,9 +98,9 @@ final List<_Morph> _morphs = () {
   final pairs = straight <= crossed
       ? [(steps[0], tails[0]), (steps[1], tails[1])]
       : [(steps[0], tails[1]), (steps[1], tails[0])];
-  _Morph morph(Path a, Path b, int count) {
+  TakeoffMorph morph(Path a, Path b, int count) {
     final from = outlineOf(a, count: count);
-    return _Morph(from, alignTo(from, outlineOf(b, count: count)), a, b);
+    return TakeoffMorph(from, alignTo(from, outlineOf(b, count: count)), a, b);
   }
 
   return [
@@ -159,8 +171,8 @@ class _TakeoffPainter extends CustomPainter {
       // Mid-change it glows and softens, as if made of light for a moment.
       final change = math.sin(math.pi * morph);
       final outline = Path();
-      for (var i = 0; i < _morphs.length; i++) {
-        outline.addPath(_morphs[i].at(i == 0 ? morph : steps), Offset.zero);
+      for (var i = 0; i < takeoffMorphs.length; i++) {
+        outline.addPath(takeoffMorphs[i].at(i == 0 ? morph : steps), Offset.zero);
       }
       if (change > 0.02) {
         canvas.drawPath(

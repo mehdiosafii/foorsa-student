@@ -90,7 +90,22 @@ Paint pearlPaint(Rect box, {double opacity = 1}) => Paint()
 /// cockpit and the panel lines; [lights] the navigation lights, which blink
 /// on [clock] (seconds).
 void paintPearlPlane(Canvas canvas,
-    {double detail = 1, double lights = 0, double clock = 0}) {
+    {double detail = 1,
+    double lights = 0,
+    double clock = 0,
+    double opacity = 1,
+    Glass glass = planeGlass,
+    bool onLight = false}) {
+  if (opacity <= 0.001) return;
+  // Faded as one piece (the loader's plane leaving), not part by part.
+  if (opacity < 1) {
+    canvas.saveLayer(const Rect.fromLTWH(-20, -20, 220, 220),
+        Paint()..color = Color.fromRGBO(0, 0, 0, opacity));
+    paintPearlPlane(canvas,
+        detail: detail, lights: lights, clock: clock, glass: glass, onLight: onLight);
+    canvas.restore();
+    return;
+  }
   // The engines hang under the wings, so they come first.
   if (detail > 0.001) {
     final grow = 0.5 + 0.5 * detail;
@@ -106,10 +121,15 @@ void paintPearlPlane(Canvas canvas,
           engine,
           Paint()
             ..shader = ui.Gradient.linear(
-                const Offset(50, 80), const Offset(64, 124), [
-              Color.fromRGBO(236, 242, 248, detail),
-              Color.fromRGBO(160, 178, 196, detail),
-            ]));
+                const Offset(50, 80), const Offset(64, 124), onLight
+                    ? [
+                        Color.fromRGBO(58, 88, 124, detail),
+                        Color.fromRGBO(16, 36, 60, detail),
+                      ]
+                    : [
+                        Color.fromRGBO(236, 242, 248, detail),
+                        Color.fromRGBO(160, 178, 196, detail),
+                      ]));
       canvas.drawOval(
           Rect.fromCenter(
               center: Offset(centre.dx, 85), width: 10, height: 4.4),
@@ -118,15 +138,17 @@ void paintPearlPlane(Canvas canvas,
     }
   }
 
-  paintGlassBody(canvas, _hull, planeGlass);
-  paintGlassRim(canvas, _hull, planeGlass);
+  paintGlassBody(canvas, _hull, glass);
+  paintGlassRim(canvas, _hull, glass);
 
   if (detail > 0.001) {
     final line = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeWidth = 0.7
-      ..color = Color.fromRGBO(120, 140, 162, 0.32 * detail);
+      ..color = onLight
+          ? Color.fromRGBO(255, 255, 255, 0.2 * detail)
+          : Color.fromRGBO(120, 140, 162, 0.32 * detail);
     canvas.drawPath(svgPath(_wingLLines), line);
     canvas.drawPath(svgPath(_wingRLines), line);
     // Light along the spine.
@@ -136,7 +158,7 @@ void paintPearlPlane(Canvas canvas,
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round
           ..strokeWidth = 1.4
-          ..color = Color.fromRGBO(255, 255, 255, 0.75 * detail));
+          ..color = Color.fromRGBO(255, 255, 255, (onLight ? 0.32 : 0.75) * detail));
     // The cockpit windows: a cool tint at the nose, not a hole in it.
     canvas.save();
     canvas.translate(90, 41);

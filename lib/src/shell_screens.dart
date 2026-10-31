@@ -7,9 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'config.dart';
-import 'flicker_spinner.dart';
+import 'onboarding/flight_loader.dart';
 
-/// The Foorsa flicker on the theme's ground.
+/// Foorsa's arrow turning into the plane, on the theme's ground.
 class ShellLoadingScreen extends StatelessWidget {
   const ShellLoadingScreen({super.key, required this.dark});
   final bool dark;
@@ -25,17 +25,13 @@ class ShellLoadingScreen extends StatelessWidget {
         child: SafeArea(
           bottom: false,
           child: Center(
-            // The app's loading animation, nothing else. Android shows the
-            // branded logo splash (flutter_native_splash, same #183250 ground)
-            // before Flutter's first frame: logo, then the loader.
-            child: FlickerSpinner(
-              size: 64,
-              onColor: dark
-                  ? const Color(0xFFF5F5F5)
-                  : const Color(AppConfig.brandColorValue),
-              offColor:
-                  dark ? const Color(0xFF404040) : const Color(0xFFDCE2EC),
-            ),
+            // The app's loading animation, nothing else: Foorsa's arrow
+            // turning into the plane and flying off, in a loop
+            // (onboarding/flight_loader.dart; the owner, 31 Oct 2026). Android
+            // shows the branded logo splash (flutter_native_splash, same
+            // #183250 ground) before Flutter's first frame: logo, then the
+            // loader.
+            child: FlightLoader(size: 64, dark: dark),
           ),
         ),
       ),
