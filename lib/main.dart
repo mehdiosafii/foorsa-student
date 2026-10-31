@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'src/config.dart';
+import 'src/crash_reports.dart';
 import 'src/device_access.dart';
 import 'src/onboarding/onboarding_gate.dart';
 import 'src/onboarding/onboarding_sound.dart';
@@ -12,6 +13,8 @@ import 'src/shell_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // The app's own errors reach Admin Portal › Student App (crash_reports.dart).
+  CrashReports.instance.install();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,

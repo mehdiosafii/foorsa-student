@@ -29,6 +29,7 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 
 import 'boot_loader_gate.dart';
 import 'config.dart';
+import 'crash_reports.dart';
 import 'embedded_navigation.dart';
 import 'flicker_spinner.dart';
 import 'quick_sign_in_offer.dart';
@@ -1156,7 +1157,11 @@ class _ShellPageState extends State<ShellPage> {
                   // older builds (shell_capabilities.dart).
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellCapabilities',
-                    callback: (args) => shellCapabilities(isIOS: Platform.isIOS),
+                    callback: (args) => shellCapabilities(
+                      isIOS: Platform.isIOS,
+                      appVersion: _packageInfo?.version,
+                      appBuild: _packageInfo?.buildNumber,
+                    ),
                   );
                   // A texture by name (and the grain's level), or a number for
                   // an ordinary press: shell_haptics.dart.
@@ -1275,6 +1280,16 @@ class _ShellPageState extends State<ShellPage> {
                     _errorThisLoad = true;
                     _enterOffline();
                   }
+                },
+                // iOS ended the page's process (most often for memory: a
+                // heavy screen on a small phone) and the web view went
+                // blank. Report it, and open Home again rather than the
+                // screen that was too heavy.
+                onWebContentProcessDidTerminate: (controller) {
+                  CrashReports.instance
+                      .report('WebContent process terminated');
+                  controller.loadUrl(
+                      urlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)));
                 },
                 onPermissionRequest: _onPermissionRequest,
                 onGeolocationPermissionsShowPrompt: _onGeolocationPrompt,

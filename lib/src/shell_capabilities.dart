@@ -4,7 +4,12 @@ library;
 
 import 'shell_haptics.dart';
 
-Map<String, Object> shellCapabilities({required bool isIOS}) => {
+Map<String, Object> shellCapabilities({
+  required bool isIOS,
+  String? appVersion,
+  String? appBuild,
+}) =>
+    {
       // An iframe (a YouTube player) plays in the page instead of leaving
       // the app.
       'embeddedFrames': true,
@@ -22,4 +27,9 @@ Map<String, Object> shellCapabilities({required bool isIOS}) => {
       // up (FoorsaShellLoading), and follows the theme the student chose
       // (FoorsaShellAppearance).
       'bootHandoff': true,
+      // The app's own version, for Admin Portal › Student App in Foorsa
+      // Reward: which version each student runs, and who is still on an old
+      // one. Builds before 51 do not say it.
+      if (appVersion != null) 'appVersion': appVersion,
+      if (appBuild != null) 'appBuild': appBuild,
     };
