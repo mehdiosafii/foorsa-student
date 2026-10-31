@@ -68,10 +68,14 @@ const planeGlass = Glass(
   shadows: [GlassShadow.none, GlassShadow.none, GlassShadow.none],
 );
 
-final GlassShape _hull = GlassShape.path(Path()
-  ..addPath(PlaneShape.tailLeft, Offset.zero)
-  ..addPath(PlaneShape.tailRight, Offset.zero)
-  ..addPath(PlaneShape.body, Offset.zero));
+/// The plane as one outline. Added as three subpaths, each piece's rim was
+/// traced in full, so where a tailplane overlaps the fuselage its rim ran
+/// across the body as a bright fleck (the loader's frames, 31 Oct 2026).
+final GlassShape _hull = GlassShape.path(Path.combine(
+  PathOperation.union,
+  Path.combine(PathOperation.union, PlaneShape.tailLeft, PlaneShape.tailRight),
+  PlaneShape.body,
+));
 
 /// The pearl material: lit from the top left of the plane.
 Paint pearlPaint(Rect box, {double opacity = 1}) => Paint()
