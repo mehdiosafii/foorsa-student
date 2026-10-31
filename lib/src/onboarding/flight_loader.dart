@@ -1,41 +1,36 @@
-/// The app's loading sign since 31 Oct 2026 (the owner: "change the loading
-/// screen from the dots to the arrow that turns in airplan you did in the
-/// loading"): the take-off intro, small and in a loop. Foorsa's arrow catches
-/// the light, flows into the airliner pointing the same way, its lights come
-/// on, it climbs away the way the arrow pointed, and a new arrow comes up
-/// where it was.
+/// The app's loading sign. Since 31 Oct 2026 it tells what Foorsa does, in
+/// the logo's own pieces (the arrow and its two steps), each form flowing
+/// into the next: the logo catches the light; it becomes stairs that climb
+/// up the way the arrow points; an arrow straight up, its steps left behind
+/// as a trail; the airliner, nose up, its lights on; the graduate's cap,
+/// tossed, its tassel swinging; and the logo again.
 ///
-/// The portal plays the same loop from the same outlines (foorsa-reward
-/// src/portal/FlightLoader.tsx, its numbers from
-/// scripts/loader_outline/dump_outline_test.dart), so when the app's loader
-/// hands over to the web's nothing changes on the screen.
+/// Before, it was the arrow becoming the plane and leaving (as the take-off
+/// intro does); the portal's loader (foorsa-reward src/portal/FlightLoader.tsx)
+/// still plays that one until it is brought over.
 library;
 
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 
 import 'airliner.dart';
 import 'glass.dart';
 import 'glass_arrow.dart';
+import 'shape_morph.dart';
+import 'stage_forms.dart';
 import 'takeoff_intro.dart';
 
-/// One loop, in seconds.
-const flightLoaderSeconds = 3.2;
+/// One loop, in seconds: the logo, the stairs, the arrow, the plane, the
+/// cap, and the logo again (see [_scenes]).
+const flightLoaderSeconds = 6.8;
 
-/// The beats of a loop: the shine across the arrow, the arrow becoming the
-/// plane, the plane settling and lighting up, the climb away, and the next
-/// arrow coming up while the plane leaves.
-const _shineStarts = 0.1, _shineEnds = 0.6;
-const _morphStarts = 0.7, _morphEnds = 1.35;
-const _lightsOn = 1.5;
-const _climbStarts = 1.95, _climbEnds = 2.85;
-const _returnStarts = 2.55;
+/// Under Reduce Motion the same forms follow each other where they stand,
+/// with nothing climbing, bobbing or swinging, at a calmer pace.
+const flightLoaderCalmSeconds = 8.8;
 
-/// Under Reduce Motion the arrow becomes the plane and back where it stands,
-/// with nothing crossing the screen, at half the pace.
-const flightLoaderCalmSeconds = 4.4;
+/// How long one form takes to become the next.
+const _morphSeconds = 0.5;
 
 /// The arrow in navy on a light ground, lit from the upper left like the
 /// pearl.
@@ -127,8 +122,165 @@ class _FlightLoaderState extends State<FlightLoader>
   }
 }
 
+/// The forms of the loop, each three pieces like the logo (the arrow and its
+/// two steps), so each flows into the next piece for piece.
+enum _Form { logo, stairs, rise, plane, cap }
+
+/// Each form and how long it holds before it becomes the next; the last
+/// flows back into the first.
+const _scenes = [
+  (_Form.logo, 0.7),
+  (_Form.stairs, 1.1),
+  (_Form.rise, 0.7),
+  (_Form.plane, 0.9),
+  (_Form.cap, 0.9),
+];
+
+/// One cell of the logo's grid: the mark is four cells tall.
+const _cell = splashArrowHeight / 4;
+
+/// The stairs: the logo's diagonal of cells, two thick, running on past the
+/// round window they are seen through, moved [phase] cells up the way the
+/// arrow points (1 is the same picture as 0, one step on).
+Path _stairs(double phase) {
+  final band = Path();
+  final shift = Offset(_cell, -_cell) * phase;
+  // Column c holds the cells whose row and column add to 1 and 2.
+  double left(int c) => -_cell + _cell * c;
+  double top(int c) => -_cell - _cell * c;
+  Offset at(double x, double y) => Offset(x, y) + shift;
+  const first = -5, last = 6;
+  final start = at(left(first), top(first));
+  band.moveTo(start.dx, start.dy);
+  for (var c = first; c <= last; c++) {
+    for (final p in [at(left(c), top(c)), at(left(c) + _cell, top(c))]) {
+      band.lineTo(p.dx, p.dy);
+    }
+  }
+  for (var c = last; c >= first; c--) {
+    for (final p in [
+      at(left(c) + _cell, top(c) + 2 * _cell),
+      at(left(c), top(c) + 2 * _cell),
+    ]) {
+      band.lineTo(p.dx, p.dy);
+    }
+  }
+  band.close();
+  return Path.combine(PathOperation.intersect, band,
+      Path()..addOval(Rect.fromCircle(center: Offset.zero, radius: 48)));
+}
+
+/// A speck where a step is taken into the stairs.
+Path _speck(Offset at) =>
+    Path()..addRect(Rect.fromCenter(center: at, width: 1, height: 1));
+
+Path _polygon(List<Offset> points) => Path()..addPolygon(points, true);
+
+Path _bar(double l, double t, double r, double b, double radius) =>
+    Path()..addRRect(RRect.fromLTRBR(l, t, r, b, Radius.circular(radius)));
+
+/// The plane pointing straight up, a little smaller than at take-off.
+const _planeHeading = -math.pi / 2;
+const _planeScale = 0.72;
+
+/// Where the cap's tassel hangs from.
+const _tasselPivot = Offset(41.7, -16);
+
+/// Each form's pieces, centred on the origin at the arrow's 100 pt height:
+/// the main shape, then the piece that takes the near step's place, then
+/// the far step's.
+List<Path> _piecesOf(_Form form) {
+  switch (form) {
+    case _Form.logo:
+      return arrowPieces(splashArrowHeight);
+    case _Form.stairs:
+      // The two steps go into the stairs they already sit on.
+      return [
+        _stairs(0),
+        _speck(const Offset(-12.5, 12.5)),
+        _speck(const Offset(-30, 30))
+      ];
+    case _Form.rise:
+      // An arrow straight up, the two steps left behind as its trail.
+      return [
+        _polygon(const [
+          Offset(0, -50),
+          Offset(38, -12),
+          Offset(13, -12),
+          Offset(13, 42),
+          Offset(-13, 42),
+          Offset(-13, -12),
+          Offset(-38, -12),
+        ]),
+        _bar(-33, 8, -25, 40, 4),
+        _bar(25, 8, 33, 40, 4),
+      ];
+    case _Form.plane:
+      final pose =
+          takeoffPlanePose(Offset.zero, _planeHeading, _planeScale).storage;
+      return [
+        PlaneShape.body.transform(pose),
+        PlaneShape.tailLeft.transform(pose),
+        PlaneShape.tailRight.transform(pose),
+      ];
+    case _Form.cap:
+      // The graduate's cap: the board and the crown as one, then the
+      // tassel's cord and its tuft.
+      final board = _polygon(const [
+        Offset(0, -36),
+        Offset(54, -16),
+        Offset(0, 4),
+        Offset(-54, -16),
+      ]);
+      final crown = Path()
+        ..moveTo(-30, -12)
+        ..lineTo(30, -12)
+        ..lineTo(30, 14)
+        ..quadraticBezierTo(0, 28, -30, 14)
+        ..close();
+      return [
+        Path.combine(PathOperation.union, board, crown),
+        _bar(40, -16, 43.4, 12, 1.7),
+        _bar(36.5, 10, 46.9, 26, 3),
+      ];
+  }
+}
+
+/// One form flowing into the next: each piece's outline, point for point.
+class _Change {
+  _Change(List<Path> from, List<Path> to)
+      : pieces = [
+          for (var i = 0; i < 3; i++)
+            () {
+              final a = outlineOf(from[i], count: i == 0 ? 360 : 140);
+              return (
+                a,
+                alignTo(a, outlineOf(to[i], count: i == 0 ? 360 : 140))
+              );
+            }(),
+        ];
+  final List<(List<Offset>, List<Offset>)> pieces;
+
+  Path at(double main, double steps) {
+    final path = Path();
+    for (var i = 0; i < 3; i++) {
+      final (a, b) = pieces[i];
+      path.addPath(lerpOutline(a, b, i == 0 ? main : steps), Offset.zero);
+    }
+    return path;
+  }
+}
+
+final List<_Change> _changes = () {
+  final shapes = [for (final s in _scenes) _piecesOf(s.$1)];
+  return [
+    for (var i = 0; i < shapes.length; i++)
+      _Change(shapes[i], shapes[(i + 1) % shapes.length]),
+  ];
+}();
+
 /// Paints the loop at the clock's place (0 to 1 of a loop). Public for the
-/// golden test and the frame renders.
+/// widget test and the frame renders.
 class FlightLoaderPainter extends CustomPainter {
   FlightLoaderPainter(this.clock,
       {required this.size, required this.dark, this.calm = false})
@@ -136,144 +288,141 @@ class FlightLoaderPainter extends CustomPainter {
   final Animation<double> clock;
   final double size;
   final bool dark;
+
+  /// Reduce Motion: the forms change where they stand, nothing else moves.
   final bool calm;
 
   Glass get _arrowGlass => dark ? Glass.pearl : navyGlass;
 
-  /// The plane's material in its own box, which is turned 45° to the screen.
+  /// The plane's material in its own box, which points up like the screen.
   Glass get _planeGlass => dark ? planeGlass : navyGlass;
 
-  /// The same light as the screen sees it, for the outline mid-change, which
-  /// is drawn on the screen's own axes.
-  Glass get _planeGlassOnScreen => _planeGlass.turned(45);
+  Glass _glassOf(_Form form) => form == _Form.plane ? _planeGlass : _arrowGlass;
 
   @override
   void paint(Canvas canvas, Size box) {
     canvas.save();
     canvas.translate(box.width / 2, box.height / 2);
     canvas.scale(size / splashArrowHeight);
-    if (calm) {
-      _paintCalm(canvas, clock.value * flightLoaderCalmSeconds);
-    } else {
-      _paintLoop(canvas, clock.value * flightLoaderSeconds);
+    if (dark) paintArrowGlow(canvas, 92, 0.6);
+    // The same story at either pace: the clock is a share of the loop.
+    var t = clock.value * flightLoaderSeconds;
+    for (var i = 0; i < _scenes.length; i++) {
+      final (form, hold) = _scenes[i];
+      if (t < hold) {
+        _paintHold(canvas, form, t, hold);
+        break;
+      }
+      t -= hold;
+      if (t < _morphSeconds || i == _scenes.length - 1) {
+        final next = _scenes[(i + 1) % _scenes.length].$1;
+        _paintChange(
+            canvas, i, form, next, (t / _morphSeconds).clamp(0.0, 1.0));
+        break;
+      }
+      t -= _morphSeconds;
     }
     canvas.restore();
   }
 
-  void _paintLoop(Canvas canvas, double t) {
-    final morph = _inOut((t - _morphStarts) / (_morphEnds - _morphStarts));
-    final glow = dark ? 0.75 : 0.0;
-    if (t < _morphStarts) {
-      paintGlassArrow(canvas,
-          height: splashArrowHeight,
-          glow: glow,
-          shine: (t - _shineStarts) / (_shineEnds - _shineStarts),
-          // White light on navy reads as a smudge at full strength.
-          shineStrength: dark ? 1 : 0.35,
-          glass: _arrowGlass);
-      return;
-    }
-    if (t < _morphEnds) {
-      _paintMorph(canvas, t, morph);
-      return;
-    }
-    // The plane: settling, lighting up, then away the way it points.
-    final settle = _smooth((t - _morphEnds) / 0.4);
-    final lights = _smooth((t - _lightsOn) / 0.12);
-    final away = ((t - _climbStarts) / (_climbEnds - _climbStarts)).clamp(0.0, 1.0);
-    // Faster and faster, as a plane leaving does.
-    final s = away * away * (0.35 + 0.65 * away);
-    final dir = Offset(math.cos(takeoffRestHeading), math.sin(takeoffRestHeading));
-    // A short climb that bends a little steeper, inside the loader's square.
-    final at = dir * (120 * s) + const Offset(0, -26) * (s * s);
-    final heading = takeoffRestHeading - 0.18 * s;
-    final scale = 1 - 0.45 * s;
-    final fade = 1 - _smooth((away - 0.45) / 0.55);
-    if (fade > 0) {
-      canvas.save();
-      canvas.transform(takeoffPlanePose(at, heading, scale).storage);
-      paintPearlPlane(canvas,
-          detail: settle,
-          lights: lights,
-          clock: t - _lightsOn,
-          opacity: fade,
-          glass: _planeGlass,
-          onLight: !dark);
-      canvas.restore();
-    }
-    // The next arrow, coming up where the plane left.
-    final back = _smooth((t - _returnStarts) / (flightLoaderSeconds - _returnStarts));
-    if (back > 0) {
-      canvas.save();
-      canvas.scale(ui.lerpDouble(0.88, 1, back)!);
-      paintGlassArrow(canvas,
-          height: splashArrowHeight,
-          opacity: back,
-          glow: glow * back,
-          glass: _arrowGlass);
-      canvas.restore();
-    }
-  }
-
-  /// The outline between the arrow and the plane, [morph] of the way; the
-  /// steps follow a beat behind, so it reads as one motion.
-  void _paintMorph(Canvas canvas, double t, double morph) {
-    final steps = _inOut(
-        (t - _morphStarts - 0.1) / (_morphEnds - _morphStarts - 0.1));
-    _paintOutline(canvas, morph, steps);
-  }
-
-  void _paintOutline(Canvas canvas, double morph, double steps) {
-    final outline = Path();
-    for (var i = 0; i < takeoffMorphs.length; i++) {
-      outline.addPath(
-          takeoffMorphs[i].at(i == 0 ? morph : steps), Offset.zero);
-    }
+  /// [i]'s form [m] of the way into the next; the small pieces follow a
+  /// beat behind, so it reads as one motion.
+  void _paintChange(Canvas canvas, int i, _Form from, _Form to, double m) {
+    final main = _inOut(m);
+    final steps = _inOut((m - 0.15) / 0.85);
+    final outline = _changes[i].at(main, steps);
     if (dark) {
-      paintArrowGlow(canvas, 92, ui.lerpDouble(0.75, 0.3, morph)!);
-      final change = math.sin(math.pi * morph);
+      final change = math.sin(math.pi * main);
       if (change > 0.02) {
         canvas.drawPath(
             outline,
             Paint()
-              ..color = Color.fromRGBO(200, 225, 250, 0.38 * change)
-              ..maskFilter = MaskFilter.blur(BlurStyle.normal, 12 * change));
+              ..color = Color.fromRGBO(200, 225, 250, 0.3 * change)
+              ..maskFilter = MaskFilter.blur(BlurStyle.normal, 10 * change));
       }
     }
-    final glass = Glass.lerp(_arrowGlass, _planeGlassOnScreen, morph);
-    final shape = GlassShape.path(outline);
+    _paintGlass(
+        canvas, outline, Glass.lerp(_glassOf(from), _glassOf(to), main));
+  }
+
+  void _paintGlass(Canvas canvas, Path path, Glass glass) {
+    final shape = GlassShape.path(path);
     paintGlassBody(canvas, shape, glass);
     paintGlassRim(canvas, shape, glass);
   }
 
-  /// Reduce Motion: the arrow becomes the plane and back where it stands.
-  void _paintCalm(Canvas canvas, double t) {
-    const rest = 1.2, change = 0.8, hold = 1.0;
-    final glow = dark ? 0.75 : 0.0;
-    if (t < rest) {
-      paintGlassArrow(canvas,
-          height: splashArrowHeight, glow: glow, glass: _arrowGlass);
-    } else if (t < rest + change) {
-      final m = _inOut((t - rest) / change);
-      _paintOutline(canvas, m, m);
-    } else if (t < rest + change + hold) {
-      canvas.save();
-      canvas.transform(
-          takeoffPlanePose(Offset.zero, takeoffRestHeading, 1).storage);
-      paintPearlPlane(canvas,
-          detail: _smooth((t - rest - change) / 0.4),
-          lights: 1,
-          clock: t,
-          glass: _planeGlass,
-          onLight: !dark);
-      canvas.restore();
-    } else {
-      final m = 1 - _inOut((t - rest - change - hold) / change);
-      _paintOutline(canvas, m, m);
+  /// A form at rest, [t] of its [hold] seconds in: each one does what it
+  /// stands for, and is back where it started when the hold ends.
+  void _paintHold(Canvas canvas, _Form form, double t, double hold) {
+    final f = (t / hold).clamp(0.0, 1.0);
+    final move = calm ? 0.0 : 1.0;
+    switch (form) {
+      case _Form.logo:
+        paintGlassArrow(canvas,
+            height: splashArrowHeight,
+            shine: calm ? -1 : f,
+            // White light on navy reads as a smudge at full strength.
+            shineStrength: dark ? 1 : 0.35,
+            glass: _arrowGlass);
+      case _Form.stairs:
+        // Two steps up, one after the other, each with a moment's rest.
+        final p = f * 2;
+        final step = _inOut((p - p.floorToDouble()) * 1.25);
+        _paintGlass(canvas, _stairs(step * move), _arrowGlass);
+      case _Form.rise:
+        // Up and back, the trail a little behind.
+        final lift = -8 * math.sin(math.pi * f) * move;
+        final pieces = _risePieces;
+        final path = Path()
+          ..addPath(pieces[0], Offset(0, lift))
+          ..addPath(pieces[1], Offset(0, lift * 0.4))
+          ..addPath(pieces[2], Offset(0, lift * 0.4));
+        _paintGlass(canvas, path, _arrowGlass);
+      case _Form.plane:
+        // Its engines and lights come on, it climbs a little, and they go
+        // out again just before it changes.
+        final on = 1 - _smooth((t - hold + 0.22) / 0.22);
+        canvas.save();
+        canvas.transform(takeoffPlanePose(
+                Offset(0, -6 * math.sin(math.pi * f) * move),
+                _planeHeading,
+                _planeScale)
+            .storage);
+        paintPearlPlane(canvas,
+            detail: _smooth(t / 0.3) * on,
+            lights: _smooth((t - 0.2) / 0.1) * on,
+            clock: t,
+            glass: _planeGlass,
+            onLight: !dark);
+        canvas.restore();
+      case _Form.cap:
+        // A small toss, and the tassel swings.
+        final pieces = _capPieces;
+        final swing = 0.45 * math.sin(3 * math.pi * f) * (1 - f) * move;
+        final tassel = Matrix4.identity()
+          ..translateByDouble(_tasselPivot.dx, _tasselPivot.dy, 0, 1)
+          ..rotateZ(swing)
+          ..translateByDouble(-_tasselPivot.dx, -_tasselPivot.dy, 0, 1);
+        final toss = -7 * math.sin(math.pi * f) * move;
+        final path = Path()
+          ..addPath(pieces[0], Offset.zero)
+          ..addPath(pieces[1].transform(tassel.storage), Offset.zero)
+          ..addPath(pieces[2].transform(tassel.storage), Offset.zero);
+        canvas.save();
+        canvas.translate(0, toss);
+        canvas.rotate(-0.08 * math.sin(2 * math.pi * f) * move);
+        _paintGlass(canvas, path, _arrowGlass);
+        canvas.restore();
     }
   }
 
   @override
   bool shouldRepaint(FlightLoaderPainter old) =>
-      old.clock != clock || old.size != size || old.dark != dark || old.calm != calm;
+      old.clock != clock ||
+      old.size != size ||
+      old.dark != dark ||
+      old.calm != calm;
 }
+
+final List<Path> _risePieces = _piecesOf(_Form.rise);
+final List<Path> _capPieces = _piecesOf(_Form.cap);
