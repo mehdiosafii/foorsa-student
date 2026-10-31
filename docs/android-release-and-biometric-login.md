@@ -54,10 +54,11 @@ and review requirements there; the publisher does not bypass them.
 production track on 31 October 2026 at 18:28 UTC. Play refused it because the
 app had not declared its foreground services, which is "any other failure", so
 the schedule switched itself off as designed (it is `disabled_manually` in
-Actions). The bundle the workflow saved was then uploaded by hand in Play
-Console, which is where those declarations are made (the API cannot make
-them). `scripts/scheduled_production_release.py` still switches itself off
-outside 2026; do not re-enable the schedule for a later release.
+Actions). Those declarations exist only in Play Console (the API cannot make
+them); once they are saved, Actions → Google Play → Run workflow with
+`production` sends the release. `scripts/scheduled_production_release.py`
+still switches itself off outside 2026; do not re-enable the schedule for a
+later release.
 
 ### What Play Console asks for this app
 
@@ -90,6 +91,13 @@ Google Play → Run workflow on `main` can target internal, alpha, beta, or
 production. It rejects overwriting an in-progress staged rollout. A build
 number must be higher than all previously uploaded Play bundles, as well as
 the last iOS build; check Play Console before bumping the shared version.
+The release replaces whatever the track holds, a draft left in Play Console
+included, and carries the notes in `android/play-release-notes/<language>.txt`
+(one file per listing language, at most 500 characters). While Play Console
+holds other changes waiting to be sent (a declaration, the reviewer sign-in
+details), Play will not send an edit for review by itself: the script then
+commits it with `changesNotSentForReview`, and the run's summary says to press
+**Send changes for review** in Publishing overview.
 
 A green publishing run means Google accepted the release submission, not that
 review or managed publishing has finished. Verify availability in Play Console
