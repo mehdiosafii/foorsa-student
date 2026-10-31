@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,13 +20,44 @@ void main() {
     messenger.setMockMethodCallHandler(
         const MethodChannel('flutter_callkit_incoming_events'),
         (call) async => null);
+    // The phone that rings natively (an iPhone) runs the whole start-up.
+    debugNativeAdviserCalls = true;
     addTearDown(() {
+      debugNativeAdviserCalls = null;
       messenger.setMockMethodCallHandler(
           const MethodChannel('flutter_callkit_incoming'), null);
       messenger.setMockMethodCallHandler(
           const MethodChannel('flutter_callkit_incoming_events'), null);
     });
     await expectLater(StudentCalls.instance.start(), completes);
+  });
+
+  test('native adviser calls ring on iPhone only for now', () {
+    // On Android they need foreground services, which Google Play takes only
+    // with declarations and a video of a real call (the owner, 31 Oct 2026).
+    expect(nativeAdviserCalls, Platform.isIOS);
+  });
+
+  test('a call push on a phone without native calls starts nothing', () async {
+    final asked = <String>[];
+    messenger.setMockMethodCallHandler(
+        const MethodChannel('flutter_callkit_incoming'), (call) async {
+      asked.add(call.method);
+      return null;
+    });
+    debugNativeAdviserCalls = false;
+    addTearDown(() {
+      debugNativeAdviserCalls = null;
+      messenger.setMockMethodCallHandler(
+          const MethodChannel('flutter_callkit_incoming'), null);
+    });
+    await showStudentCall({
+      'callId': 'a1111111-1111-4111-8111-111111111111',
+      'token': 'x' * 128,
+      'expiresAt':
+          DateTime.now().add(const Duration(seconds: 40)).toIso8601String()
+    });
+    expect(asked, isEmpty);
   });
 
   test('a calls start-up that fails or stalls never holds the app back',

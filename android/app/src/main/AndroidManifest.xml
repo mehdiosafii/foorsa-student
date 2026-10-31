@@ -36,11 +36,21 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove"/>
 
-    <!-- flutter_callkit_incoming also declares a camera foreground service for
-         video calls. Adviser calls are voice only (supportsVideo: false, and the
-         plugin adds the camera type only for a video call), so drop it: Google
-         Play asks a declaration for each foreground service type an app holds. -->
+    <!-- Adviser calls ring natively on iPhone only for now (the owner, 31 Oct
+         2026; nativeAdviserCalls in lib/src/student_calls.dart).
+         flutter_callkit_incoming rings and holds a call in foreground services
+         (phone call, microphone, and camera for video calls) and shows it full
+         screen, and Google Play takes those only with Play Console
+         declarations and a video of a real call. Without the permissions and
+         the services' types below, Play asks for neither. The services stay
+         declared but idle: the plugin registers its phone account at start-up,
+         and the app never starts them on Android. A call still rings inside
+         the chat while it is open. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" tools:node="remove"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" tools:node="remove"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" tools:node="remove"/>
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" tools:node="remove"/>
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
@@ -88,11 +98,13 @@
                 android:resource="@xml/provider_paths"/>
         </provider>
         <meta-data android:name="flutterEmbedding" android:value="2"/>
-        <!-- The call service without the camera type (see FOREGROUND_SERVICE_CAMERA above). -->
+        <!-- Idle on Android while native calls are off (see the permissions above). -->
         <service
             android:name="com.hiennv.flutter_callkit_incoming.CallkitNotificationService"
-            android:foregroundServiceType="phoneCall|microphone"
-            tools:replace="android:foregroundServiceType"/>
+            tools:remove="android:foregroundServiceType"/>
+        <service
+            android:name="com.hiennv.flutter_callkit_incoming.CallkitConnectionService"
+            tools:remove="android:foregroundServiceType"/>
     </application>
 
     <queries>

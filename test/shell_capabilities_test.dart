@@ -34,6 +34,35 @@ void main() {
     expect(manifest, contains('android.permission.VIBRATE'));
   });
 
+  test('Android holds no foreground service or full-screen intent', () {
+    // Native adviser calls are iPhone only for now (nativeAdviserCalls):
+    // Google Play takes foreground services and full-screen intents only with
+    // Play Console declarations and a video of a real call.
+    final manifest = File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+    for (final permission in [
+      'FOREGROUND_SERVICE',
+      'FOREGROUND_SERVICE_PHONE_CALL',
+      'FOREGROUND_SERVICE_MICROPHONE',
+      'FOREGROUND_SERVICE_CAMERA',
+      'USE_FULL_SCREEN_INTENT',
+    ]) {
+      expect(
+          manifest,
+          contains('<uses-permission android:name="android.permission.$permission" '
+              'tools:node="remove"/>'),
+          reason: permission);
+    }
+    for (final service in ['CallkitNotificationService', 'CallkitConnectionService']) {
+      expect(
+          RegExp('android:name="com\\.hiennv\\.flutter_callkit_incoming\\.$service"'
+                  r'\s+tools:remove="android:foregroundServiceType"')
+              .hasMatch(manifest),
+          isTrue,
+          reason: service);
+    }
+    expect(manifest, isNot(contains('android:foregroundServiceType=')));
+  });
+
   test('no hardware is required to install the app on Android', () {
     // Each permission or plugin below would make Google Play require the
     // hardware, and 1.2.27 (58) would have dropped 148 devices that ran
