@@ -10,6 +10,22 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 import 'config.dart';
 
+/// Whether this phone rings for an adviser call while the app is closed.
+///
+/// iPhone only for now (the owner, 31 Oct 2026). On Android the ringing and
+/// the call in the background run in flutter_callkit_incoming's foreground
+/// services, which Google Play accepts only with Play Console declarations
+/// and a video of a real call. On Android a call still rings inside the chat
+/// while it is open (the portal's own call screen). To bring native calls
+/// back to Android, turn this on together with the foreground-service and
+/// full-screen intent lines in AndroidManifest.xml, then file both Play
+/// Console declarations.
+bool get nativeAdviserCalls => debugNativeAdviserCalls ?? Platform.isIOS;
+
+/// Tests set this to exercise either side of [nativeAdviserCalls].
+@visibleForTesting
+bool? debugNativeAdviserCalls;
+
 String callDeviceId() {
   final bytes = List<int>.generate(16, (_) => Random.secure().nextInt(256));
   bytes[6] = (bytes[6] & 15) | 64;
@@ -62,7 +78,9 @@ Future<void> studentCallBackground(CallEvent event) async {
 }
 
 Future<void> showStudentCall(Map<String, dynamic> invite) async {
-  if (!validStudentCall(invite)) return;
+  // A call push can still arrive at a phone registered before native calls
+  // were switched off for it; it must never start the call services there.
+  if (!nativeAdviserCalls || !validStudentCall(invite)) return;
   final calls = await FlutterCallkitIncoming.activeCalls();
   if (calls.any((c) => c.id == invite['callId'])) return;
   final extra = {...invite, 'device': callDeviceId()};
@@ -148,6 +166,7 @@ class StudentCalls extends ChangeNotifier {
         await end();
       }
     });
+    if (!nativeAdviserCalls) return;
     // Only Android runs a background isolate for calls. On iOS PushKit wakes
     // the app itself, and the plugin answers this method "not implemented":
     // thrown out of main, that kept every iPhone on the launch screen.

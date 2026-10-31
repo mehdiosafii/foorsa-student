@@ -191,7 +191,8 @@ class StudentPush {
       'platform': Platform.isIOS ? 'ios' : 'android',
       'status': 'ready',
       'notificationVersion': 2,
-      'callsEnabled': true,
+      // The server rings only devices that say so (nativeAdviserCalls).
+      'callsEnabled': nativeAdviserCalls,
       'voipToken': Platform.isIOS ? await FlutterCallkitIncoming.getDevicePushTokenVoIP() : null
     };
   }

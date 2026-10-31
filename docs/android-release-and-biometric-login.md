@@ -49,39 +49,46 @@ Google's app signing key is unchanged, so installed apps keep updating. Play's a
 by Google. Complete any outstanding Play Console listing, app content, testing,
 and review requirements there; the publisher does not bypass them.
 
-**The first production release went through Play Console.**
-`production-release-schedule.yml` started this workflow on `main` for the
-production track on 31 October 2026 at 18:28 UTC. Play refused it because the
-app had not declared its foreground services, which is "any other failure", so
-the schedule switched itself off as designed (it is `disabled_manually` in
-Actions). The bundle the workflow saved was then uploaded by hand in Play
-Console, which is where those declarations are made (the API cannot make
-them). `scripts/scheduled_production_release.py` still switches itself off
-outside 2026; do not re-enable the schedule for a later release.
+**The first production release.** `production-release-schedule.yml` started
+this workflow on `main` for the production track on 31 October 2026 at 18:28
+UTC. Play refused it because the app had not declared its foreground services,
+which is "any other failure", so the schedule switched itself off as designed
+(it is `disabled_manually` in Actions). Those declarations exist only in Play
+Console (the API cannot make them) and need a filmed call, so from 1.2.29 (60)
+the Android app holds no foreground service at all (below), and Actions →
+Google Play → Run workflow with `production` sends the release without one.
+`scripts/scheduled_production_release.py` still switches itself off outside
+2026; do not re-enable the schedule for a later release.
 
 ### What Play Console asks for this app
 
-- **Foreground services** (Règles et programmes → Contenu de l'application):
-  only `FOREGROUND_SERVICE_PHONE_CALL` and `FOREGROUND_SERVICE_MICROPHONE`,
-  both from `flutter_callkit_incoming`'s adviser calls. The camera type is
-  removed from the merged manifest (calls are voice only), so it is never
-  declared. Tasks: VoIP, telecom API for the phone call, and background audio
-  input for the microphone, each with a link to a video of an adviser call
-  answered and carried on with the app in the background.
-- **Full-screen intent**: `USE_FULL_SCREEN_INTENT` comes from the same plugin.
-  Calls are one feature of the app, not its core, so the declaration answers
-  "Other": on Android 14 and later Play does not grant it at install, and an
-  incoming call rings as a heads-up notification rather than over the lock
-  screen. Claiming "making and receiving calls" as the core feature would not
-  be true and Google reviews that answer.
+- **Foreground services and the full-screen intent: nothing, for now.**
+  `flutter_callkit_incoming` rings and holds an adviser call in foreground
+  services (phone call, microphone, camera for video) and shows it full
+  screen, and Play takes those only with Play Console declarations, each with
+  a video of a real call on an Android phone. Nobody could film one when
+  1.2.29 (60) went out, so native calls are iPhone only (the owner, 31 Oct
+  2026): `nativeAdviserCalls` in `lib/src/student_calls.dart` is off on
+  Android, the phone registers with `callsEnabled: false` so the server never
+  rings it, and the manifest removes `FOREGROUND_SERVICE*` and
+  `USE_FULL_SCREEN_INTENT` and the two services' `foregroundServiceType`
+  (the services stay declared and idle: the plugin registers its phone
+  account at start-up). A call still rings inside the chat while it is open.
+  `test/shell_capabilities_test.dart` pins all of it.
+  **To bring native calls to Android:** turn `nativeAdviserCalls` on for
+  Android, put back the phone call and microphone permissions and the
+  services' types (not the camera one, calls are voice only), then in Play
+  Console declare the foreground services (tasks: VoIP, telecom API for the
+  phone call; background audio input for the microphone; one video link of an
+  adviser call answered and carried on with the app in the background, in
+  both fields) and the full-screen intent ("Other": calls are a feature, not
+  the app's core, so on Android 14 and later an incoming call rings as a
+  heads-up notification).
 - **Devices**: no hardware is required to install (the `uses-feature`
   block in the manifest, pinned by `test/shell_capabilities_test.dart`). A
   plugin or permission that adds a hardware requirement shows up in Play's
   release check as devices "no longer supported"; make it optional rather
   than drop them. The minimum is Android 7.0 (API 24), the toolchain's own.
-
-Once the declarations are saved they apply to every later bundle, and a
-version bump on `main` goes to Play from this workflow again.
 
 A version change on `main` now triggers both TestFlight and Google Play. Play
 defaults to `internal`; use the `GOOGLE_PLAY_TRACK` repository variable to set
@@ -90,6 +97,13 @@ Google Play → Run workflow on `main` can target internal, alpha, beta, or
 production. It rejects overwriting an in-progress staged rollout. A build
 number must be higher than all previously uploaded Play bundles, as well as
 the last iOS build; check Play Console before bumping the shared version.
+The release replaces whatever the track holds, a draft left in Play Console
+included, and carries the notes in `android/play-release-notes/<language>.txt`
+(one file per listing language, at most 500 characters). While Play Console
+holds other changes waiting to be sent (a declaration, the reviewer sign-in
+details), Play will not send an edit for review by itself: the script then
+commits it with `changesNotSentForReview`, and the run's summary says to press
+**Send changes for review** in Publishing overview.
 
 A green publishing run means Google accepted the release submission, not that
 review or managed publishing has finished. Verify availability in Play Console
