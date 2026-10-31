@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'student_calls.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
@@ -13,6 +14,14 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 @pragma('vm:entry-point')
 Future<void> studentFirebaseBackground(RemoteMessage message) async {
+  try {
+    await _handleBackground(message);
+  } catch (e) {
+    debugPrint('Background push failed: $e');
+  }
+}
+
+Future<void> _handleBackground(RemoteMessage message) async {
   await Firebase.initializeApp();
   if (message.data['type'] == 'student_call_end') {
     await FlutterCallkitIncoming.endCall('${message.data['callId']}');
@@ -104,39 +113,11 @@ class StudentPush {
       );
       if (_disposed) return;
       _subscriptions.add(FirebaseMessaging.onMessage.listen((message) async {
-        if (message.data['type'] == 'student_call_end') {
-          if (StudentCalls.instance.invite?['callId'] ==
-              message.data['callId']) {
-            await StudentCalls.instance.end(notifyServer: false);
-          }
-          await FlutterCallkitIncoming.endCall('${message.data['callId']}');
-          return;
+        try {
+          await _onForegroundMessage(message);
+        } catch (e) {
+          debugPrint('Foreground push failed: $e');
         }
-        if (message.data['type'] == 'student_call') {
-          await showStudentCall(message.data);
-          return;
-        }
-        final chat = isStudentChatPush(message.data);
-        final update = studentUpdateRoute(message.data);
-        if ((!chat && update == null) || (chat && await chatIsVisible()) || _disposed) {
-          return;
-        }
-        await _local.show(
-          id: (message.data['eventId'] ?? message.data['messageId'] ?? message.messageId ?? '').hashCode &
-              0x3fffffff,
-          title: 'Foorsa',
-          body: chat ? 'You have a new message from your adviser.' : 'An update is ready in your Foorsa app.',
-          notificationDetails: NotificationDetails(
-            android: AndroidNotificationDetails(
-                chat ? 'student_messages' : 'student_updates', chat ? 'Messages from Foorsa' : 'Foorsa updates',
-                importance: Importance.high,
-                priority: Priority.high,
-                icon: 'ic_stat_message'),
-            iOS: const DarwinNotificationDetails(
-                presentAlert: true, presentSound: true),
-          ),
-          payload: chat ? '/contact/chat' : update,
-        );
       }));
       _subscriptions.add(FirebaseMessaging.onMessageOpenedApp.listen((message) {
         if (isStudentChatPush(message.data)) unawaited(openChat());
@@ -196,6 +177,42 @@ class StudentPush {
     };
   }
 
+  Future<void> _onForegroundMessage(RemoteMessage message) async {
+    if (message.data['type'] == 'student_call_end') {
+      if (StudentCalls.instance.invite?['callId'] ==
+          message.data['callId']) {
+        await StudentCalls.instance.end(notifyServer: false);
+      }
+      await FlutterCallkitIncoming.endCall('${message.data['callId']}');
+      return;
+    }
+    if (message.data['type'] == 'student_call') {
+      await showStudentCall(message.data);
+      return;
+    }
+    final chat = isStudentChatPush(message.data);
+    final update = studentUpdateRoute(message.data);
+    if ((!chat && update == null) || (chat && await chatIsVisible()) || _disposed) {
+      return;
+    }
+    await _local.show(
+      id: (message.data['eventId'] ?? message.data['messageId'] ?? message.messageId ?? '').hashCode &
+          0x3fffffff,
+      title: 'Foorsa',
+      body: chat ? 'You have a new message from your adviser.' : 'An update is ready in your Foorsa app.',
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+            chat ? 'student_messages' : 'student_updates', chat ? 'Messages from Foorsa' : 'Foorsa updates',
+            importance: Importance.high,
+            priority: Priority.high,
+            icon: 'ic_stat_message'),
+        iOS: const DarwinNotificationDetails(
+            presentAlert: true, presentSound: true),
+      ),
+      payload: chat ? '/contact/chat' : update,
+    );
+  }
+
   Future<void> clear() => _serial(_clear);
   Future<void> _clear() async {
     await start();
@@ -205,10 +222,16 @@ class StudentPush {
       await FirebaseMessaging.instance.deleteToken();
     }
     if (_localReady) await _local.cancelAll();
-    await StudentCalls.instance.end();
-    await FlutterCallkitIncoming.endAllCalls();
+    // The previous student's reminders must be cleared even if call
+    // teardown fails.
     _calendarState = {'enabled': false};
     await _saveCalendarState();
+    try {
+      await StudentCalls.instance.end();
+    } catch (_) {}
+    try {
+      await FlutterCallkitIncoming.endAllCalls();
+    } catch (_) {}
   }
 
   Future<void> _openLocal(String? payload) async {

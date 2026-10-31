@@ -392,7 +392,8 @@ class _ShellPageState extends State<ShellPage> {
     // Let the loading screen paint its first frame before the WebView's
     // platform-view init grabs the UI thread.
     unawaited(_prepareBiometrics());
-    PackageInfo.fromPlatform().then((v) => _packageInfo = v);
+    PackageInfo.fromPlatform().then<void>((v) => _packageInfo = v,
+        onError: (Object _) {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
       SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -474,6 +475,12 @@ class _ShellPageState extends State<ShellPage> {
   /// pages of one paper, and each crosses the bridge as a data URL.
   static const _maxPickedPhotos = 10;
 
+  /// Picked files cross the bridge as base64 in memory; bound them so a huge
+  /// PDF or selection cannot run the phone out of memory.
+  static const _maxPickedFiles = 10;
+  static const _maxPickedFileBytes = 20 * 1024 * 1024;
+  static const _maxPickedTotalBytes = 40 * 1024 * 1024;
+
   Future<Map<String, dynamic>> _pickForWeb(String mode, bool multiple) async {
     try {
       // Several photos from the library are the pages of one paper (both
@@ -509,13 +516,32 @@ class _ShellPageState extends State<ShellPage> {
         type: FileType.custom,
         allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'heic', 'pdf'],
         allowMultiple: multiple,
-        withData: true,
+        // Read from disk after the size check: loading every picked file
+        // up front can exhaust memory on a large PDF or a big selection.
+        withData: false,
       );
       if (res == null || res.files.isEmpty) return {'cancelled': true};
       final out = <Map<String, dynamic>>[];
-      for (final f in res.files) {
-        if (f.bytes == null) continue;
-        out.add(_fileEntry(f.name, f.bytes!));
+      var total = 0;
+      var skipped = 0;
+      for (final f in res.files.take(_maxPickedFiles)) {
+        final path = f.path;
+        if (path == null) continue;
+        if (f.size > _maxPickedFileBytes ||
+            total + f.size > _maxPickedTotalBytes) {
+          skipped++;
+          continue;
+        }
+        final bytes = await File(path).readAsBytes();
+        total += bytes.length;
+        out.add(_fileEntry(f.name, bytes));
+      }
+      skipped += math.max(0, res.files.length - _maxPickedFiles);
+      if (skipped > 0 && mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(out.isEmpty
+                ? 'That file is too large. Please choose one under 20 MB.'
+                : '$skipped file(s) skipped: too large or too many.')));
       }
       if (out.isEmpty) return {'cancelled': true};
       return {'files': out};
@@ -618,33 +644,27 @@ class _ShellPageState extends State<ShellPage> {
     final uri = Uri.tryParse(url);
     if (uri == null || url.isEmpty) return {'ok': false, 'error': 'bad url'};
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final dismissSpinner = _showSpinner();
 
     try {
       var name = filename.trim().isEmpty ? 'document' : filename.trim();
       name = name.replaceAll(RegExp('[^A-Za-z0-9._ ()-]'), '_');
       final tmpDir = await getTemporaryDirectory();
-      final tmp = File('${tmpDir.path}/dl_$name');
+      // A folder per download: two downloads with the same name at once
+      // must not write into the same file.
+      final dlDir = await Directory(
+              '${tmpDir.path}/dl_${DateTime.now().microsecondsSinceEpoch}')
+          .create(recursive: true);
+      final tmp = File('${dlDir.path}/dl_$name');
 
       // Same fetch as the preview: the URL is pre-authenticated (?t=) and
       // already carries Content-Disposition — no extra headers.
       final client = HttpClient();
       try {
-        final response = await client.getUrl(uri).then((r) => r.close());
+        final response = await client
+            .getUrl(uri)
+            .then((r) => r.close())
+            .timeout(const Duration(seconds: 60));
         if (response.statusCode >= 400) {
           throw HttpException('HTTP ${response.statusCode}');
         }
@@ -742,6 +762,24 @@ class _ShellPageState extends State<ShellPage> {
   }
 
 
+  /// Shows a blocking spinner and returns a function that removes exactly
+  /// that route — never whatever happens to be on top (Android back could
+  /// otherwise close the spinner and a later pop() would close the shell).
+  void Function() _showSpinner() {
+    if (!mounted) return () {};
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+          canPop: false, child: Center(child: FlickerSpinner(size: 44))),
+    );
+    unawaited(navigator.push(route));
+    return () {
+      if (route.isActive) navigator.removeRoute(route);
+    };
+  }
+
   // ── In-app file preview (FoorsaShellPreviewFile) ─────────────────────────
   bool _previewBusy = false;
 
@@ -751,21 +789,7 @@ class _ShellPageState extends State<ShellPage> {
     if (uri == null) return;
     _previewBusy = true;
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final dismissSpinner = _showSpinner();
 
     try {
       final dir = await getTemporaryDirectory();
@@ -778,7 +802,10 @@ class _ShellPageState extends State<ShellPage> {
         // Two different applicant documents can share a filename and size.
         // Fetch the authenticated URL every time so a prior preview never
         // appears in place of the document the student just opened.
-        final response = await client.getUrl(uri).then((r) => r.close());
+        final response = await client
+            .getUrl(uri)
+            .then((r) => r.close())
+            .timeout(const Duration(seconds: 60));
         if (response.statusCode >= 400) {
           throw HttpException('HTTP ${response.statusCode}');
         }
@@ -826,20 +853,27 @@ class _ShellPageState extends State<ShellPage> {
       final cookieHeader =
           cookies.map((c) => '${c.name}=${c.value}').join('; ');
       final client = HttpClient();
-      final request = await client.getUrl(uri);
-      if (cookieHeader.isNotEmpty) request.headers.set('Cookie', cookieHeader);
-      request.headers.set(HttpHeaders.userAgentHeader,
-          '${AppConfig.userAgentProduct}/${_packageInfo?.version ?? ''}');
-      final response = await request.close();
-      if (response.statusCode >= 400) {
-        throw HttpException('HTTP ${response.statusCode}');
+      final File file;
+      try {
+        final request = await client.getUrl(uri);
+        if (cookieHeader.isNotEmpty) {
+          request.headers.set('Cookie', cookieHeader);
+        }
+        request.headers.set(HttpHeaders.userAgentHeader,
+            '${AppConfig.userAgentProduct}/${_packageInfo?.version ?? ''}');
+        final response =
+            await request.close().timeout(const Duration(seconds: 60));
+        if (response.statusCode >= 400) {
+          throw HttpException('HTTP ${response.statusCode}');
+        }
+        final dir = await getApplicationDocumentsDirectory();
+        final downloads = Directory('${dir.path}/FoorsaDownloads');
+        if (!await downloads.exists()) await downloads.create(recursive: true);
+        file = File('${downloads.path}/$name');
+        await response.pipe(file.openWrite());
+      } finally {
+        client.close(force: true);
       }
-      final dir = await getApplicationDocumentsDirectory();
-      final downloads = Directory('${dir.path}/FoorsaDownloads');
-      if (!await downloads.exists()) await downloads.create(recursive: true);
-      final file = File('${downloads.path}/$name');
-      await response.pipe(file.openWrite());
-      client.close();
       messenger?.hideCurrentSnackBar();
       final result = await OpenFilex.open(file.path);
       if (result.type != ResultType.done) {
@@ -980,7 +1014,12 @@ class _ShellPageState extends State<ShellPage> {
       for (final resource in request.resources) {
         final permission = resource == PermissionResourceType.CAMERA
             ? ph.Permission.camera : ph.Permission.microphone;
-        if (!(await permission.request()).isGranted) { granted = false; break; }
+        try {
+          if (!(await permission.request()).isGranted) { granted = false; break; }
+        } catch (_) {
+          granted = false; // another permission request is already running
+          break;
+        }
       }
     }
     return PermissionResponse(resources: request.resources,
@@ -995,7 +1034,11 @@ class _ShellPageState extends State<ShellPage> {
     var allow = false;
     final uri = Uri.tryParse(origin);
     if (uri != null && _isInternal(uri)) {
-      allow = (await ph.Permission.locationWhenInUse.request()).isGranted;
+      try {
+        allow = (await ph.Permission.locationWhenInUse.request()).isGranted;
+      } catch (_) {
+        // Another permission request is already running.
+      }
     }
     return GeolocationPermissionShowPromptResponse(
         origin: origin, allow: allow, retain: allow);
@@ -1258,7 +1301,10 @@ class _ShellPageState extends State<ShellPage> {
                   _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
-                  await _openPushChat();
+                  try {
+                    await _openPushChat();
+                  } catch (_) {}
+                  if (!mounted) return;
                   if (_loader.showing) setState(_loader.pageLoaded);
                   if (!_errorThisLoad) {
                     _exitOffline();
