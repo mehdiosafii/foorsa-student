@@ -1,1 +1,1 @@
-Plus stable après l'envoi de documents : si la page manque de mémoire, l'application revient là où vous étiez au lieu de l'accueil. Un téléchargement n'affiche plus l'écran « hors ligne ». Corrections.
+Vous pouvez maintenant envoyer votre vidéo de présentation depuis l'application. Plus stable après l'envoi de documents : si la page manque de mémoire, l'application revient là où vous étiez au lieu de l'accueil. Corrections.

@@ -13,10 +13,10 @@ void main() {
     });
   });
 
-  test('Android keeps the video with the adviser', () {
+  test('Android offers the portal its video picker too', () {
     expect(shellCapabilities(isIOS: false), {
       'embeddedFrames': true,
-      'videoInput': false,
+      'videoInput': true,
       'hapticTextures': 3,
       'bootHandoff': true,
     });
@@ -27,6 +27,14 @@ void main() {
     final plist = File('ios/Runner/Info.plist').readAsStringSync();
     expect(plist, contains('<key>NSMicrophoneUsageDescription</key>'));
     expect(plist, contains('<key>NSCameraUsageDescription</key>'));
+  });
+
+  test('Android 11 and later can open the camera and file apps from the page', () {
+    // Without these queries the WebView's chooser finds nothing to open.
+    final manifest = File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+    expect(manifest, contains('<action android:name="android.media.action.IMAGE_CAPTURE"/>'));
+    expect(manifest, contains('<action android:name="android.media.action.VIDEO_CAPTURE"/>'));
+    expect(manifest, contains('<action android:name="android.intent.action.GET_CONTENT"/>'));
   });
 
   test('Android may play the textures: VIBRATE is declared', () {
