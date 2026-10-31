@@ -23,6 +23,12 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove"/>
 
+    <!-- flutter_callkit_incoming also declares a camera foreground service for
+         video calls. Adviser calls are voice only (supportsVideo: false, and the
+         plugin adds the camera type only for a video call), so drop it: Google
+         Play asks a declaration for each foreground service type an app holds. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" tools:node="remove"/>
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <application
@@ -69,6 +75,11 @@
                 android:resource="@xml/provider_paths"/>
         </provider>
         <meta-data android:name="flutterEmbedding" android:value="2"/>
+        <!-- The call service without the camera type (see FOREGROUND_SERVICE_CAMERA above). -->
+        <service
+            android:name="com.hiennv.flutter_callkit_incoming.CallkitNotificationService"
+            android:foregroundServiceType="phoneCall|microphone"
+            tools:replace="android:foregroundServiceType"/>
     </application>
 
     <queries>
