@@ -33,4 +33,26 @@ void main() {
     final manifest = File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
     expect(manifest, contains('android.permission.VIBRATE'));
   });
+
+  test('no hardware is required to install the app on Android', () {
+    // Each permission or plugin below would make Google Play require the
+    // hardware, and 1.2.27 (58) would have dropped 148 devices that ran
+    // 1.2.17 (32). The plugin's camera.any must be overridden, not just
+    // declared again: its required defaults to true.
+    final manifest = File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+    final features = RegExp(r'<uses-feature\b[^>]*>').allMatches(manifest).map((m) => m[0]!);
+    String? declared(String name) =>
+        features.where((tag) => tag.contains('android:name="$name"')).firstOrNull;
+    for (final name in [
+      'android.hardware.camera',
+      'android.hardware.camera.any',
+      'android.hardware.camera.autofocus',
+      'android.hardware.microphone',
+      'android.hardware.bluetooth',
+      'android.hardware.location',
+    ]) {
+      expect(declared(name), contains('android:required="false"'), reason: name);
+    }
+    expect(declared('android.hardware.camera.any'), contains('tools:replace="android:required"'));
+  });
 }

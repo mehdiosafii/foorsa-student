@@ -10,6 +10,19 @@
     <!-- Approximate foreground location for prayer times, weather and nearby places. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-feature android:name="android.hardware.location" android:required="false"/>
+    <!-- No hardware is needed to install the app. Google Play reads CAMERA as
+         needing an autofocus camera, RECORD_AUDIO as a microphone and the call
+         audio's BLUETOOTH as Bluetooth, and the CameraX plugin declares any
+         camera as required: 1.2.27 (58) would have dropped 148 devices that
+         ran 1.2.17 (32), fixed-focus tablets and Chromebooks among them.
+         Papers can still be chosen from photos or Files, and a call needs a
+         microphone only to speak. tools:replace overrides the plugin's
+         camera.any, whose required defaults to true. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false"
+                  tools:replace="android:required"/>
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
+    <uses-feature android:name="android.hardware.microphone" android:required="false"/>
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false"/>
     <!-- Legacy devices only: MediaStore needs no permission on API 29+ -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                      android:maxSdkVersion="28"/>
