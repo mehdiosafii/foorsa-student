@@ -1,1 +1,1 @@
-L'écran de chargement : la flèche Foorsa devient un avion. Thème clair par défaut. Corrections.
+Nouvel écran de chargement : le logo Foorsa monte les marches, s'envole en avion et devient une toque de diplômé. Thème clair par défaut. Corrections.
