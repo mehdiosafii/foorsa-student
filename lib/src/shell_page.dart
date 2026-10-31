@@ -474,6 +474,12 @@ class _ShellPageState extends State<ShellPage> {
   /// pages of one paper, and each crosses the bridge as a data URL.
   static const _maxPickedPhotos = 10;
 
+  /// Picked files cross the bridge as base64 in memory; bound them so a huge
+  /// PDF or selection cannot run the phone out of memory.
+  static const _maxPickedFiles = 10;
+  static const _maxPickedFileBytes = 20 * 1024 * 1024;
+  static const _maxPickedTotalBytes = 40 * 1024 * 1024;
+
   Future<Map<String, dynamic>> _pickForWeb(String mode, bool multiple) async {
     try {
       // Several photos from the library are the pages of one paper (both
@@ -509,13 +515,32 @@ class _ShellPageState extends State<ShellPage> {
         type: FileType.custom,
         allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'heic', 'pdf'],
         allowMultiple: multiple,
-        withData: true,
+        // Read from disk after the size check: loading every picked file
+        // up front can exhaust memory on a large PDF or a big selection.
+        withData: false,
       );
       if (res == null || res.files.isEmpty) return {'cancelled': true};
       final out = <Map<String, dynamic>>[];
-      for (final f in res.files) {
-        if (f.bytes == null) continue;
-        out.add(_fileEntry(f.name, f.bytes!));
+      var total = 0;
+      var skipped = 0;
+      for (final f in res.files.take(_maxPickedFiles)) {
+        final path = f.path;
+        if (path == null) continue;
+        if (f.size > _maxPickedFileBytes ||
+            total + f.size > _maxPickedTotalBytes) {
+          skipped++;
+          continue;
+        }
+        final bytes = await File(path).readAsBytes();
+        total += bytes.length;
+        out.add(_fileEntry(f.name, bytes));
+      }
+      skipped += math.max(0, res.files.length - _maxPickedFiles);
+      if (skipped > 0 && mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(out.isEmpty
+                ? 'That file is too large. Please choose one under 20 MB.'
+                : '$skipped file(s) skipped: too large or too many.')));
       }
       if (out.isEmpty) return {'cancelled': true};
       return {'files': out};
@@ -624,7 +649,12 @@ class _ShellPageState extends State<ShellPage> {
       var name = filename.trim().isEmpty ? 'document' : filename.trim();
       name = name.replaceAll(RegExp('[^A-Za-z0-9._ ()-]'), '_');
       final tmpDir = await getTemporaryDirectory();
-      final tmp = File('${tmpDir.path}/dl_$name');
+      // A folder per download: two downloads with the same name at once
+      // must not write into the same file.
+      final dlDir = await Directory(
+              '${tmpDir.path}/dl_${DateTime.now().microsecondsSinceEpoch}')
+          .create(recursive: true);
+      final tmp = File('${dlDir.path}/dl_$name');
 
       // Same fetch as the preview: the URL is pre-authenticated (?t=) and
       // already carries Content-Disposition — no extra headers.

@@ -201,10 +201,19 @@ class StudentCalls extends ChangeNotifier {
     status = 'Incoming call';
     _lastSuccess = DateTime.now();
     notifyListeners();
-    _poll();
+    _startPolling();
   }
 
-  Future<void> _poll() async {
+  /// Only the newest polling loop may keep running: answering restarts it,
+  /// and a request still in flight from the ringing loop must not schedule
+  /// a second loop beside it.
+  int _pollRun = 0;
+  void _startPolling() {
+    _timer?.cancel();
+    unawaited(_poll(++_pollRun));
+  }
+
+  Future<void> _poll(int run) async {
     final own = _generation;
     final current = invite;
     if (current == null) return;
@@ -237,8 +246,8 @@ class StudentCalls extends ChangeNotifier {
         notifyListeners();
       }
     }
-    if (own == _generation && invite != null) {
-      _timer = Timer(const Duration(seconds: 2), _poll);
+    if (own == _generation && run == _pollRun && invite != null) {
+      _timer = Timer(const Duration(seconds: 2), () => _poll(run));
     }
   }
 
@@ -326,8 +335,7 @@ class StudentCalls extends ChangeNotifier {
         await callSignal(invite!, 'connected');
       }
       if (Platform.isIOS) await native.invokeMethod('answerReady', params.id);
-      _timer?.cancel();
-      unawaited(_poll());
+      _startPolling();
     } catch (_) {
       if (own == _generation) {
         await end();
