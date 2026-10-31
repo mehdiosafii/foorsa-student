@@ -46,6 +46,8 @@ import 'student_push.dart';
 import 'student_calls.dart';
 import 'student_biometrics.dart';
 import 'chat_viewport.dart';
+import 'crash_reports.dart';
+import 'web_view_recovery.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({
@@ -112,6 +114,12 @@ class _ShellPageState extends State<ShellPage> {
   bool _errorThisLoad = false;
   /// While offline: quiet retry loop behind the branded overlay.
   Timer? _retryTimer;
+  /// The page to come back to when the web view dies or a load fails
+  /// (web_view_recovery.dart): never Home while a page was open.
+  final WebViewRecovery _recovery = WebViewRecovery(Uri.parse(AppConfig.baseUrl));
+  /// Bumped to build a new web view: Android's is unusable once its render
+  /// process is gone.
+  int _webViewGeneration = 0;
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
   String _scannerNonce = _newScannerNonce();
@@ -392,7 +400,10 @@ class _ShellPageState extends State<ShellPage> {
     // Let the loading screen paint its first frame before the WebView's
     // platform-view init grabs the UI thread.
     unawaited(_prepareBiometrics());
-    PackageInfo.fromPlatform().then((v) => _packageInfo = v);
+    PackageInfo.fromPlatform().then((v) {
+      _packageInfo = v;
+      CrashReports.instance.build = '${v.version}+${v.buildNumber}';
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -418,9 +429,51 @@ class _ShellPageState extends State<ShellPage> {
         Timer.periodic(const Duration(seconds: 6), (_) => _retry());
   }
 
+  /// The page the student was on, not the start page: loading Home here sent
+  /// a student back to Home after any failed or interrupted load.
   void _retry() {
-    _controller?.loadUrl(
-        urlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)));
+    final controller = _controller;
+    if (controller == null) {
+      _rebuildWebView();
+      return;
+    }
+    controller.loadUrl(
+        urlRequest: URLRequest(url: WebUri(_recovery.pageToReload().toString())));
+  }
+
+  /// A new web view on the page the student was on (Android, after its render
+  /// process is gone: the old one must not be touched again).
+  void _rebuildWebView() {
+    if (!mounted) return;
+    setState(() {
+      _controller = null;
+      PortalHandover.instance.controller = null;
+      _webViewGeneration++;
+    });
+  }
+
+  /// The page's process died (memory, most often after big uploads). Report it
+  /// and bring the same page back; a page that keeps dying gets the offline
+  /// screen and its retry instead of a reload loop.
+  Future<void> _webViewDied(String why, {required bool rebuild}) async {
+    final page = _recovery.pageToReload();
+    unawaited(CrashReports.instance.report('Web view stopped: $why', screen: page.toString()));
+    if (!mounted) return;
+    if (!_recovery.mayRestart(DateTime.now())) {
+      if (rebuild) {
+        setState(() {
+          _controller = null;
+          PortalHandover.instance.controller = null;
+        });
+      }
+      _enterOffline();
+      return;
+    }
+    if (rebuild) {
+      _rebuildWebView();
+    } else {
+      await _controller?.loadUrl(urlRequest: URLRequest(url: WebUri(page.toString())));
+    }
   }
 
   void _exitOffline() {
@@ -1053,6 +1106,8 @@ class _ShellPageState extends State<ShellPage> {
               child: !_bootWebView
                   ? const SizedBox.expand()
                   : InAppWebView(
+                // A new one after Android's render process is gone (_webViewDied).
+                key: ValueKey<int>(_webViewGeneration),
                 // The page takes every touch at once: held in Flutter's
                 // gesture arena, a long press reached WebKit late or not at
                 // all, and the Copy / Paste menu came and went (the owner,
@@ -1061,7 +1116,8 @@ class _ShellPageState extends State<ShellPage> {
                   Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
                 },
                 initialUserScripts: UnmodifiableListView([_sessionScript()]),
-                initialUrlRequest: URLRequest(url: WebUri(AppConfig.baseUrl)),
+                // The start page, or after a rebuild the page the student was on.
+                initialUrlRequest: URLRequest(url: WebUri(_recovery.pageToReload().toString())),
                 initialSettings: InAppWebViewSettings(
                   // The portal is remote; no file:// page is ever loaded, and
                   // uploads come back as data URLs from the native picker.
@@ -1091,6 +1147,9 @@ class _ShellPageState extends State<ShellPage> {
                   // controls, and in the live chat the bar sat between the
                   // composer and the keyboard (the owner, 25 Oct 2026).
                   disableInputAccessoryView: true,
+                  // Without it a render process killed for memory takes the
+                  // whole Android app down (WebViewClient.onRenderProcessGone).
+                  useOnRenderProcessGone: true,
                 ),
                 onWebViewCreated: (controller) {
                   _controller = controller;
@@ -1250,6 +1309,7 @@ class _ShellPageState extends State<ShellPage> {
                 onUpdateVisitedHistory: (controller, url, isReload) {
                   // React Router navigation does not trigger onLoadStart.
                   _updateChatViewport(url);
+                  _recovery.notePage(url, trusted: _isTrustedPortal(url));
                 },
                 onLoadStart: (controller, url) {
                   _updateChatViewport(url);
@@ -1260,6 +1320,7 @@ class _ShellPageState extends State<ShellPage> {
                   await _openPushChat();
                   if (_loader.showing) setState(_loader.pageLoaded);
                   if (!_errorThisLoad) {
+                    _recovery.notePage(url, trusted: _isTrustedPortal(url));
                     _exitOffline();
                     try {
                       await _publishScannerNonce(controller);
@@ -1270,10 +1331,28 @@ class _ShellPageState extends State<ShellPage> {
                   }
                 },
                 onReceivedError: (controller, request, error) {
-                  if (request.isForMainFrame ?? true) {
+                  // A load the app or the page stopped on purpose (a download,
+                  // a link handed to another app, a newer navigation) is not
+                  // being offline (web_view_recovery.dart).
+                  if ((request.isForMainFrame ?? true) &&
+                      isLoadFailure(
+                          code: error.type.toNativeValue(),
+                          description: error.description,
+                          isIOS: Platform.isIOS)) {
                     _errorThisLoad = true;
                     _enterOffline();
                   }
+                },
+                // iPhone: the page's process was ended (memory). The web view
+                // stays usable; load the same page again.
+                onWebContentProcessDidTerminate: (controller) {
+                  unawaited(_webViewDied('content process terminated', rebuild: false));
+                },
+                // Android: the render process is gone; this web view is dead.
+                onRenderProcessGone: (controller, detail) {
+                  unawaited(_webViewDied(
+                      detail.didCrash ? 'render process crashed' : 'render process killed for memory',
+                      rebuild: true));
                 },
                 onPermissionRequest: _onPermissionRequest,
                 onGeolocationPermissionsShowPrompt: _onGeolocationPrompt,

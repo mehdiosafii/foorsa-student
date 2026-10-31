@@ -11,10 +11,13 @@ Map<String, Object> shellCapabilities({required bool isIOS}) => {
       // The page may offer its own video picker (the student's introduction
       // video). On an iPhone that picker can film, and iOS closes an app the
       // moment its camera records sound without NSMicrophoneUsageDescription
-      // in Info.plist; builds from this one carry it. Android's WebView
-      // picker fails to open on some phones, so Android students keep
-      // sending the video through their adviser.
-      'videoInput': isIOS,
+      // in Info.plist; builds from 46 carry it. On Android the WebView's
+      // chooser offers the phone's videos and, with the camera allowed, the
+      // camera; from 1.2.30 (61) the manifest's <queries> let Android 11 and
+      // later find the camera and file apps, which the chooser failed to
+      // open without (the owner, 31 Oct 2026: "in android i can't upload
+      // introduction video they are asking me to send it to my advisory").
+      'videoInput': true,
       // Touch by name (shell_haptics.dart): the reveal's textures and the
       // portal's "no". Builds 33 to 46 did not answer it and got ticks.
       'hapticTextures': ShellHaptics.version,

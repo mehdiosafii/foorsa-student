@@ -1,1 +1,1 @@
-Nouvel écran de chargement : le logo Foorsa monte les marches, s'envole en avion et devient une toque de diplômé. Thème clair par défaut. Corrections.
+Vous pouvez maintenant envoyer votre vidéo de présentation depuis l'application. Plus stable après l'envoi de documents : si la page manque de mémoire, l'application revient là où vous étiez au lieu de l'accueil. Corrections.
