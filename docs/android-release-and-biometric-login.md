@@ -49,15 +49,39 @@ Google's app signing key is unchanged, so installed apps keep updating. Play's a
 by Google. Complete any outstanding Play Console listing, app content, testing,
 and review requirements there; the publisher does not bypass them.
 
-**The first production release is scheduled.** `production-release-schedule.yml`
-starts this workflow on `main` for the production track from 31 October 2026
-18:23 UTC, once an hour (every three hours after 1 November 09:23 UTC, until
-3 November). `scripts/scheduled_production_release.py` waits for each run: a
-refusal because the reset key is not valid yet waits for the next attempt;
-an accepted release, or any other failure, switches the schedule off so it
-never publishes twice or retries a real problem. It also switches itself off
-outside 2026. Running it by hand (Actions → Production release schedule →
-Run workflow) does the same thing now.
+**The first production release went through Play Console.**
+`production-release-schedule.yml` started this workflow on `main` for the
+production track on 31 October 2026 at 18:28 UTC. Play refused it because the
+app had not declared its foreground services, which is "any other failure", so
+the schedule switched itself off as designed (it is `disabled_manually` in
+Actions). The bundle the workflow saved was then uploaded by hand in Play
+Console, which is where those declarations are made (the API cannot make
+them). `scripts/scheduled_production_release.py` still switches itself off
+outside 2026; do not re-enable the schedule for a later release.
+
+### What Play Console asks for this app
+
+- **Foreground services** (Règles et programmes → Contenu de l'application):
+  only `FOREGROUND_SERVICE_PHONE_CALL` and `FOREGROUND_SERVICE_MICROPHONE`,
+  both from `flutter_callkit_incoming`'s adviser calls. The camera type is
+  removed from the merged manifest (calls are voice only), so it is never
+  declared. Tasks: VoIP, telecom API for the phone call, and background audio
+  input for the microphone, each with a link to a video of an adviser call
+  answered and carried on with the app in the background.
+- **Full-screen intent**: `USE_FULL_SCREEN_INTENT` comes from the same plugin.
+  Calls are one feature of the app, not its core, so the declaration answers
+  "Other": on Android 14 and later Play does not grant it at install, and an
+  incoming call rings as a heads-up notification rather than over the lock
+  screen. Claiming "making and receiving calls" as the core feature would not
+  be true and Google reviews that answer.
+- **Devices**: no hardware is required to install (the `uses-feature`
+  block in the manifest, pinned by `test/shell_capabilities_test.dart`). A
+  plugin or permission that adds a hardware requirement shows up in Play's
+  release check as devices "no longer supported"; make it optional rather
+  than drop them. The minimum is Android 7.0 (API 24), the toolchain's own.
+
+Once the declarations are saved they apply to every later bundle, and a
+version bump on `main` goes to Play from this workflow again.
 
 A version change on `main` now triggers both TestFlight and Google Play. Play
 defaults to `internal`; use the `GOOGLE_PLAY_TRACK` repository variable to set
