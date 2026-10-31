@@ -131,6 +131,9 @@ class StudentCalls extends ChangeNotifier {
   static const native = MethodChannel('ma.foorsa.student/calls');
   Map<String, dynamic>? invite;
   String status = '';
+
+  /// Why the last call failed; shown briefly after the call screen closes.
+  String? lastError;
   bool muted = false, speaker = false;
   bool _answering = false;
   bool _started = false;
@@ -328,9 +331,13 @@ class StudentCalls extends ChangeNotifier {
     } catch (_) {
       if (own == _generation) {
         await end();
-        status =
+        lastError =
             'Call could not connect. Check microphone permission and your connection.';
         notifyListeners();
+        Timer(const Duration(seconds: 5), () {
+          lastError = null;
+          notifyListeners();
+        });
       }
     } finally {
       _answering = false;
@@ -351,7 +358,11 @@ class StudentCalls extends ChangeNotifier {
 
   Future<void> toggleSpeaker() async {
     speaker = !speaker;
-    await Helper.setSpeakerphoneOn(speaker);
+    try {
+      await Helper.setSpeakerphoneOn(speaker);
+    } catch (_) {
+      speaker = !speaker;
+    }
     notifyListeners();
   }
 
@@ -366,20 +377,32 @@ class StudentCalls extends ChangeNotifier {
     _timer?.cancel();
     final pc = _peer;
     _peer = null;
-    await pc?.close();
-    await pc?.dispose();
+    // Each teardown step runs even if an earlier one throws, so the
+    // microphone and the system call UI are always released.
+    try {
+      await pc?.close();
+    } catch (_) {}
+    try {
+      await pc?.dispose();
+    } catch (_) {}
     final stream = _stream;
     _stream = null;
     for (final t in stream?.getTracks() ?? <MediaStreamTrack>[]) {
-      await t.stop();
+      try {
+        await t.stop();
+      } catch (_) {}
     }
-    await stream?.dispose();
+    try {
+      await stream?.dispose();
+    } catch (_) {}
     muted = false;
     speaker = false;
     _answering = false;
     status = '';
     notifyListeners();
-    await FlutterCallkitIncoming.endCall('${current['callId']}');
+    try {
+      await FlutterCallkitIncoming.endCall('${current['callId']}');
+    } catch (_) {}
     if (notifyServer) {
       try {
         await callSignal(current, operation);
@@ -399,6 +422,20 @@ class StudentCallOverlay extends StatelessWidget {
         final invite = calls.invite;
         return Stack(children: [
           child,
+          if (invite == null && calls.lastError != null)
+            Positioned(
+                left: 16,
+                right: 16,
+                bottom: 32,
+                child: SafeArea(
+                    child: Material(
+                        color: const Color(0xff102b42),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(calls.lastError!,
+                                style:
+                                    const TextStyle(color: Colors.white)))))),
           if (invite != null && calls.status != 'Incoming call')
             Positioned.fill(
                 child: Material(
@@ -413,8 +450,7 @@ class StudentCallOverlay extends StatelessWidget {
                       CircleAvatar(
                           radius: 55,
                           backgroundColor: Colors.white12,
-                          child: Text(
-                              '${invite['callerName'] ?? 'F'}'.substring(0, 1),
+                          child: Text(_initial(invite['callerName']),
                               style: const TextStyle(
                                   fontSize: 42, color: Colors.white))),
                       const SizedBox(height: 28),
@@ -456,4 +492,9 @@ class StudentCallOverlay extends StatelessWidget {
         const SizedBox(height: 10),
         Text(label, style: const TextStyle(color: Colors.white))
       ]);
+}
+
+String _initial(Object? name) {
+  final n = '${name ?? ''}'.trim();
+  return n.isEmpty ? 'F' : String.fromCharCode(n.runes.first);
 }

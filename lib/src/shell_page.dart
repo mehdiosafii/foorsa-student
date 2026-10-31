@@ -618,21 +618,7 @@ class _ShellPageState extends State<ShellPage> {
     final uri = Uri.tryParse(url);
     if (uri == null || url.isEmpty) return {'ok': false, 'error': 'bad url'};
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final dismissSpinner = _showSpinner();
 
     try {
       var name = filename.trim().isEmpty ? 'document' : filename.trim();
@@ -644,7 +630,10 @@ class _ShellPageState extends State<ShellPage> {
       // already carries Content-Disposition — no extra headers.
       final client = HttpClient();
       try {
-        final response = await client.getUrl(uri).then((r) => r.close());
+        final response = await client
+            .getUrl(uri)
+            .then((r) => r.close())
+            .timeout(const Duration(seconds: 60));
         if (response.statusCode >= 400) {
           throw HttpException('HTTP ${response.statusCode}');
         }
@@ -742,6 +731,24 @@ class _ShellPageState extends State<ShellPage> {
   }
 
 
+  /// Shows a blocking spinner and returns a function that removes exactly
+  /// that route — never whatever happens to be on top (Android back could
+  /// otherwise close the spinner and a later pop() would close the shell).
+  void Function() _showSpinner() {
+    if (!mounted) return () {};
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+          canPop: false, child: Center(child: FlickerSpinner(size: 44))),
+    );
+    unawaited(navigator.push(route));
+    return () {
+      if (route.isActive) navigator.removeRoute(route);
+    };
+  }
+
   // ── In-app file preview (FoorsaShellPreviewFile) ─────────────────────────
   bool _previewBusy = false;
 
@@ -751,21 +758,7 @@ class _ShellPageState extends State<ShellPage> {
     if (uri == null) return;
     _previewBusy = true;
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlickerSpinner(size: 44)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final dismissSpinner = _showSpinner();
 
     try {
       final dir = await getTemporaryDirectory();
@@ -778,7 +771,10 @@ class _ShellPageState extends State<ShellPage> {
         // Two different applicant documents can share a filename and size.
         // Fetch the authenticated URL every time so a prior preview never
         // appears in place of the document the student just opened.
-        final response = await client.getUrl(uri).then((r) => r.close());
+        final response = await client
+            .getUrl(uri)
+            .then((r) => r.close())
+            .timeout(const Duration(seconds: 60));
         if (response.statusCode >= 400) {
           throw HttpException('HTTP ${response.statusCode}');
         }
@@ -980,7 +976,12 @@ class _ShellPageState extends State<ShellPage> {
       for (final resource in request.resources) {
         final permission = resource == PermissionResourceType.CAMERA
             ? ph.Permission.camera : ph.Permission.microphone;
-        if (!(await permission.request()).isGranted) { granted = false; break; }
+        try {
+          if (!(await permission.request()).isGranted) { granted = false; break; }
+        } catch (_) {
+          granted = false; // another permission request is already running
+          break;
+        }
       }
     }
     return PermissionResponse(resources: request.resources,
@@ -995,7 +996,11 @@ class _ShellPageState extends State<ShellPage> {
     var allow = false;
     final uri = Uri.tryParse(origin);
     if (uri != null && _isInternal(uri)) {
-      allow = (await ph.Permission.locationWhenInUse.request()).isGranted;
+      try {
+        allow = (await ph.Permission.locationWhenInUse.request()).isGranted;
+      } catch (_) {
+        // Another permission request is already running.
+      }
     }
     return GeolocationPermissionShowPromptResponse(
         origin: origin, allow: allow, retain: allow);
@@ -1258,7 +1263,10 @@ class _ShellPageState extends State<ShellPage> {
                   _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
-                  await _openPushChat();
+                  try {
+                    await _openPushChat();
+                  } catch (_) {}
+                  if (!mounted) return;
                   if (_loader.showing) setState(_loader.pageLoaded);
                   if (!_errorThisLoad) {
                     _exitOffline();

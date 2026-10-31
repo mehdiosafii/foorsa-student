@@ -205,10 +205,16 @@ class StudentPush {
       await FirebaseMessaging.instance.deleteToken();
     }
     if (_localReady) await _local.cancelAll();
-    await StudentCalls.instance.end();
-    await FlutterCallkitIncoming.endAllCalls();
+    // The previous student's reminders must be cleared even if call
+    // teardown fails.
     _calendarState = {'enabled': false};
     await _saveCalendarState();
+    try {
+      await StudentCalls.instance.end();
+    } catch (_) {}
+    try {
+      await FlutterCallkitIncoming.endAllCalls();
+    } catch (_) {}
   }
 
   Future<void> _openLocal(String? payload) async {
