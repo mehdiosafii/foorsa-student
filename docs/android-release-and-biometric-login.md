@@ -105,6 +105,16 @@ details), Play will not send an edit for review by itself: the script then
 commits it with `changesNotSentForReview`, and the run's summary says to press
 **Send changes for review** in Publishing overview.
 
+**Sending a version already in Play to another track.** Write the track's
+name (`production`, `beta`, `alpha` or `internal`) in
+`.github/google-play-promote.txt` and merge: the Google Play workflow's
+`promote` job sends main's build number, which an earlier run uploaded, to
+that track without rebuilding it (Play keeps one bundle per version code, so
+a rebuild could not be uploaded again). It replaces what the track holds, a
+Play Console draft included, carries the release notes, and refuses a build
+number Play does not have or the track already holds. 1.2.29 (60) went from
+internal testing to production this way on 31 October 2026.
+
 A green publishing run means Google accepted the release submission, not that
 review or managed publishing has finished. Verify availability in Play Console
 and test an **in-place update** of the current Play-installed app. The previous

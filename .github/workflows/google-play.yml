@@ -3,9 +3,11 @@ name: Google Play
 on:
   push:
     branches: [main]
-    paths: [pubspec.yaml]
+    # .github/google-play-promote.txt names a track to send main's version to,
+    # when that version is already in Google Play (no rebuild, no upload).
+    paths: [pubspec.yaml, .github/google-play-promote.txt]
   pull_request:
-    paths: ['.github/workflows/google-play.yml', 'scripts/prepare_android_release.py', 'scripts/publish_google_play.py', pubspec.yaml]
+    paths: ['.github/workflows/google-play.yml', 'scripts/prepare_android_release.py', 'scripts/publish_google_play.py', pubspec.yaml, .github/google-play-promote.txt]
   workflow_dispatch:
     inputs:
       track:
@@ -47,6 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.version.outputs.changed }}
+      promote: ${{ steps.promote.outputs.track }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -77,6 +80,23 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'changed={str(changed).lower()}\n')
           PY
+          fi
+      - id: promote
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A push that changes .github/google-play-promote.txt sends main's
+          # version, already uploaded by an earlier run, to the track it names.
+          file=.github/google-play-promote.txt
+          if [ "$EVENT" = push ] && [ -f "$file" ] && ! git diff --quiet "$BEFORE" HEAD -- "$file"; then
+            track=$(tr -d '[:space:]' < "$file")
+            case "$track" in
+              internal|alpha|beta|production) echo "track=$track" >> "$GITHUB_OUTPUT" ;;
+              *) echo "::error::$file must name internal, alpha, beta or production"; exit 1 ;;
+            esac
+          else
+            echo 'track=' >> "$GITHUB_OUTPUT"
           fi
 
   publish:
@@ -144,3 +164,31 @@ jobs:
       - name: Remove signing credentials
         if: always()
         run: rm -f android/key.properties "$RUNNER_TEMP/foorsa-upload.jks"
+
+  promote:
+    needs: version
+    if: github.ref == 'refs/heads/main' && needs.version.outputs.promote != '' && needs.version.outputs.changed != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PLAY_TRACK: ${{ needs.version.outputs.promote }}
+      # The bundle for pubspec.yaml's build number must already be in Play.
+      PLAY_PROMOTE: '1'
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/1046359922746/locations/global/workloadIdentityPools/github-actions/providers/foorsa-student
+      GOOGLE_PLAY_SERVICE_ACCOUNT: play-publisher@foorsa-play-publishing.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Authenticate to Google Play without a key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+      - name: Install Play publisher
+        run: python3 -m pip install 'google-api-python-client==2.187.0' 'google-auth==2.43.0'
+      - name: Send the version already in Play to the track
+        run: python3 scripts/publish_google_play.py

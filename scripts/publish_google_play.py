@@ -43,6 +43,9 @@ def main():
         raise SystemExit('pubspec.yaml must contain a version name and numeric build number')
     name, number = version.groups()
     notes = release_notes()
+    # PLAY_PROMOTE=1: send pubspec.yaml's build number, already in Play, to the
+    # track (google-play.yml's promote job, from .github/google-play-promote.txt).
+    promote = os.environ.get('PLAY_PROMOTE') == '1'
     # Short-lived credentials from google-github-actions/auth (Workload Identity
     # Federation impersonating the Play publisher service account). No key file.
     credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/androidpublisher'])
@@ -57,13 +60,21 @@ def main():
         current_codes = [int(code) for release in current.get('releases', []) for code in release.get('versionCodes', [])]
         if current_codes and int(number) <= max(current_codes):
             raise SystemExit('Raise the shared pubspec.yaml build number above the version already on this Play track.')
-        bundle = edits.bundles().upload(
-            packageName=package, editId=edit,
-            media_body=MediaFileUpload('build/app/outputs/bundle/release/app-release.aab',
-                                      mimetype='application/octet-stream', resumable=True),
-        ).execute()
-        if str(bundle['versionCode']) != number:
-            raise SystemExit('The bundle version does not match pubspec.yaml')
+        if promote:
+            # Sent to another track as it is: the bundle an earlier run uploaded
+            # for this build number, never a rebuilt one (Play keeps one bundle
+            # per version code).
+            bundles = edits.bundles().list(packageName=package, editId=edit).execute().get('bundles', [])
+            if not any(str(item.get('versionCode')) == number for item in bundles):
+                raise SystemExit(f'Bundle {number} is not in Google Play yet; publish it before promoting it.')
+        else:
+            bundle = edits.bundles().upload(
+                packageName=package, editId=edit,
+                media_body=MediaFileUpload('build/app/outputs/bundle/release/app-release.aab',
+                                          mimetype='application/octet-stream', resumable=True),
+            ).execute()
+            if str(bundle['versionCode']) != number:
+                raise SystemExit('The bundle version does not match pubspec.yaml')
         release = {'name': f'{name} ({number})', 'versionCodes': [number], 'status': 'completed'}
         if notes:
             release['releaseNotes'] = notes
@@ -83,7 +94,8 @@ def main():
             waiting_for_send = True
         committed = True
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-            summary.write(f'Google Play accepted **{name} ({number})** for **{track}**.\n\n'
+            summary.write(f'Google Play accepted **{name} ({number})** for **{track}**'
+                          f'{" (promoted, not rebuilt)" if promote else ""}.\n\n'
                           f'Commit: `{os.environ["GITHUB_SHA"]}`. Google review/managed publishing may delay availability.\n')
             if waiting_for_send:
                 summary.write('\nPlay Console holds other changes waiting to be sent, so this release is saved '
