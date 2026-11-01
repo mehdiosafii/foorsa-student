@@ -50,6 +50,7 @@ jobs:
     outputs:
       changed: ${{ steps.version.outputs.changed }}
       promote: ${{ steps.promote.outputs.track }}
+      promote_version: ${{ steps.promote.outputs.version }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -86,17 +87,24 @@ jobs:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
         run: |
-          # A push that changes .github/google-play-promote.txt sends main's
-          # version, already uploaded by an earlier run, to the track it names.
+          # A push that changes .github/google-play-promote.txt sends a version
+          # already uploaded by an earlier run to the track it names: main's, or
+          # the one named after the track ("production 1.2.31+62").
           file=.github/google-play-promote.txt
           if [ "$EVENT" = push ] && [ -f "$file" ] && ! git diff --quiet "$BEFORE" HEAD -- "$file"; then
-            track=$(tr -d '[:space:]' < "$file")
+            read -r track version extra < "$file" || true
             case "$track" in
-              internal|alpha|beta|production) echo "track=$track" >> "$GITHUB_OUTPUT" ;;
+              internal|alpha|beta|production) ;;
               *) echo "::error::$file must name internal, alpha, beta or production"; exit 1 ;;
             esac
+            if [ -n "$extra" ] || { [ -n "$version" ] && ! printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+)*\+[0-9]+$'; }; then
+              echo "::error::$file is a track, optionally followed by a version such as 1.2.31+62"; exit 1
+            fi
+            echo "track=$track" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
           else
             echo 'track=' >> "$GITHUB_OUTPUT"
+            echo 'version=' >> "$GITHUB_OUTPUT"
           fi
 
   publish:
@@ -175,14 +183,18 @@ jobs:
       id-token: write
     env:
       PLAY_TRACK: ${{ needs.version.outputs.promote }}
-      # The bundle for pubspec.yaml's build number must already be in Play.
+      # The bundle must already be in Play: pubspec.yaml's build number, or the
+      # version the promote file names (its notes are read from history).
       PLAY_PROMOTE: '1'
+      PLAY_PROMOTE_VERSION: ${{ needs.version.outputs.promote_version }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/1046359922746/locations/global/workloadIdentityPools/github-actions/providers/foorsa-student
       GOOGLE_PLAY_SERVICE_ACCOUNT: play-publisher@foorsa-play-publishing.iam.gserviceaccount.com
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+          # A named older version's release notes are read from its last commit.
+          fetch-depth: 0
       - name: Authenticate to Google Play without a key
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
