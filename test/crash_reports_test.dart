@@ -50,4 +50,27 @@ void main() {
     expect(body.containsKey('build'), isFalse);
     expect(body.containsKey('os'), isFalse);
   });
+
+  test('Android says its release and WebView, in the shapes the server keeps', () async {
+    expect(CrashReports.androidDescription({'release': '16', 'sdk': 36, 'webView': '142.0.7444.171'}),
+        (os: 'Android 16', webView: 'WebView 142.0.7444.171'));
+    expect(CrashReports.androidDescription({'release': '8.1.0', 'webView': null}),
+        (os: 'Android 8.1.0', webView: null));
+    expect(CrashReports.androidDescription({'release': 'Baklava', 'webView': 'dev build'}),
+        (os: null, webView: null));
+    expect(CrashReports.androidDescription(null), (os: null, webView: null));
+
+    final sent = <Map<String, dynamic>>[];
+    final client = MockClient((request) async {
+      sent.add(jsonDecode(request.body) as Map<String, dynamic>);
+      return http.Response('{"ok":true}', 200);
+    });
+    final reports = CrashReports(client: client, baseUrl: 'https://student.foorsa.ma', os: 'Android 16')
+      ..webView = 'WebView 142.0.7444.171';
+    await reports.report('Dart: PlatformException(error, cast)');
+    await reports.report('Flutter: overflow', where: 'rendering library');
+    expect(sent[0]['where'], 'WebView 142.0.7444.171', reason: 'a report with no place names the WebView');
+    expect(sent[0]['os'], 'Android 16');
+    expect(sent[1]['where'], 'rendering library');
+  });
 }

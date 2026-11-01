@@ -1,1 +1,1 @@
-Vidéo de présentation : filmez-la directement dans l'application, son compris, avec votre texte à l'écran et une vérification de la position du téléphone. Corrections.
+L'application ne reste plus bloquée sur l'écran de chargement sur certains téléphones Android. Scanner : photos plus nettes (l'application garde la plus nette de plusieurs prises), en mode qualité de l'appareil photo, avec les couleurs fidèles de la page. Corrections.

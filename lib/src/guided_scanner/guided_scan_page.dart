@@ -83,6 +83,11 @@ const guidedScanResolutions = [
 /// stream would follow the photo to the sensor's maximum.
 const guidedScanIosResolutions = [ResolutionPreset.veryHigh, ResolutionPreset.high];
 
+/// What the portal reads as this camera's still (foorsa-reward,
+/// `guidedScanBridge.ts`): a whole photo, to be cropped, with the camera's own
+/// tones kept. Builds before 1.2.34 (65) sent no engine.
+const guidedScanAndroidEngine = 'android_guided';
+
 /// The longest a frame's work may take before it is done inline instead.
 const guidedScanWorkerTimeout = Duration(seconds: 2);
 
@@ -483,13 +488,23 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       await _focusOnPage(camera);
       if (!mounted || _closing || _camera != camera) return;
       capture = camera.takePicture();
-      final photo = await capture.timeout(
+      var photo = await capture.timeout(
         const Duration(seconds: 15),
       );
       capturedPhoto = photo;
       if (!mounted || _closing) {
         await _disposeCamera(camera);
         return;
+      }
+      // Android: a second still while the page is still held, a third when
+      // neither is sharp, and the sharpest is the one sent (scan_photo.dart).
+      if (Platform.isAndroid) {
+        photo = await _sharpestStill(camera, photo);
+        capturedPhoto = photo;
+        if (!mounted || _closing) {
+          await _disposeCamera(camera);
+          return;
+        }
       }
       // One light touch as the shot is in (never during the exposure, where
       // the motor would shake the picture), and a calm word.
@@ -544,6 +559,37 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         }
       }
     }
+  }
+
+  /// The sharpest of up to [scanStillsAtMost] stills of the page, the first
+  /// among them [first]: a hand that moved as the shutter went, the press of
+  /// the shutter itself, or focus that settled a moment late each blur one
+  /// still, rarely two in a row. The others are deleted. A phone that cannot
+  /// measure a still, or whose camera fails on the next, keeps what it has.
+  Future<XFile> _sharpestStill(CameraController camera, XFile first) async {
+    final stills = <XFile>[first];
+    final scores = <double?>[await _photos.sharpness(first.path)];
+    while (wantsAnotherStill(scores) && mounted && !_closing && _camera == camera &&
+        camera.value.isInitialized) {
+      XFile next;
+      try {
+        next = await camera.takePicture().timeout(const Duration(seconds: 8));
+      } catch (_) {
+        break;
+      }
+      stills.add(next);
+      scores.add(await _photos.sharpness(next.path));
+    }
+    final keep = bestStill(scores).clamp(0, stills.length - 1);
+    for (var i = 0; i < stills.length; i++) {
+      if (i == keep) continue;
+      try {
+        await File(stills[i].path).delete();
+      } catch (_) {
+        // The camera's cache directory is cleared with the app's.
+      }
+    }
+    return stills[keep];
   }
 
   Future<void> _useOtherCamera() async {

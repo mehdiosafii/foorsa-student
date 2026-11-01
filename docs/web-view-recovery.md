@@ -39,3 +39,31 @@ Now (`lib/src/web_view_recovery.dart`, wired in `shell_page.dart`):
 `test/web_view_recovery_test.dart` and `test/crash_reports_test.dart` pin it.
 What the page itself holds in memory during uploads is the portal's side
 (foorsa-reward, `src/portal/`).
+
+## A web view that could not be created (1.2.34, 65)
+
+The owner, 1 Nov 2026: "in android the app still freezes". The crash board held
+22 Android reports that day, on every build from 1.2.30 to 1.2.33, all one
+line: `PlatformException(error, android.webkit.WebSettingsWrapper cannot be cast
+to com.android.webview.chromium.ContentSettingsAdapter …)`. On those phones the
+installed Android System WebView refuses every `androidx.webkit` settings call,
+and the web view plugin makes such calls while the web view is created, so it
+was never created: the app stayed on its loader, and nothing on screen said why.
+There were only 4 Android sessions that week.
+
+- The app now builds the plugin from a copy whose settings calls are guarded
+  (`third_party/flutter_inappwebview_android`, `third_party/README.md`).
+- A web view that still has not said it was created after
+  `webViewStartLimit` (15 s) hands over to the offline screen, whose retry makes
+  a new one, and reports `Web view stopped: not created in time`
+  (`_watchWebViewStart` in `shell_page.dart`).
+- Reports from Android now carry the system (`Android 16`) and, where a report
+  names no place of its own, the WebView's version (`WebView 142.0…`), from the
+  `foorsa/system` channel (`MainActivity.kt`, `CrashReports.describeAndroid`).
+- `offscreenPreRaster` is off: it kept every tile of the page in view rastered
+  on top of what the page holds, in a web view the phone closes when it grows
+  too large.
+- A file for the portal (a photo picked, a scan) is turned into its data URL
+  off the UI isolate (`bridge_files.dart`): ten photos from the library at a
+  time held the app's frames while each was encoded.
+
