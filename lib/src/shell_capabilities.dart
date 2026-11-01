@@ -25,4 +25,8 @@ Map<String, Object> shellCapabilities({required bool isIOS}) => {
       // up (FoorsaShellLoading), and follows the theme the student chose
       // (FoorsaShellAppearance).
       'bootHandoff': true,
+      // The app speaks the student's language (English, French, Arabic): the
+      // portal says it with FoorsaShellLanguage, and the onboarding's first
+      // step hands it to the portal (app_language.dart).
+      'language': true,
     };

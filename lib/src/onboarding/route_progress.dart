@@ -5,6 +5,7 @@ library;
 
 import 'package:flutter/widgets.dart';
 
+import '../app_language.dart';
 import 'airliner.dart';
 import 'boarding_style.dart';
 
@@ -25,19 +26,30 @@ class RouteProgress extends StatelessWidget {
   final int? step, steps;
 
   /// "Step 2 of 5", or null without a count.
-  String? get where {
+  String? get where => whereIn(AppLanguage.en);
+
+  /// The same in [language].
+  String? whereIn(AppLanguage language) {
     final of = steps, at = step;
     if (of == null || at == null || of < 1) return null;
-    return 'Step ${at.clamp(1, of)} of $of';
+    return _where
+        .of(language)
+        .replaceFirst('{at}', '${at.clamp(1, of)}')
+        .replaceFirst('{of}', '$of');
   }
+
+  static const _where =
+      Words('Step {at} of {of}', 'Étape {at} sur {of}', 'الخطوة {at} من {of}');
+  static const _settingUp = Words('Setting up', 'Configuration', 'الإعداد');
 
   @override
   Widget build(BuildContext context) {
-    final where = this.where;
+    final language = AppLanguageScope.of(context);
+    final where = whereIn(language);
     return AnimatedBuilder(
       animation: progress,
       builder: (context, _) => Semantics(
-        label: 'Setting up',
+        label: _settingUp.of(language),
         value: where ?? '${(progress.value.clamp(0.0, 1.0) * 100).round()}%',
         excludeSemantics: true,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -54,8 +66,10 @@ class RouteProgress extends StatelessWidget {
                 // The bar it sits in is a fixed height.
                 textScaler:
                     MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3),
-                style: Boarding.caption(
-                    color: Boarding.muted, size: 9.5, spacing: 1.8),
+                style: scriptStyle(
+                    Boarding.caption(
+                        color: Boarding.muted, size: 9.5, spacing: 1.8),
+                    language),
               ),
             ),
         ]),

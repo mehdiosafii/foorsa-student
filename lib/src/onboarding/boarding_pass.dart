@@ -13,6 +13,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
+import '../app_language.dart';
 import 'airliner.dart';
 import 'boarding_style.dart';
 import 'brand_marks.dart';
@@ -24,6 +25,22 @@ const _passWidth = passWidth;
 
 /// Printed on the stub, as on a real pass.
 const stubPrint = 'PULL TO BOARD';
+
+/// The pass's print in the student's language. The codes, the flight number
+/// and the passenger's name stay in Latin capitals, as a real pass prints
+/// them; and the pass keeps its own way round in Arabic too, Casablanca at
+/// the left and China at the right, the plane flying east between them.
+const _stubPrint = Words(stubPrint, 'DÉTACHER ICI', 'اسحب للصعود');
+const _passTitle = Words('BOARDING PASS', 'CARTE D’EMBARQUEMENT', 'بطاقة الصعود');
+const _from = Words('Casablanca', 'Casablanca', 'الدار البيضاء');
+const _to = Words('China', 'Chine', 'الصين');
+const _passenger = Words('PASSENGER', 'PASSAGER', 'المسافر');
+const _gate = Words('GATE', 'PORTE', 'البوابة');
+const _gateValue = Words('SIGN IN', 'CONNEXION', 'تسجيل الدخول');
+const _passLabel = Words(
+    'Your boarding pass, from Casablanca to China.',
+    'Votre carte d’embarquement, de Casablanca vers la Chine.',
+    'بطاقة صعودك، من الدار البيضاء إلى الصين.');
 
 /// How much the stub gives under the guide's touch, in the pass's points of
 /// pull: well short of where the paper starts to give (seven tenths of the
@@ -215,11 +232,15 @@ class BoardingPassSceneState extends State<BoardingPassScene>
     }
   }
 
+  /// The language the pass is printed in.
+  AppLanguage _language = AppLanguage.en;
+
   @override
   Widget build(BuildContext context) {
+    _language = AppLanguageScope.of(context);
     return Semantics(
       container: true,
-      label: 'Your boarding pass, from Casablanca to China.',
+      label: _passLabel.of(_language),
       child: LayoutBuilder(builder: (context, constraints) {
         // The pass is drawn at its own size, fitted to the stage and
         // centred, where the transition leaves it.
@@ -244,9 +265,14 @@ class BoardingPassSceneState extends State<BoardingPassScene>
                 child: SizedBox(
                   width: _passWidth,
                   height: _passHeight,
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([_pull, _fall, _clock, _nudge]),
-                    builder: (context, _) => _pass(),
+                  // A paper object: it keeps its way round in Arabic.
+                  child: Directionality(
+                    textDirection: TextDirection.ltr,
+                    child: AnimatedBuilder(
+                      animation:
+                          Listenable.merge([_pull, _fall, _clock, _nudge]),
+                      builder: (context, _) => _pass(),
+                    ),
                   ),
                 ),
               ),
@@ -328,23 +354,35 @@ class BoardingPassSceneState extends State<BoardingPassScene>
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           const FoorsaWordmark(height: 18, color: Boarding.passInk),
-          const Spacer(),
-          Text('BOARDING PASS',
-              style: Boarding.caption(
-                  color: Boarding.passLabel, size: 8.5, spacing: 1.8)),
+          const SizedBox(width: 12),
+          // At its size at the end of the line, a longer title (French's)
+          // made smaller rather than pushed off the paper.
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(_passTitle.of(_language),
+                    maxLines: 1,
+                    style: _print(Boarding.caption(
+                        color: Boarding.passLabel, size: 8.5, spacing: 1.8))),
+              ),
+            ),
+          ),
         ]),
         const SizedBox(height: 30),
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _end('CMN', 'Casablanca', CrossAxisAlignment.start),
+          _end('CMN', _from.of(_language), CrossAxisAlignment.start),
           const Expanded(child: _Airway()),
-          _end('CHN', 'China', CrossAxisAlignment.end),
+          _end('CHN', _to.of(_language), CrossAxisAlignment.end),
         ]),
         const SizedBox(height: 22),
         Container(height: 1, color: Boarding.passRule),
         const SizedBox(height: 16),
         Row(children: [
-          Expanded(child: _field('PASSENGER', 'FOORSA STUDENT')),
-          _field('GATE', 'SIGN IN', end: true),
+          Expanded(
+              child: _field(_passenger.of(_language), 'FOORSA STUDENT')),
+          _field(_gate.of(_language), _gateValue.of(_language), end: true),
         ]),
       ]),
     );
@@ -385,9 +423,9 @@ class BoardingPassSceneState extends State<BoardingPassScene>
                 if (hint > 0)
                   Opacity(
                     opacity: hint,
-                    child: Text(stubPrint,
-                        style: Boarding.caption(
-                            color: Boarding.passInk, size: 8.5, spacing: 1.6)),
+                    child: Text(_stubPrint.of(_language),
+                        style: _print(Boarding.caption(
+                            color: Boarding.passInk, size: 8.5, spacing: 1.6))),
                   ),
               ]),
             ]),
@@ -409,25 +447,47 @@ class BoardingPassSceneState extends State<BoardingPassScene>
               fontFeatures: [FontFeature.tabularFigures()],
             )),
         const SizedBox(height: 4),
-        Text(city,
-            style: const TextStyle(
-                fontSize: 11.5, height: 1.3, color: Boarding.passLabel)),
+        // Never wider than the code over it leaves room for: a long name
+        // (الدار البيضاء) is made smaller rather than pushed off the paper.
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 112),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: align == CrossAxisAlignment.end
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            child: Text(city,
+                maxLines: 1,
+                style: _print(const TextStyle(
+                    fontSize: 11.5, height: 1.3, color: Boarding.passLabel))),
+          ),
+        ),
       ]);
+
+  /// A line of the pass's print: Arabic without spacing between its letters,
+  /// a size up, as its small capitals would otherwise be too fine to read.
+  TextStyle _print(TextStyle style) {
+    if (_language != AppLanguage.ar) return style;
+    return scriptStyle(style, _language)
+        .copyWith(fontSize: (style.fontSize ?? 12) + 1.5);
+  }
 
   Widget _field(String label, String value, {bool end = false}) => Column(
         crossAxisAlignment:
             end ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: Boarding.caption(
-                  color: Boarding.passLabel, size: 8, spacing: 1.4)),
+              style: _print(Boarding.caption(
+                  color: Boarding.passLabel, size: 8, spacing: 1.4))),
           const SizedBox(height: 5),
           Text(value,
-              style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.4,
-                  color: Boarding.passInk)),
+              style: scriptStyle(
+                  const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.4,
+                      color: Boarding.passInk),
+                  _language)),
         ],
       );
 }

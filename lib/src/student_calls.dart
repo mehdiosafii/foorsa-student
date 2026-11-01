@@ -8,7 +8,47 @@ import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
+import 'app_language.dart';
 import 'config.dart';
+
+/// What the call screens say, in the student's language. [StudentCalls.status]
+/// stays the English word, which the overlay compares; [callStatusText] says
+/// it.
+const _adviser = Words('Foorsa adviser', 'Conseiller Foorsa', 'مستشار فرصة');
+const _missedCall = Words('Missed adviser call',
+    'Appel manqué de votre conseiller', 'مكالمة فائتة من مستشارك');
+const _callInProgress = Words('Call in progress', 'Appel en cours', 'مكالمة جارية');
+const _answer = Words('Answer', 'Répondre', 'الرد');
+const _decline = Words('Decline', 'Refuser', 'رفض');
+const _callsChannel =
+    Words('Adviser calls', 'Appels du conseiller', 'مكالمات المستشار');
+const _missedChannel = Words('Missed adviser calls',
+    'Appels manqués du conseiller', 'مكالمات المستشار الفائتة');
+const _voiceCall =
+    Words('FOORSA · VOICE CALL', 'FOORSA · APPEL VOCAL', 'فرصة · مكالمة صوتية');
+const _mute = Words('Mute', 'Silence', 'كتم الصوت');
+const _unmute = Words('Unmute', 'Réactiver', 'إلغاء الكتم');
+const _speaker = Words('Speaker', 'Haut-parleur', 'مكبر الصوت');
+const _end = Words('End', 'Raccrocher', 'إنهاء');
+
+const _statuses = <String, Words>{
+  'Incoming call': Words('Incoming call', 'Appel entrant', 'مكالمة واردة'),
+  'Connecting…': Words('Connecting…', 'Connexion…', 'جارٍ الاتصال…'),
+  'Connected': Words('Connected', 'Connecté', 'تم الاتصال'),
+  'Reconnecting…':
+      Words('Reconnecting…', 'Reconnexion…', 'جارٍ إعادة الاتصال…'),
+  'Call could not connect. Check microphone permission and your connection.':
+      Words(
+          'Call could not connect. Check microphone permission and your '
+              'connection.',
+          'L’appel n’a pas pu aboutir. Vérifiez l’accès au micro et votre '
+              'connexion.',
+          'تعذّر إجراء المكالمة. يرجى التحقق من إذن الميكروفون ومن اتصالك.'),
+};
+
+/// [status] as the student reads it.
+String callStatusText(String status, AppLanguage language) =>
+    _statuses[status]?.of(language) ?? status;
 
 /// Whether this phone rings for an adviser call while the app is closed.
 ///
@@ -90,33 +130,37 @@ Future<void> showStudentCall(Map<String, dynamic> invite) async {
     } catch (_) {}
     return;
   }
+  // The phone's call screen in the student's language (read from the phone
+  // when this runs without the app's screens).
+  await ShellLanguage.instance.load();
+  final language = ShellLanguage.instance.current;
   await FlutterCallkitIncoming.showCallkitIncoming(CallKitParams(
       id: invite['callId'],
-      nameCaller: '${invite['callerName'] ?? 'Foorsa adviser'}',
+      nameCaller: '${invite['callerName'] ?? _adviser.of(language)}',
       appName: 'Foorsa Student',
-      handle: 'Foorsa adviser',
+      handle: _adviser.of(language),
       type: 0,
       duration: DateTime.parse(invite['expiresAt'])
           .difference(DateTime.now())
           .inMilliseconds,
       extra: extra,
-      missedCallNotification: const NotificationParams(
+      missedCallNotification: NotificationParams(
           showNotification: true,
           isShowCallback: false,
-          subtitle: 'Missed adviser call'),
-      callingNotification: const NotificationParams(
+          subtitle: _missedCall.of(language)),
+      callingNotification: NotificationParams(
           showNotification: true,
           isShowCallback: false,
-          subtitle: 'Call in progress'),
-      android: const AndroidParams(
+          subtitle: _callInProgress.of(language)),
+      android: AndroidParams(
           isCustomNotification: true,
           isShowFullLockedScreen: true,
           backgroundColor: '#183250',
           actionColor: '#16a66c',
-          textAccept: 'Answer',
-          textDecline: 'Decline',
-          incomingCallNotificationChannelName: 'Adviser calls',
-          missedCallNotificationChannelName: 'Missed adviser calls'),
+          textAccept: _answer.of(language),
+          textDecline: _decline.of(language),
+          incomingCallNotificationChannelName: _callsChannel.of(language),
+          missedCallNotificationChannelName: _missedChannel.of(language)),
       ios: const IOSParams(
           handleType: 'generic',
           supportsVideo: false,
@@ -416,18 +460,23 @@ class StudentCallOverlay extends StatelessWidget {
       builder: (context, _) {
         final calls = StudentCalls.instance;
         final invite = calls.invite;
+        final language = AppLanguageScope.of(context);
         return Stack(children: [
           child,
           if (invite != null && calls.status != 'Incoming call')
             Positioned.fill(
-                child: Material(
+                child: Directionality(
+                  textDirection: language.direction,
+                  child: Material(
                     color: const Color(0xff102b42),
                     child: SafeArea(
                         child: Column(children: [
                       const SizedBox(height: 60),
-                      const Text('FOORSA · VOICE CALL',
-                          style: TextStyle(
-                              color: Colors.white70, letterSpacing: 2)),
+                      Text(_voiceCall.of(language),
+                          style: scriptStyle(
+                              const TextStyle(
+                                  color: Colors.white70, letterSpacing: 2),
+                              language)),
                       const Spacer(),
                       CircleAvatar(
                           radius: 55,
@@ -437,11 +486,12 @@ class StudentCallOverlay extends StatelessWidget {
                               style: const TextStyle(
                                   fontSize: 42, color: Colors.white))),
                       const SizedBox(height: 28),
-                      Text('${invite['callerName'] ?? 'Foorsa adviser'}',
+                      Text('${invite['callerName'] ?? _adviser.of(language)}',
                           style: const TextStyle(
                               fontSize: 28, color: Colors.white)),
                       const SizedBox(height: 14),
-                      Text(calls.status,
+                      Text(callStatusText(calls.status, language),
+                          textAlign: TextAlign.center,
                           style: const TextStyle(color: Colors.white70)),
                       const Spacer(),
                       Row(
@@ -449,17 +499,18 @@ class StudentCallOverlay extends StatelessWidget {
                           children: [
                             _control(
                                 calls.muted ? Icons.mic_off : Icons.mic,
-                                calls.muted ? 'Unmute' : 'Mute',
+                                (calls.muted ? _unmute : _mute).of(language),
                                 () => calls.mute(!calls.muted)),
                             _control(
                                 calls.speaker ? Icons.volume_up : Icons.hearing,
-                                'Speaker',
+                                _speaker.of(language),
                                 () => calls.toggleSpeaker()),
-                            _control(Icons.call_end, 'End', () => calls.end(),
+                            _control(Icons.call_end, _end.of(language),
+                                () => calls.end(),
                                 danger: true)
                           ]),
                       const SizedBox(height: 60)
-                    ]))))
+                    ])))))
         ]);
       });
   Widget _control(IconData icon, String label, VoidCallback action,

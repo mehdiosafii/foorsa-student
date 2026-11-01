@@ -26,6 +26,33 @@ Code: `lib/src/onboarding/`. The words and the order are in
 `onboarding_flow.dart`; the gate that decides who sees it is
 `onboarding_store.dart` and `onboarding_gate.dart`.
 
+## Three languages
+
+The first step is the language (the owner, 1 Nov 2026: "give to the student
+three choices of language when he first use the app first thing, arabic,
+french or english (the default)"). It asks the phone for nothing, so the App
+Review rules for screens before a prompt do not apply to it; its words say
+only what the choice does: the app, the emails and the notifications, and
+where to change it (Profile › Settings, in the portal).
+
+- Every word of the onboarding is written in the three (`copyFor(step,
+  language)` in `onboarding_flow.dart`, the scenes' own words beside them),
+  following the portal's style rules (foorsa-reward `shared/i18n/README.md`).
+  Arabic lays out right to left; the drawings keep their own way round (the
+  arrow thrown up, the page dragged into the frame, the boarding pass with
+  Casablanca at the left and China at the right).
+- The choice is kept on the phone (`app_language.dart`, file
+  `portal_language`) and handed to the portal loading underneath: its
+  `localStorage.foorsa_portal_language` is written before its code runs, and a
+  page already open is told with `foorsa:language`, on which it starts again
+  in the language, unseen. So the portal never shows its own chooser after the
+  onboarding.
+- The portal says its language with `FoorsaShellLanguage` at start and when
+  the student changes it in Settings; the app's own screens follow (the
+  loading and offline screens, the quick sign-in question, the call screen,
+  the scanner, notifications). The phone's permission prompts are iOS's own,
+  in the phone's language (`ios/Runner/*.lproj/InfoPlist.strings`).
+
 ## Who sees it
 
 Only first-time downloaders. An update from an older build has used the
@@ -48,13 +75,14 @@ objects are made of the portal's own glass (`glass.dart`), paper ones aside.
 
 | Step | Asks for | The object, and what the student does |
 | --- | --- | --- |
+| Language | nothing | three rows on one glass pane, each language named in itself (English, marked Default, Français, العربية) and laid out in its own direction. **Tap your language**: the check moves to it, the screen's words change to it at once, and a beat later the pane folds into the arrow and unfolds as the welcome, in that language |
 | Welcome | nothing | one line of a split-flap board in a glass case, flipping through the voyage's 16 cities (a tap flips it), and under it Foorsa's arrow, resting. **Swipe the arrow up to begin**: the arrow is thrown up into the board, or tapped |
 | Notifications | `Permission.notification` | a stack of Foorsa's notifications on glass (the app's real texts), a new one landing on top every few seconds. **Tap the notification**; a yes sends the front card up and the phone's own first notification down |
 | Camera | `Permission.camera` | the scanner's frame, and a drawn passport page that lifts out of it into the hand, tipped and turned. **Drag the page into the frame**: it straightens as it nears, the corners close on it, and let go close enough it is taken with a soft flash (a tap puts it in) |
 | Microphone | `Permission.microphone` | the chat's mic, a glass orb, with a voice running out from it on both sides. **Tap the mic**; pressed, the voice comes up (nothing is recorded) |
 | Location | `Permission.locationWhenInUse` | a night map under a glass lens, and on its edge the map's locate button, which is Foorsa's arrow. **Tap the arrow to find yourself**; a yes drops the blue dot onto the map with its heading and the next prayer on a glass chip, then the arrow leaves the button and glides into the map |
 | Tracking | `Permission.appTrackingTransparency` | off, see below; a shield in a glass orb. **Tap the shield** |
-| Boarding pass | nothing | the pass, PULL TO BOARD printed on its stub. **Pull the stub down to board**: it comes off (a tap tears it too) |
+| Boarding pass | nothing | the pass, PULL TO BOARD printed on its stub (DÉTACHER ICI, اسحب للصعود). **Pull the stub down to board**: it comes off (a tap tears it too) |
 
 The words in bold are the line each screen shows next to its object, and the
 gesture its touch does there (see **What to do** below).
@@ -113,8 +141,9 @@ splash deepens into, a few faint stars high up and one soft light behind the
 object (`night_sky.dart`). Progress is one hairline with the journey's
 airliner at its tip, and under it, as a departures board prints it, which
 step this is of how many (STEP 2 OF 5, said to a screen reader as "Setting
-up, Step 2 of 5"; `route_progress.dart`). The welcome is the cover: it shows
-the wordmark instead, and the count starts after it. The headline is
+up, Step 2 of 5"; `route_progress.dart`). The language and the welcome come
+before the count: they show the wordmark instead, and the count starts after
+the welcome. The headline is
 32 pt bold with tight tracking and the line under it 17 pt muted, at the top,
 centred and broken into even lines (`BalancedText`, like CSS
 `text-wrap: balance`), so no word is left alone on a line. The object sits

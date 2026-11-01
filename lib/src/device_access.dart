@@ -1,6 +1,55 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'app_language.dart';
 import 'student_calls.dart';
+
+/// What the reminder says, in the student's language.
+const _title = Words('Set up your device', 'Configurez votre appareil',
+    'إعداد جهازك');
+const _intro = Words(
+    'Choose the access you want to enable. You can keep using Foorsa without it.',
+    'Choisissez les accès à activer. Vous pouvez continuer à utiliser Foorsa '
+        'sans eux.',
+    'اختر الأذونات التي تريد تفعيلها. يمكنك مواصلة استخدام فرصة بدونها.');
+const _camera = Words('Camera', 'Appareil photo', 'الكاميرا');
+const _cameraDetail = Words('Scan documents and take photos.',
+    'Scanner des documents et prendre des photos.',
+    'المسح الضوئي للوثائق والتقاط الصور.');
+const _microphone = Words('Microphone', 'Micro', 'الميكروفون');
+const _microphoneDetail = Words('Calls, voice messages and videos.',
+    'Appels, messages vocaux et vidéos.',
+    'المكالمات والرسائل الصوتية والفيديوهات.');
+const _location = Words('Location while using the app',
+    'Position pendant l’utilisation de l’application',
+    'الموقع أثناء استخدام التطبيق');
+const _locationDetail = Words(
+    'Prayer times, local weather and nearby places such as supermarkets.',
+    'Heures de prière, météo locale et lieux proches, comme les '
+        'supermarchés.',
+    'أوقات الصلاة والطقس المحلي والأماكن القريبة مثل المتاجر الكبرى.');
+const _restricted = Words('Restricted by your device settings.',
+    'Limité par les réglages de votre appareil.',
+    'مقيّد من إعدادات جهازك.');
+const _settings = Words('Settings', 'Réglages', 'الإعدادات');
+const _allowAccess = Words('Allow', 'Autoriser', 'السماح');
+const _later = Words(
+    'Missing access will be offered again next time you open the app.',
+    'Les accès manquants vous seront proposés à la prochaine ouverture de '
+        'l’application.',
+    'ستُعرض عليك الأذونات الناقصة مجددًا عند فتح التطبيق في المرة القادمة.');
+const _continue = Words('Continue', 'Continuer', 'متابعة');
+const _openSettings = Words(
+    'Open your phone Settings, then Foorsa Student, to allow access.',
+    'Ouvrez les Réglages de votre téléphone, puis Foorsa Student, pour '
+        'autoriser l’accès.',
+    'افتح إعدادات هاتفك، ثم Foorsa Student، للسماح بالوصول.');
+const _blocked = Words('Access is blocked. Tap Settings to enable it.',
+    'L’accès est bloqué. Touchez Réglages pour l’activer.',
+    'الوصول محظور. اضغط على الإعدادات لتفعيله.');
+const _unavailable = Words(
+    'Access is unavailable. You can continue and try again later.',
+    'L’accès est indisponible. Vous pouvez continuer et réessayer plus tard.',
+    'الوصول غير متاح. يمكنك المتابعة وإعادة المحاولة لاحقًا.');
 
 const studentPermissions = [
   Permission.camera,
@@ -82,7 +131,7 @@ class _AccessDialogState extends State<_AccessDialog>
     with WidgetsBindingObserver {
   Map<Permission, PermissionStatus> _statuses = {};
   bool _busy = false;
-  String? _error;
+  Words? _error;
   @override
   void initState() {
     super.initState();
@@ -111,15 +160,13 @@ class _AccessDialogState extends State<_AccessDialog>
       final status = _statuses[permission] ?? await permission.status;
       if (status.isPermanentlyDenied) {
         if (!await openAppSettings() && mounted) {
-          setState(() => _error =
-              'Open your phone Settings, then Foorsa Student, to allow access.');
+          setState(() => _error = _openSettings);
         }
       } else if (!status.isRestricted) {
         final result = await permission.request();
         if (mounted) setState(() => _statuses[permission] = result);
         if (result.isPermanentlyDenied && mounted) {
-          setState(
-              () => _error = 'Access is blocked. Tap Settings to enable it.');
+          setState(() => _error = _blocked);
         }
       }
       // Preserve request results: some Android versions only expose permanent
@@ -131,16 +178,15 @@ class _AccessDialogState extends State<_AccessDialog>
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _error =
-            'Access is unavailable. You can continue and try again later.');
+        setState(() => _error = _unavailable);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Widget _row(
-      Permission permission, IconData icon, String title, String detail) {
+  Widget _row(Permission permission, IconData icon, String title,
+      String detail, AppLanguage language) {
     final status = _statuses[permission];
     final granted = status?.isGranted == true;
     final restricted = status?.isRestricted == true;
@@ -153,7 +199,7 @@ class _AccessDialogState extends State<_AccessDialog>
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-          Text(restricted ? 'Restricted by your device settings.' : detail,
+          Text(restricted ? _restricted.of(language) : detail,
               style: Theme.of(context).textTheme.bodySmall),
         ])),
         const SizedBox(width: 8),
@@ -164,8 +210,10 @@ class _AccessDialogState extends State<_AccessDialog>
             onPressed: _busy || restricted || status == null
                 ? null
                 : () => _allow(permission),
-            child: Text(
-                status?.isPermanentlyDenied == true ? 'Settings' : 'Allow'),
+            child: Text((status?.isPermanentlyDenied == true
+                    ? _settings
+                    : _allowAccess)
+                .of(language)),
           ),
       ]),
     );
@@ -178,33 +226,33 @@ class _AccessDialogState extends State<_AccessDialog>
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-        title: const Text('Set up your device'),
+  Widget build(BuildContext context) {
+    final language = AppLanguageScope.of(context);
+    return Directionality(
+      textDirection: language.direction,
+      child: AlertDialog(
+        title: Text(_title.of(language)),
         content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text(
-              'Choose the access you want to enable. You can keep using Foorsa without it.'),
-          _row(Permission.camera, Icons.camera_alt_outlined, 'Camera',
-              'Scan documents and take photos.'),
-          _row(Permission.microphone, Icons.mic_none, 'Microphone',
-              'Calls, voice messages and videos.'),
-          _row(
-              Permission.locationWhenInUse,
-              Icons.location_on_outlined,
-              'Location while using the app',
-              'Prayer times, local weather and nearby places such as supermarkets.'),
+          Text(_intro.of(language)),
+          _row(Permission.camera, Icons.camera_alt_outlined,
+              _camera.of(language), _cameraDetail.of(language), language),
+          _row(Permission.microphone, Icons.mic_none, _microphone.of(language),
+              _microphoneDetail.of(language), language),
+          _row(Permission.locationWhenInUse, Icons.location_on_outlined,
+              _location.of(language), _locationDetail.of(language), language),
           if (_error != null)
-            Text(_error!,
+            Text(_error!.of(language),
                 style: TextStyle(color: Theme.of(context).colorScheme.error)),
           const SizedBox(height: 8),
-          const Text(
-              'Missing access will be offered again next time you open the app.',
-              style: TextStyle(fontSize: 12)),
+          Text(_later.of(language), style: const TextStyle(fontSize: 12)),
         ])),
         actions: [
           TextButton(
               onPressed: _busy ? null : () => Navigator.of(context).pop(),
-              child: const Text('Continue'))
+              child: Text(_continue.of(language)))
         ],
-      );
+      ),
+    );
+  }
 }

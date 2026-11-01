@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../app_language.dart';
 import '../portal_handover.dart';
 import '../shell_haptics.dart';
 import 'onboarding_config.dart';
@@ -37,23 +38,36 @@ class OnboardingScope extends InheritedWidget {
   bool updateShouldNotify(OnboardingScope old) => old.active != active;
 }
 
+/// What the first real notification says.
+const firstNotificationTitle = Words('Foorsa', 'Foorsa', 'فرصة');
+const firstNotificationBody = Words(
+    'Notifications are on. Replies from your adviser will show up here.',
+    'Les notifications sont activées. Les réponses de votre conseiller '
+        's’afficheront ici.',
+    'الإشعارات مفعّلة. ستظهر ردود مستشارك هنا.');
+
+/// The channel Foorsa's updates use, as the phone's settings name it.
+const updatesChannelName =
+    Words('Foorsa updates', 'Actualités Foorsa', 'مستجدات فرصة');
+
 /// The first real notification, the moment the student turns them on: the
 /// card the scene was showing them flies up, and the phone's own banner
-/// comes down. The plugin is already set up by the shell (student_push.dart),
-/// on the channel Foorsa's updates use.
-Future<void> showFirstNotification() async {
+/// comes down, in the student's language. The plugin is already set up by
+/// the shell (student_push.dart), on the channel Foorsa's updates use.
+Future<void> showFirstNotification(
+    [AppLanguage language = AppLanguage.en]) async {
   try {
     await FlutterLocalNotificationsPlugin().show(
       id: 20261029,
-      title: 'Foorsa',
-      body:
-          'Notifications are on. Replies from your adviser will show up here.',
-      notificationDetails: const NotificationDetails(
-        android: AndroidNotificationDetails('student_updates', 'Foorsa updates',
+      title: firstNotificationTitle.of(language),
+      body: firstNotificationBody.of(language),
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+            'student_updates', updatesChannelName.of(language),
             importance: Importance.high,
             priority: Priority.high,
             icon: 'ic_stat_message'),
-        iOS: DarwinNotificationDetails(
+        iOS: const DarwinNotificationDetails(
             presentBanner: true, presentList: true, presentSound: true),
       ),
     );
@@ -72,7 +86,12 @@ class FirstLaunchGate extends StatefulWidget {
     this.haptics,
     this.asksToTrack = OnboardingConfig.asksToTrack,
     this.sounds,
+    this.language,
   });
+
+  /// Where the language chosen on the first step goes (the app's, by
+  /// default: app_language.dart).
+  final ShellLanguage? language;
 
   /// When the shell may make its WebView on a first launch: after the
   /// takeoff (takeoff_intro.dart), which a platform view's set-up would
@@ -127,9 +146,16 @@ class _FirstLaunchGateState extends State<FirstLaunchGate> {
               onBoarded: PortalHandover.instance.boarded,
               onGranted: (access) {
                 if (access == BoardingAccess.notifications) {
-                  unawaited(showFirstNotification());
+                  unawaited(showFirstNotification(
+                      (widget.language ?? ShellLanguage.instance).current));
                 }
               },
+              // The phone's kept language, else English; once the student
+              // chooses, the app speaks it and the portal is handed it.
+              language: AppLanguageScope.of(context),
+              onLanguage: (language) => (widget.language ??
+                      ShellLanguage.instance)
+                  .chooseInOnboarding(language),
               onFinished: _finish,
               isIOS: defaultTargetPlatform == TargetPlatform.iOS,
               asksToTrack: widget.asksToTrack,

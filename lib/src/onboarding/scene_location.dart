@@ -13,6 +13,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import '../app_language.dart';
 import 'arrow_flight.dart';
 import 'boarding_style.dart';
 import 'gesture_demo.dart';
@@ -289,11 +290,15 @@ class _LocateArrowPainter extends CustomPainter {
       old.pokedAt != pokedAt;
 }
 
+/// The afternoon prayer, as the portal names it.
+const _asr = Words('Asr', 'Asr', 'العصر');
+
 class _PrayerLabel extends StatelessWidget {
   const _PrayerLabel();
 
   @override
   Widget build(BuildContext context) {
+    final language = AppLanguageScope.of(context);
     return GlassPane(
       glass: Glass.pane,
       radius: 999,
@@ -302,7 +307,7 @@ class _PrayerLabel extends StatelessWidget {
         child: Text.rich(
           TextSpan(children: [
             TextSpan(
-                text: 'Asr  ',
+                text: '${_asr.of(language)}  ',
                 style: TextStyle(
                     color: Boarding.muted.withValues(alpha: 0.95),
                     fontWeight: FontWeight.w500)),
@@ -313,8 +318,9 @@ class _PrayerLabel extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                     fontFeatures: [FontFeature.tabularFigures()])),
           ]),
-          style:
+          style: scriptStyle(
               const TextStyle(fontSize: 13.5, height: 1.2, letterSpacing: -0.1),
+              language),
         ),
       ),
     );

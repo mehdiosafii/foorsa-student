@@ -27,6 +27,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:url_launcher/url_launcher.dart' as launcher;
 
+import 'app_language.dart';
 import 'boot_loader_gate.dart';
 import 'config.dart';
 import 'embedded_navigation.dart';
@@ -48,6 +49,52 @@ import 'student_biometrics.dart';
 import 'chat_viewport.dart';
 import 'crash_reports.dart';
 import 'web_view_recovery.dart';
+
+/// What the shell itself says around the portal, in the student's language.
+const _quickSignInNotSaved = Words(
+    'Quick sign-in could not be saved. You can keep using your password.',
+    'La connexion rapide n’a pas pu être enregistrée. Vous pouvez continuer '
+        'avec votre mot de passe.',
+    'تعذّر حفظ تسجيل الدخول السريع. يمكنك مواصلة استخدام كلمة المرور.');
+const _scanAlreadyOpen = Words(
+    'A scan is already open. Finish or cancel it first.',
+    'Un scan est déjà ouvert. Terminez-le ou annulez-le d’abord.',
+    'هناك مسح ضوئي مفتوح بالفعل. يرجى إنهاؤه أو إلغاؤه أولًا.');
+const _scanInPortal = Words(
+    'Open your document in the student portal to scan it.',
+    'Ouvrez votre document dans le portail étudiant pour le scanner.',
+    'افتح وثيقتك في بوابة الطالب لمسحها ضوئيًا.');
+const _scannerExpired = Words(
+    'The scanner connection expired. Close and reopen your document to try '
+        'again.',
+    'La connexion au scanner a expiré. Fermez puis rouvrez votre document '
+        'pour réessayer.',
+    'انتهت صلاحية الاتصال بالماسح الضوئي. أغلق وثيقتك ثم افتحها من جديد '
+        'لإعادة المحاولة.');
+const _cameraAccess = Words(
+    'Allow camera access for Foorsa Student in Settings, then try again.',
+    'Autorisez l’accès à l’appareil photo pour Foorsa Student dans les '
+        'Réglages, puis réessayez.',
+    'اسمح لتطبيق Foorsa Student بالوصول إلى الكاميرا من الإعدادات، ثم أعد '
+        'المحاولة.');
+const _cameraCouldNotOpen = Words(
+    'The document camera could not open. Please try again.',
+    'L’appareil photo n’a pas pu s’ouvrir. Veuillez réessayer.',
+    'تعذّر فتح كاميرا الوثائق. يرجى إعادة المحاولة.');
+const _savedInFiles = Words('Saved in Files › Foorsa Student',
+    'Enregistré dans Fichiers › Foorsa Student',
+    'تم الحفظ في الملفات › Foorsa Student');
+const _savedInDownloads = Words('Saved in Downloads',
+    'Enregistré dans Téléchargements', 'تم الحفظ في التنزيلات');
+const _open = Words('Open', 'Ouvrir', 'فتح');
+const _couldNotOpen = Words('This file could not be opened',
+    'Ce fichier n’a pas pu être ouvert', 'تعذّر فتح هذا الملف');
+const _downloading =
+    Words('Downloading {name}…', 'Téléchargement de {name}…', 'جارٍ تنزيل {name}…');
+const _saved = Words('Saved: {name}', 'Enregistré\u00A0: {name}', 'تم الحفظ: {name}');
+const _backAgain = Words('Press back again to exit',
+    'Appuyez à nouveau sur Retour pour quitter',
+    'اضغط على رجوع مرة أخرى للخروج');
 
 class ShellPage extends StatefulWidget {
   const ShellPage({
@@ -175,6 +222,62 @@ class _ShellPageState extends State<ShellPage> {
 
   void _biometricNotice(String message) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// [words] in the student's language now.
+  String _say(Words words) => words.of(ShellLanguage.instance.current);
+
+  // ── The student's language (app_language.dart) ───────────────────────────
+  static const _languageScriptGroup = 'foorsa-portal-language';
+
+  /// Gives the portal the app's language before its code runs, when the app
+  /// has one; null when nobody has chosen on this phone (the portal asks).
+  UserScript? _languageScript() {
+    final source = portalLanguageScriptFor(
+        ShellLanguage.instance, Uri.parse(AppConfig.baseUrl).origin);
+    if (source == null) return null;
+    return UserScript(
+      groupName: _languageScriptGroup,
+      source: source,
+      injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+      forMainFrameOnly: true,
+    );
+  }
+
+  /// The language changed (the onboarding's first step, or the portal's
+  /// Settings): the app's screens redraw in it, the next page load is given
+  /// it, and a choice made in the onboarding reaches the page already open
+  /// behind it, which starts again in it.
+  void _languageChanged() {
+    if (!mounted) return;
+    setState(() {});
+    unawaited(_handLanguageToPortal());
+  }
+
+  Future<void> _handLanguageToPortal({bool refreshScript = true}) async {
+    final controller = _controller;
+    final language = ShellLanguage.instance.chosen;
+    if (controller == null || language == null) return;
+    try {
+      if (refreshScript) {
+        await controller.removeUserScriptsByGroupName(
+            groupName: _languageScriptGroup);
+        final script = _languageScript();
+        if (script != null) await controller.addUserScript(userScript: script);
+      }
+      final handOver = ShellLanguage.instance.handOver;
+      if (handOver != null && _isTrustedPortal(await controller.getUrl())) {
+        await controller.evaluateJavascript(
+            source: portalLanguageScript(
+          origin: Uri.parse(AppConfig.baseUrl).origin,
+          language: language,
+          handOver: handOver,
+          announce: true,
+        ));
+      }
+    } catch (_) {
+      // The next page load is given it, or the portal asks itself.
+    }
   }
 
   static bool _isCancellation(PlatformException error) {
@@ -341,7 +444,7 @@ class _ShellPageState extends State<ShellPage> {
       // No note on success: the system's own Face ID check has just said it.
       _biometricWasEnabled = true;
     } catch (_) {
-      _biometricNotice('Quick sign-in could not be saved. You can keep using your password.');
+      _biometricNotice(_say(_quickSignInNotSaved));
     } finally {
       _biometricBusy = false;
     }
@@ -385,6 +488,7 @@ class _ShellPageState extends State<ShellPage> {
   @override
   void initState() {
     super.initState();
+    ShellLanguage.instance.addListener(_languageChanged);
     _push.onTokenChanged = () async {
       final controller = _controller;
       if (controller != null && _isTrustedPortal(await controller.getUrl())) {
@@ -585,7 +689,7 @@ class _ShellPageState extends State<ShellPage> {
       return {'unsupported': true};
     }
     if (_scanInProgress) {
-      return {'error': 'A scan is already open. Finish or cancel it first.'};
+      return {'error': _say(_scanAlreadyOpen)};
     }
     _scanInProgress = true;
     try {
@@ -595,20 +699,22 @@ class _ShellPageState extends State<ShellPage> {
       // whitelist used for navigation is NOT sufficient authorization here.
       final activeUrl = await _controller?.getUrl();
       if (!_isTrustedPortal(activeUrl)) {
-        return {'error': 'Open your document in the student portal to scan it.'};
+        return {'error': _say(_scanInPortal)};
       }
       if (callingNonce is! String || callingNonce.isEmpty ||
           callingNonce != _scannerNonce) {
-        return {'error': 'The scanner connection expired. Close and reopen your document to try again.'};
+        return {'error': _say(_scannerExpired)};
       }
       final status = await ph.Permission.camera.request();
       if (!status.isGranted) {
-        return {'error': 'Allow camera access for Foorsa Student in Settings, then try again.'};
+        return {'error': _say(_cameraAccess)};
       }
       if (!mounted) return {'cancelled': true};
-      final profile = GuidedDocumentProfile.fromPortal(request);
+      final profile = GuidedDocumentProfile.fromPortal(
+          request, ShellLanguage.instance.current);
       if (Platform.isIOS) {
-        final native = await NativeDocumentScanner().scan(profile: profile);
+        final native = await NativeDocumentScanner()
+            .scan(profile: profile, language: ShellLanguage.instance.current);
         final destination = await _controller?.getUrl();
         if (!mounted || !_isTrustedPortal(destination) || callingNonce != _scannerNonce) {
           return {'cancelled': true};
@@ -657,7 +763,7 @@ class _ShellPageState extends State<ShellPage> {
         if (result.liveReading != null) 'liveReading': result.liveReading,
       };
     } catch (_) {
-      return {'error': 'The document camera could not open. Please try again.'};
+      return {'error': _say(_cameraCouldNotOpen)};
     } finally {
       _scanInProgress = false;
     }
@@ -775,11 +881,10 @@ class _ShellPageState extends State<ShellPage> {
       dismissSpinner();
       final path = openPath;
       messenger?.showSnackBar(SnackBar(
-        content: Text(Platform.isIOS
-            ? 'Saved in Files › Foorsa Student'
-            : 'Saved in Downloads'),
+        content: Text(
+            _say(Platform.isIOS ? _savedInFiles : _savedInDownloads)),
         action: SnackBarAction(
-          label: 'Open',
+          label: _say(_open),
           onPressed: () {
             OpenFilex.open(path, type: mime.isEmpty ? null : mime);
           },
@@ -853,14 +958,14 @@ class _ShellPageState extends State<ShellPage> {
         final result =
             await OpenFilex.open(file.path, type: kind.isEmpty ? null : kind);
         if (result.type != ResultType.done) {
-          messenger?.showSnackBar(const SnackBar(
-              content: Text('This file could not be opened')));
+          messenger?.showSnackBar(
+              SnackBar(content: Text(_say(_couldNotOpen))));
         }
       }
     } catch (_) {
       dismissSpinner();
       messenger?.showSnackBar(
-          const SnackBar(content: Text('This file could not be opened')));
+          SnackBar(content: Text(_say(_couldNotOpen))));
     } finally {
       _previewBusy = false;
     }
@@ -873,7 +978,8 @@ class _ShellPageState extends State<ShellPage> {
             (segs.isEmpty ? 'download' : segs.last))
         .replaceAll(RegExp('[/\\\\]'), '_');
     final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.showSnackBar(SnackBar(content: Text('Downloading $name…')));
+    messenger?.showSnackBar(SnackBar(
+        content: Text(_say(_downloading).replaceFirst('{name}', name))));
     try {
       final cookies = await CookieManager.instance().getCookies(url: uri);
       final cookieHeader =
@@ -896,7 +1002,8 @@ class _ShellPageState extends State<ShellPage> {
       messenger?.hideCurrentSnackBar();
       final result = await OpenFilex.open(file.path);
       if (result.type != ResultType.done) {
-        messenger?.showSnackBar(SnackBar(content: Text('Saved: $name')));
+        messenger?.showSnackBar(SnackBar(
+            content: Text(_say(_saved).replaceFirst('{name}', name))));
       }
     } catch (_) {
       messenger?.hideCurrentSnackBar();
@@ -1068,14 +1175,15 @@ class _ShellPageState extends State<ShellPage> {
     }
     _lastBackPress = now;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(
-          content: Text('Press back again to exit'),
-          duration: Duration(seconds: 2)),
+      SnackBar(
+          content: Text(_say(_backAgain)),
+          duration: const Duration(seconds: 2)),
     );
   }
 
   @override
   void dispose() {
+    ShellLanguage.instance.removeListener(_languageChanged);
     _biometricGeneration++;
     _biometrics.dispose();
     _push.dispose();
@@ -1115,7 +1223,11 @@ class _ShellPageState extends State<ShellPage> {
                 gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
                   Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
                 },
-                initialUserScripts: UnmodifiableListView([_sessionScript()]),
+                initialUserScripts: UnmodifiableListView([
+                  _sessionScript(),
+                  // The student's language before the portal's code runs.
+                  if (_languageScript() case final language?) language,
+                ]),
                 // The start page, or after a rebuild the page the student was on.
                 initialUrlRequest: URLRequest(url: WebUri(_recovery.pageToReload().toString())),
                 initialSettings: InAppWebViewSettings(
@@ -1177,6 +1289,19 @@ class _ShellPageState extends State<ShellPage> {
                     handlerName: 'FoorsaShellAppearance',
                     callback: (args) {
                       _applyAppearance(args.isNotEmpty ? args[0] : null);
+                      return null;
+                    },
+                  );
+                  // The language the portal runs in ('en', 'fr', 'ar'), when
+                  // it starts and when the student changes it in Settings:
+                  // the app's own screens follow (app_language.dart).
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellLanguage',
+                    callback: (args) async {
+                      if (args.isNotEmpty &&
+                          _isTrustedPortal(await controller.getUrl())) {
+                        ShellLanguage.instance.portalSays(args[0]);
+                      }
                       return null;
                     },
                   );
@@ -1318,6 +1443,10 @@ class _ShellPageState extends State<ShellPage> {
                 },
                 onLoadStop: (controller, url) async {
                   await _openPushChat();
+                  // A choice made in the onboarding while this page loaded.
+                  if (ShellLanguage.instance.handOver != null) {
+                    unawaited(_handLanguageToPortal(refreshScript: false));
+                  }
                   if (_loader.showing) setState(_loader.pageLoaded);
                   if (!_errorThisLoad) {
                     _recovery.notePage(url, trusted: _isTrustedPortal(url));
@@ -1420,6 +1549,13 @@ class _PreviewScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: AppLanguageScope.of(context).direction,
+      child: _scaffold(),
+    );
+  }
+
+  Widget _scaffold() {
     return Scaffold(
       backgroundColor: const Color(0xFF10192E),
       appBar: AppBar(
@@ -1453,9 +1589,9 @@ class _PdfPreviewPageState extends State<_PdfPreviewPage> {
     return _PreviewScaffold(
       title: widget.title,
       child: _failed
-          ? const Center(
-              child: Text('This file could not be opened',
-                  style: TextStyle(color: Colors.white70)))
+          ? Center(
+              child: Text(_couldNotOpen.of(AppLanguageScope.of(context)),
+                  style: const TextStyle(color: Colors.white70)))
           : PDFView(
               filePath: widget.path,
               enableSwipe: true,
@@ -1502,9 +1638,9 @@ class _ImagePreviewPageState extends State<_ImagePreviewPage> {
           child: Center(
             child: Image.file(
               File(widget.path),
-              errorBuilder: (_, __, ___) => const Text(
-                  'This file could not be opened',
-                  style: TextStyle(color: Colors.white70)),
+              errorBuilder: (context, __, ___) => Text(
+                  _couldNotOpen.of(AppLanguageScope.of(context)),
+                  style: const TextStyle(color: Colors.white70)),
             ),
           ),
         ),

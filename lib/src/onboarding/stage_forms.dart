@@ -1,8 +1,8 @@
-/// Where each step's object stands on the stage, as one shape: the board's
-/// line, the front notification, the passport page, the mic, the map's lens,
-/// the shield, the pass. The scenes draw their objects exactly here, and the
-/// transitions morph between these shapes through the arrow, so one object
-/// seems to become the next.
+/// Where each step's object stands on the stage, as one shape: the
+/// languages' pane, the board's line, the front notification, the passport
+/// page, the mic, the map's lens, the shield, the pass. The scenes draw their
+/// objects exactly here, and the transitions morph between these shapes
+/// through the arrow, so one object seems to become the next.
 library;
 
 import 'dart:math' as math;
@@ -71,6 +71,14 @@ double lensRadius(Size stage) =>
     math.min(lensBox, math.min(stage.width, stage.height)) * 0.4;
 const shieldSide = 96.0;
 
+/// The languages' pane: three of the portal's 58 pt rows, smaller rows only
+/// on a stage too short for them (scene_language.dart).
+const languageRowHeight = 58.0;
+const languagePaneRadius = 22.0;
+Size languagePaneSize(Size stage) => Size(
+    math.min(320.0, stage.width),
+    3 * math.min(languageRowHeight, math.max(40.0, (stage.height - 16) / 3)));
+
 const passWidth = 300.0;
 const passHeight = 352.0;
 
@@ -96,6 +104,10 @@ StageForm formOf(BoardingStep step, Size stage) {
       Rect.fromCenter(center: Offset.zero, width: w, height: h),
       Radius.circular(r));
   switch (step) {
+    case BoardingStep.language:
+      final pane = languagePaneSize(stage);
+      return StageForm(
+          box(pane.width, pane.height, languagePaneRadius), Glass.pane);
     case BoardingStep.welcome:
       final cell = boardCell(stage.width);
       final h = cell * 1.44;

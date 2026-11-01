@@ -1,0 +1,12 @@
+/* The phone's own permission prompts, in French. iOS shows these in the
+   phone's language (Info.plist holds the English). */
+
+"NSFaceIDUsageDescription" = "Utilisez Face ID pour vous connecter en toute sécurité à votre compte étudiant Foorsa sur cet appareil.";
+
+"NSCameraUsageDescription" = "Foorsa Student utilise l’appareil photo pour scanner vos documents et prendre votre photo d’identité pour votre dossier de candidature.";
+
+"NSLocationWhenInUseUsageDescription" = "Foorsa Student utilise votre position pendant que vous utilisez l’application, pour les heures de prière, la météo locale et les lieux proches comme les supermarchés.";
+
+"NSMicrophoneUsageDescription" = "Foorsa Student utilise votre micro pour les appels avec votre conseiller, les messages vocaux et les vidéos de présentation.";
+
+"NSPhotoLibraryUsageDescription" = "Foorsa Student vous permet de choisir la photo d’un document, ou votre vidéo de présentation, à envoyer dans votre dossier de candidature.";

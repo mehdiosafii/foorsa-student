@@ -13,6 +13,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
+import '../app_language.dart';
 import 'boarding_style.dart';
 import 'gesture_demo.dart';
 import 'glass.dart';
@@ -22,7 +23,7 @@ import 'stage_forms.dart';
 class _Note {
   _Note(this.id, this.body);
   final int id;
-  final String body;
+  final Words body;
   // Springs, stepped every frame: where it is, where it is going.
   double y = -46, vy = 0;
   double scale = 1.04, vs = 0;
@@ -33,11 +34,26 @@ class _Note {
   bool gone = false;
 }
 
-const _bodies = <String>[
-  'You have a new message from your adviser.',
-  'An update is ready in your Foorsa app.',
-  'Your class or calendar event is coming up.',
+/// The three the app sends (student_push.dart), in each language.
+const notificationBodies = <Words>[
+  Words(
+      'You have a new message from your adviser.',
+      'Vous avez un nouveau message de votre conseiller.',
+      'لديك رسالة جديدة من مستشارك.'),
+  Words(
+      'An update is ready in your Foorsa app.',
+      'Une mise à jour vous attend dans votre application Foorsa.',
+      'تحديث جديد بانتظارك في تطبيق فرصة.'),
+  Words(
+      'Your class or calendar event is coming up.',
+      'Votre cours ou un événement de votre calendrier approche.',
+      'اقترب موعد حصتك أو حدث في تقويمك.'),
 ];
+
+/// The card's title, the notification's own (onboarding_gate.dart), and
+/// when it came.
+const _title = Words('Foorsa', 'Foorsa', 'فرصة');
+const _now = Words('now', 'maintenant', 'الآن');
 
 /// The notifications' gesture: a tap on the front card, where a thumb would.
 GestureDemo notificationsDemo(Size stage) {
@@ -93,12 +109,12 @@ class _NotificationsSceneState extends State<NotificationsScene>
     widget.outcome.addListener(_answered);
     if (widget.still) {
       for (var i = 0; i < 3; i++) {
-        _add(_bodies[(2 - i) % _bodies.length]);
+        _add(notificationBodies[(2 - i) % notificationBodies.length]);
       }
       return;
     }
     // The first is already there: it is what the last object became.
-    _add(_bodies[0]);
+    _add(notificationBodies[0]);
     _notes.forEach(_snap);
     _next = 1;
     _ticker.start();
@@ -120,11 +136,11 @@ class _NotificationsSceneState extends State<NotificationsScene>
 
   void _arrive() {
     if (!mounted || widget.outcome.value != null) return;
-    _add(_bodies[_next % _bodies.length]);
+    _add(notificationBodies[_next % notificationBodies.length]);
     _next++;
   }
 
-  void _add(String body) {
+  void _add(Words body) {
     _notes.insert(0, _Note(_ids++, body));
     for (var i = 0; i < _notes.length; i++) {
       _notes[i].slot = i;
@@ -208,6 +224,7 @@ class _NotificationsSceneState extends State<NotificationsScene>
 
   @override
   Widget build(BuildContext context) {
+    final language = AppLanguageScope.of(context);
     return LayoutBuilder(builder: (context, constraints) {
       final width = cardWidth(constraints.maxWidth);
       final middle = constraints.maxHeight / 2;
@@ -250,7 +267,8 @@ class _NotificationsSceneState extends State<NotificationsScene>
                               scale: note.scale,
                               alignment: Alignment.bottomCenter,
                               child: _Card(
-                                  body: note.body,
+                                  body: note.body.of(language),
+                                  language: language,
                                   front: note.slot == 0 || note.gone),
                             ),
                           ),
@@ -270,8 +288,10 @@ class _NotificationsSceneState extends State<NotificationsScene>
 const _stackHeight = 120.0;
 
 class _Card extends StatelessWidget {
-  const _Card({required this.body, required this.front});
+  const _Card(
+      {required this.body, required this.front, required this.language});
   final String body;
+  final AppLanguage language;
   final bool front;
 
   @override
@@ -284,7 +304,9 @@ class _Card extends StatelessWidget {
           glass: front ? Glass.pane : _behind,
           radius: 22,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 16, 0),
+            // The icon's side is the start: the right in Arabic, as the
+            // phone draws its own notifications.
+            padding: const EdgeInsetsDirectional.fromSTEB(14, 0, 16, 0),
             child: _content(),
           ),
         ),
@@ -320,17 +342,19 @@ class _Card extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              const Expanded(
-                child: Text('Foorsa',
+              Expanded(
+                child: Text(_title.of(language),
                     maxLines: 1,
-                    style: TextStyle(
-                        fontSize: 15,
-                        height: 1.25,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.2,
-                        color: Boarding.heading)),
+                    style: scriptStyle(
+                        const TextStyle(
+                            fontSize: 15,
+                            height: 1.25,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.2,
+                            color: Boarding.heading),
+                        language)),
               ),
-              Text('now',
+              Text(_now.of(language),
                   style: TextStyle(
                       fontSize: 13,
                       height: 1.25,
@@ -340,11 +364,13 @@ class _Card extends StatelessWidget {
             BalancedText(body,
                 maxLines: 2,
                 textAlign: TextAlign.start,
-                style: const TextStyle(
-                    fontSize: 14.5,
-                    height: 1.3,
-                    letterSpacing: -0.15,
-                    color: Boarding.ink)),
+                style: scriptStyle(
+                    const TextStyle(
+                        fontSize: 14.5,
+                        height: 1.3,
+                        letterSpacing: -0.15,
+                        color: Boarding.ink),
+                    language)),
           ],
         ),
       ),

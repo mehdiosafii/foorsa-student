@@ -9,10 +9,19 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../app_language.dart';
 import 'boarding_style.dart';
 import 'glass.dart';
 import 'split_flap.dart';
 import 'stage_forms.dart';
+
+/// The board's caption, and what it says to a screen reader. The cities stay
+/// as an airport's board prints them, in capitals.
+const _caption = Words('NEXT DEPARTURE', 'PROCHAIN DÉPART', 'الرحلة القادمة');
+const _nextCity = Words('Next departure, {city}', 'Prochain départ, {city}',
+    'الرحلة القادمة، {city}');
+const _tapForNext = Words('Tap for the next city',
+    'Touchez pour la ville suivante', 'اضغط للانتقال إلى المدينة التالية');
 
 const _cities = <String>[
   'BEIJING',
@@ -76,6 +85,7 @@ class _DeparturesSceneState extends State<DeparturesScene> {
 
   @override
   Widget build(BuildContext context) {
+    final language = AppLanguageScope.of(context);
     return LayoutBuilder(builder: (context, constraints) {
       final cell = boardCell(constraints.maxWidth);
       final height = cell * 1.44;
@@ -97,8 +107,8 @@ class _DeparturesSceneState extends State<DeparturesScene> {
       // its caption above it and its reflection below.
       return Semantics(
         button: true,
-        label: 'Next departure, ${_cities[_index]}',
-        hint: 'Tap for the next city',
+        label: _nextCity.of(language).replaceFirst('{city}', _cities[_index]),
+        hint: _tapForNext.of(language),
         excludeSemantics: true,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -123,7 +133,8 @@ class _DeparturesSceneState extends State<DeparturesScene> {
                 line(),
                 Transform.translate(
                   offset: Offset(0, -(height / 2 + boardCase + 24)),
-                  child: Text('NEXT DEPARTURE', style: Boarding.caption()),
+                  child: Text(_caption.of(language),
+                      style: scriptStyle(Boarding.caption(), language)),
                 ),
                 Transform.translate(
                   offset: Offset(0, height / 2 + boardCase + 6 + height * 0.31),

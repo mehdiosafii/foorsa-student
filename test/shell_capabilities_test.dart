@@ -10,6 +10,7 @@ void main() {
       'videoInput': true,
       'hapticTextures': 3,
       'bootHandoff': true,
+      'language': true,
     });
   });
 
@@ -19,6 +20,7 @@ void main() {
       'videoInput': true,
       'hapticTextures': 3,
       'bootHandoff': true,
+      'language': true,
     });
   });
 

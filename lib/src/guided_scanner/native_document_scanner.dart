@@ -2,11 +2,37 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+import '../app_language.dart';
 import 'scan_document_profile.dart';
 import 'scan_text_reading.dart';
 
 /// The iPhone scanner returns one already-cropped page per invocation. Keep the
 /// existing pages envelope so the portal bridge remains wire-compatible.
+/// What the scanner bridge tells the portal when a scan cannot be used, in
+/// the student's language (the portal shows it as it is).
+const _pageNotPrepared = Words(
+    'The scanned page could not be prepared. Please try again.',
+    'La page scannée n’a pas pu être préparée. Veuillez réessayer.',
+    'تعذّر تجهيز الصفحة الممسوحة. يرجى إعادة المحاولة.');
+const _originalsNotPrepared = Words(
+    'The original photos could not be prepared. Please try again.',
+    'Les photos d’origine n’ont pas pu être préparées. Veuillez réessayer.',
+    'تعذّر تجهيز الصور الأصلية. يرجى إعادة المحاولة.');
+const _unexpectedMode = Words(
+    'The camera returned an unexpected capture mode. Please try again.',
+    'L’appareil photo a renvoyé un mode de capture inattendu. Veuillez '
+        'réessayer.',
+    'أعادت الكاميرا وضع التقاط غير متوقع. يرجى إعادة المحاولة.');
+const _scannerUnavailable = Words(
+    'The iOS document scanner is unavailable in this app build.',
+    'Le scanner de documents iOS n’est pas disponible dans cette version de '
+        'l’application.',
+    'ماسح الوثائق الخاص بـ iOS غير متاح في هذا الإصدار من التطبيق.');
+const _cameraCouldNotFinish = Words(
+    'The document camera could not finish. Please try again.',
+    'L’appareil photo n’a pas pu terminer. Veuillez réessayer.',
+    'تعذّر على كاميرا الوثائق إنهاء المسح. يرجى إعادة المحاولة.');
+
 class NativeDocumentScanner {
   static const channel = MethodChannel('foorsa/document_scanner');
   static const maximumOriginalBytes = 8 * 1024 * 1024;
@@ -17,7 +43,9 @@ class NativeDocumentScanner {
       value[0] == 0xff && value[1] == 0xd8 &&
       value[value.length - 2] == 0xff && value.last == 0xd9;
 
-  Future<Map<String, dynamic>> scan({GuidedDocumentProfile? profile}) async {
+  Future<Map<String, dynamic>> scan(
+      {GuidedDocumentProfile? profile,
+      AppLanguage language = AppLanguage.en}) async {
     try {
       final response = await channel.invokeMapMethod<String, dynamic>(
         'scan',
@@ -30,9 +58,7 @@ class NativeDocumentScanner {
       if (pages is! List ||
           pages.length != 1 ||
           pages.any((page) => page is! Uint8List || page.isEmpty)) {
-        return {
-          'error': 'The scanned page could not be prepared. Please try again.'
-        };
+        return {'error': _pageNotPrepared.of(language)};
       }
       final imagegen = profile?.outputMode == 'imagegen';
       final originals = response?['originals'];
@@ -43,11 +69,11 @@ class NativeDocumentScanner {
               originals.any((photo) => !_isBoundedJpeg(photo)) ||
               originals.fold<int>(0, (sum, photo) => sum + (photo as Uint8List).length) >
                   maximumTotalOriginalBytes)) {
-        return {'error': 'The original photos could not be prepared. Please try again.'};
+        return {'error': _originalsNotPrepared.of(language)};
       }
       // Never accept a mode switch or raw-photo payload from an older request.
       if (!imagegen && (response?['processing'] == 'imagegen' || originals != null)) {
-        return {'error': 'The camera returned an unexpected capture mode. Please try again.'};
+        return {'error': _unexpectedMode.of(language)};
       }
       // What the camera read while the page was in view. Checked and bounded;
       // a malformed reading is dropped, never the scan.
@@ -90,14 +116,10 @@ class NativeDocumentScanner {
         if (liveReading != null) 'liveReading': liveReading,
       };
     } on MissingPluginException {
-      return {
-        'error': 'The iOS document scanner is unavailable in this app build.'
-      };
+      return {'error': _scannerUnavailable.of(language)};
     } catch (_) {
       // A failed scan is not permission to open a different camera silently.
-      return {
-        'error': 'The document camera could not finish. Please try again.'
-      };
+      return {'error': _cameraCouldNotFinish.of(language)};
     }
   }
 }

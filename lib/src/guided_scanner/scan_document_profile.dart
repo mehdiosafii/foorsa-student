@@ -8,6 +8,8 @@ library;
 
 import 'dart:ui';
 
+import '../app_language.dart';
+
 enum GuidedScanLayout { passport, card, portrait, adaptive }
 
 const _allowedZones = <String>{
@@ -98,7 +100,10 @@ class GuidedDocumentProfile {
       GuidedScanLayout.adaptive => [0.71, 1.42],
     };
 
-  static GuidedDocumentProfile fromPortal(Object? request) {
+  /// The profile the portal asked for. What the portal does not say is said
+  /// in [language].
+  static GuidedDocumentProfile fromPortal(Object? request,
+      [AppLanguage language = AppLanguage.en]) {
     if (request is GuidedDocumentProfile) return request;
     Map<dynamic, dynamic>? details;
     var key = '';
@@ -118,14 +123,14 @@ class GuidedDocumentProfile {
     if (!_folderLayouts.containsKey(key)) key = 'drive_files';
     final layout = _folderLayouts[key]!;
     final title = _safeLabel(details?['title'], 70) ??
-      (key == 'identity' ? 'Passport'
-        : key == 'parent_id' ? 'Parent ID card' : 'document');
+      (key == 'identity' ? _passport
+        : key == 'parent_id' ? _parentCard : _document).of(language);
     final instruction = _safeLabel(details?['instruction'], 200) ??
       (key == 'identity'
-        ? 'Include the portrait and both machine-readable lines.'
+        ? _passportHow
         : key == 'parent_id'
-          ? 'Include every corner and both sides if requested.'
-          : 'Keep all printed details, stamps and signatures visible.');
+          ? _parentCardHow
+          : _documentHow).of(language);
     final fallbackZones = key == 'identity'
       ? ['passport_photo', 'passport_mrz']
       : key == 'parent_id'
@@ -154,6 +159,24 @@ class GuidedDocumentProfile {
         ? requestedSide : null,
     );
   }
+
+  static const _passport = Words('Passport', 'Passeport', 'جواز السفر');
+  static const _parentCard = Words('Parent ID card',
+      'Carte d’identité du parent', 'بطاقة تعريف أحد الوالدين');
+  static const _document = Words('document', 'document', 'وثيقة');
+  static const _passportHow = Words(
+      'Include the portrait and both machine-readable lines.',
+      'Incluez la photo et les deux lignes du bas.',
+      'أظهر الصورة والسطرين في أسفل الصفحة.');
+  static const _parentCardHow = Words(
+      'Include every corner and both sides if requested.',
+      'Incluez chaque coin, et les deux faces si elles sont demandées.',
+      'أظهر كل الزوايا، والوجهين إذا طُلب ذلك.');
+  static const _documentHow = Words(
+      'Keep all printed details, stamps and signatures visible.',
+      'Gardez visibles tous les détails imprimés, les cachets et les '
+          'signatures.',
+      'اجعل كل البيانات المطبوعة والأختام والتوقيعات ظاهرة.');
 
   static String? _safeLabel(Object? source, int maximum) {
     if (source is! String) return null;
@@ -203,9 +226,18 @@ class GuidedDocumentProfile {
     };
   }
 
-  String get pagesHint => switch (pages) {
-    'two_page_form' => 'After this photo, add page 2 from the review screen.',
-    'multiple' => 'Add any remaining pages from the review screen.',
+  String get pagesHint => pagesHintIn(AppLanguage.en);
+
+  /// What comes after this photo, in the student's language.
+  String pagesHintIn(AppLanguage language) => switch (pages) {
+    'two_page_form' => const Words(
+        'After this photo, add page 2 from the review screen.',
+        'Après cette photo, ajoutez la page 2 depuis l’écran de vérification.',
+        'بعد هذه الصورة، أضف الصفحة 2 من شاشة المراجعة.').of(language),
+    'multiple' => const Words(
+        'Add any remaining pages from the review screen.',
+        'Ajoutez les pages restantes depuis l’écran de vérification.',
+        'أضف الصفحات المتبقية من شاشة المراجعة.').of(language),
     _ => '',
   };
 }
