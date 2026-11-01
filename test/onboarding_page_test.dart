@@ -64,11 +64,12 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 /// The object on the screen that is its control, by what a screen reader
-/// calls it.
+/// calls it (a language's row says its name in its own language).
 Finder _object(String label) => find
     .byWidgetPredicate((w) =>
         w is Semantics &&
-        w.properties.label == label &&
+        (w.properties.label ?? w.properties.attributedLabel?.string) ==
+            label &&
         w.properties.button == true)
     .last;
 
@@ -119,6 +120,17 @@ void main() {
     )));
     await _settle(tester);
 
+    // First the language: three names, each in itself, English the default.
+    expect(key.currentState!.currentStep, BoardingStep.language);
+    expect(find.text('Choose your language.'), findsOneWidget);
+    expect(find.text('Tap your language'), findsOneWidget);
+    for (final name in ['English', 'Français', 'العربية']) {
+      expect(find.text(name), findsOneWidget, reason: name);
+    }
+    expect(find.text('Default'), findsOneWidget);
+    await _act(tester, 'English');
+
+    expect(key.currentState!.currentStep, BoardingStep.welcome);
     expect(find.text('Your journey to China starts here.'), findsOneWidget);
     // No button: the arrow is thrown, and the screen says so under it.
     expect(find.text('Swipe the arrow up to begin'), findsOneWidget);
@@ -196,6 +208,7 @@ void main() {
       asksToTrack: true,
     )));
     await _settle(tester);
+    await _act(tester, 'English');
     await _act(tester, 'Get started');
     expect(key.currentState!.currentStep, BoardingStep.boarding);
     expect(phone.asked, isEmpty);
@@ -217,6 +230,7 @@ void main() {
       asksToTrack: false,
     )));
     await _settle(tester);
+    await _act(tester, 'English');
     await _act(tester, 'Get started');
     await _act(tester, 'Continue');
     await tester.pump(const Duration(milliseconds: 1200));
@@ -279,13 +293,16 @@ void main() {
       sounds: heard,
     )));
     await _settle(tester);
-    await _act(tester, 'Get started');
+    // Choosing a language makes no sound: the words change.
+    await _act(tester, 'Français');
+    expect(heard.cues.where((c) => !c.startsWith('stop ')), ['flap']);
+    await _act(tester, 'Commencer');
     for (var i = 0; i < 4; i++) {
-      await _act(tester, 'Continue');
+      await _act(tester, 'Continuer');
       await tester.pump(const Duration(milliseconds: 1200));
       await _settle(tester);
     }
-    await tester.tap(_object('Board'));
+    await tester.tap(_object('Embarquer'));
     await tester.pump(const Duration(milliseconds: 400));
     // Every sound is one the app ships; a press and a step have none.
     expect(heard.cues.where((c) => !c.startsWith('stop ')),
@@ -375,7 +392,8 @@ void main() {
     )));
     await tester.pump();
     key.currentState!.debugJumpTo(BoardingStep.welcome);
-    await _frames(tester, const Duration(milliseconds: 1000));
+    // The languages' pane folds into the arrow and unfolds as the board.
+    await _frames(tester, const Duration(milliseconds: 1300));
     expect(key.currentState!.armed, isTrue);
     expect(heard.bed, isTrue);
 
@@ -540,6 +558,7 @@ void main() {
       expect(find.byType(FirstLaunchOnboarding), findsOneWidget);
       expect(active.last, isTrue);
 
+      await _act(tester, 'English');
       await _act(tester, 'Get started');
       await _act(tester, 'Board');
       await tester.pump(const Duration(milliseconds: 400));

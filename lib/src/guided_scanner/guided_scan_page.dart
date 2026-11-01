@@ -39,9 +39,11 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app_language.dart';
 import 'camera_luma.dart';
 import 'live_text_reader.dart';
 import 'scan_coach.dart';
+import 'scan_copy_language.dart';
 import 'scan_document_profile.dart';
 import 'scan_frame_loop.dart';
 import 'scan_frame_processor.dart';
@@ -661,6 +663,34 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     );
   }
 
+  // What the scanner says, in the student's language.
+  static const _close =
+      Words('Close scanner', 'Fermer le scanner', 'إغلاق الماسح الضوئي');
+  static const _scanTitle = Words(
+      'Scan {title}', 'Scanner\u00A0: {title}', 'المسح الضوئي: {title}');
+  static const _lightOff =
+      Words('Turn light off', 'Éteindre la lampe', 'إطفاء الضوء');
+  static const _lightOn =
+      Words('Turn light on', 'Allumer la lampe', 'تشغيل الضوء');
+  static const _autoOn = Words('Auto on', 'Auto activé', 'تلقائي: مفعّل');
+  static const _autoOff =
+      Words('Auto off', 'Auto désactivé', 'تلقائي: متوقف');
+  static const _takePhotoLabel = Words('Take photo manually',
+      'Prendre la photo manuellement', 'التقاط الصورة يدويًا');
+  static const _footnote = Words(
+      'Automatic capture once the right paper is clear and steady · manual '
+          'capture always available',
+      'Capture automatique dès que le bon document est net et stable · '
+          'capture manuelle toujours possible',
+      'التقاط تلقائي حين تكون الوثيقة الصحيحة واضحة وثابتة · الالتقاط اليدوي '
+          'متاح دائمًا');
+  static const _cameraApp =
+      Words('Camera app', 'Appli Appareil photo', 'تطبيق الكاميرا');
+  static const _cameraAppHint = Words(
+      'Opens your phone\'s camera app instead of this scanner',
+      'Ouvre l’application Appareil photo du téléphone à la place de ce scanner',
+      'يفتح تطبيق الكاميرا في هاتفك بدل هذا الماسح');
+
   /// What the panel says now: the photo's own moments first, then the
   /// camera's, then the live guidance for the frame (scan_coach.dart).
   ScanGuidance _shownGuidance(bool cameraWorking) {
@@ -684,6 +714,14 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
   @override
   Widget build(BuildContext context) {
+    final language = AppLanguageScope.of(context);
+    return Directionality(
+      textDirection: language.direction,
+      child: _page(context, language),
+    );
+  }
+
+  Widget _page(BuildContext context, AppLanguage language) {
     final camera = _camera;
     final cameraWorking = camera?.value.isInitialized == true;
     final shown = _shownGuidance(cameraWorking);
@@ -711,14 +749,16 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                     Row(
                       children: [
                         IconButton(
-                          tooltip: 'Close scanner',
+                          tooltip: _close.of(language),
                           onPressed: _busy ? null
                             : () => Navigator.of(context).pop(),
                           icon: const Icon(Icons.close, color: Colors.white),
                         ),
                         Expanded(
                           child: Text(
-                            'Scan ${widget.profile.title}',
+                            _scanTitle
+                                .of(language)
+                                .replaceFirst('{title}', widget.profile.title),
                             textAlign: TextAlign.center,
                             style: const TextStyle(
                               color: Colors.white, fontSize: 17,
@@ -727,7 +767,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                           ),
                         ),
                         IconButton(
-                          tooltip: _torch ? 'Turn light off' : 'Turn light on',
+                          tooltip: (_torch ? _lightOff : _lightOn).of(language),
                           onPressed: cameraWorking && !_busy ? _toggleTorch : null,
                           icon: Icon(
                             _torch ? Icons.flash_on : Icons.flash_off,
@@ -744,10 +784,10 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                         color: Colors.white70, fontSize: 12, height: 1.4,
                       ),
                     ),
-                    if (widget.profile.pagesHint.isNotEmpty) ...[
+                    if (widget.profile.pagesHintIn(language).isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(
-                        widget.profile.pagesHint,
+                        widget.profile.pagesHintIn(language),
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Color(0xFFB8DDFF),
@@ -767,7 +807,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   ScanGuidancePanel(
-                    copy: shown.copy,
+                    copy: scanCopyIn(shown.copy, language),
                     state: shown.state,
                     progress: _autoEnabled && _streamSupported ? _loop.progress : null,
                     busy: _busy && !_preparing,
@@ -783,7 +823,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                           _autoEnabled ? Icons.auto_awesome : Icons.touch_app,
                           size: 18,
                         ),
-                        label: Text(_autoEnabled ? 'Auto on' : 'Auto off'),
+                        label: Text(
+                            (_autoEnabled ? _autoOn : _autoOff).of(language)),
                         style: TextButton.styleFrom(
                           foregroundColor: Colors.white,
                         ),
@@ -792,7 +833,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                         onTap: cameraWorking && !_busy ? _takePhoto : null,
                         child: Semantics(
                           button: true,
-                          label: 'Take photo manually',
+                          label: _takePhotoLabel.of(language),
                           child: Container(
                             width: 72,
                             height: 72,
@@ -821,13 +862,13 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                       // camera cannot open, under a name that says what it is.
                       if (_cameraFailed)
                         Semantics(
-                          hint: 'Opens your phone\'s camera app instead of this scanner',
+                          hint: _cameraAppHint.of(language),
                           child: TextButton(
                             onPressed: _busy ? null : _useOtherCamera,
                             style: TextButton.styleFrom(
                               foregroundColor: Colors.white,
                             ),
-                            child: const Text('Camera app'),
+                            child: Text(_cameraApp.of(language)),
                           ),
                         )
                       else
@@ -835,10 +876,10 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                     ],
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Automatic capture once the right paper is clear and steady · manual capture always available',
+                  Text(
+                    _footnote.of(language),
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white60, fontSize: 11, height: 1.3,
                     ),
                   ),

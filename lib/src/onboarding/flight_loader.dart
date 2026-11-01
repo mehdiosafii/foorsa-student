@@ -14,6 +14,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../app_language.dart';
 import 'airliner.dart';
 import 'glass.dart';
 import 'glass_arrow.dart';
@@ -104,7 +105,8 @@ class _FlightLoaderState extends State<FlightLoader>
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Loading',
+      label: const Words('Loading', 'Chargement', 'جارٍ التحميل')
+          .of(AppLanguageScope.of(context)),
       child: SizedBox.square(
         dimension: FlightLoader.boxFor(widget.size),
         child: RepaintBoundary(

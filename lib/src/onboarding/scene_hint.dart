@@ -20,6 +20,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
+import '../app_language.dart';
 import 'arrow_flight.dart';
 import 'boarding_style.dart';
 import 'gesture_demo.dart';
@@ -281,6 +282,7 @@ class SceneGuideState extends State<SceneGuide>
   @override
   Widget build(BuildContext context) {
     final scaler = InstructionScale.of(context);
+    final language = AppLanguageScope.of(context);
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: _down,
@@ -332,7 +334,8 @@ class SceneGuideState extends State<SceneGuide>
                                 softWrap: false,
                                 textAlign: TextAlign.center,
                                 textScaler: scaler,
-                                style: instructionStyle(e),
+                                style: scriptStyle(
+                                    instructionStyle(e), language),
                               ),
                             ),
                           ),

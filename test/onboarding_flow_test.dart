@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:foorsa_student/src/app_language.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_config.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_flow.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_permissions.dart';
@@ -32,6 +33,7 @@ void main() {
       () async {
     final plan = await planBoarding(_Phone(), isIOS: false, asksToTrack: false);
     expect(plan.steps, [
+      BoardingStep.language,
       BoardingStep.welcome,
       BoardingStep.notifications,
       BoardingStep.camera,
@@ -66,15 +68,23 @@ void main() {
       isIOS: true,
       asksToTrack: false,
     );
-    expect(plan.steps,
-        [BoardingStep.welcome, BoardingStep.location, BoardingStep.boarding]);
+    expect(plan.steps, [
+      BoardingStep.language,
+      BoardingStep.welcome,
+      BoardingStep.location,
+      BoardingStep.boarding
+    ]);
     expect(plan.states[BoardingAccess.notifications], AccessState.granted);
   });
 
   test('a permission plugin that cannot answer never holds the app back',
       () async {
     final plan = await planBoarding(_Broken(), isIOS: true, asksToTrack: true);
-    expect(plan.steps, [BoardingStep.welcome, BoardingStep.boarding]);
+    expect(plan.steps, [
+      BoardingStep.language,
+      BoardingStep.welcome,
+      BoardingStep.boarding
+    ]);
   });
 
   test(
@@ -149,5 +159,118 @@ void main() {
     // this on is a decision, with those changing in the same commit
     // (docs/first-launch-onboarding.md).
     expect(OnboardingConfig.asksToTrack, isFalse);
+  });
+
+  group('in English, French and Arabic', () {
+    List<String> words(BoardingCopy c) =>
+        [c.headline, c.body, c.action, c.hint, c.spoken];
+
+    test('the language comes first, whatever the phone has already answered',
+        () async {
+      for (final phone in [
+        _Phone(),
+        _Phone({for (final a in BoardingAccess.values) a: AccessState.granted}),
+        _Broken(),
+      ]) {
+        final plan = await planBoarding(phone, isIOS: true, asksToTrack: true);
+        expect(plan.steps.take(2),
+            [BoardingStep.language, BoardingStep.welcome]);
+        expect(plan.steps.last, BoardingStep.boarding);
+      }
+    });
+
+    test('every step has every word in each language, none empty', () {
+      for (final language in AppLanguage.values) {
+        for (final step in BoardingStep.values) {
+          final copy = copyFor(step, language);
+          for (final w in words(copy)) {
+            expect(w.trim(), isNotEmpty, reason: '${step.name} ${language.name}');
+            expect(w, w.trim(), reason: '${step.name} ${language.name}');
+            expect(w.contains('\n'), isFalse,
+                reason: '${step.name} ${language.name}');
+          }
+          expect(copy.headline.endsWith('.'), isTrue,
+              reason: '${step.name} ${language.name}: a sentence');
+          expect(copy.spoken.endsWith('.'), isTrue,
+              reason: '${step.name} ${language.name}');
+          expect(copy.hint.endsWith('.'), isFalse,
+              reason: '${step.name} ${language.name}: said as a phone says it');
+          if (language != AppLanguage.en) {
+            final english = words(copyFor(step));
+            final own = words(copy);
+            for (var i = 0; i < own.length; i++) {
+              expect(own[i], isNot(english[i]),
+                  reason: '${step.name} ${language.name}: translated, '
+                      'not left in English');
+            }
+          }
+        }
+      }
+    });
+
+    test('French is written as French apps write it', () {
+      for (final step in BoardingStep.values) {
+        final copy = copyFor(step, AppLanguage.fr);
+        for (final w in words(copy)) {
+          expect(w.contains("'"), isFalse,
+              reason: '${step.name}: the typographic apostrophe, ’');
+          // A narrow no-break space before ? ! ;, a no-break space before :.
+          expect(RegExp(r'[^ ][?!;]').hasMatch(w), isFalse,
+              reason: step.name);
+          expect(RegExp(r'[^ ]:').hasMatch(w), isFalse,
+              reason: step.name);
+          expect(w.toLowerCase(), isNot(contains(' tu ')), reason: step.name);
+        }
+        // What to do, the gesture first.
+        expect(copy.hint.split(' ').first,
+            isIn(['Touchez', 'Glissez', 'Tirez']),
+            reason: step.name);
+        expect(copy.spoken, startsWith('Touchez deux fois '),
+            reason: step.name);
+        if (step.access != null) {
+          expect(copy.action, 'Continuer', reason: step.name);
+        }
+      }
+    });
+
+    test(
+        'Arabic is written in Arabic, with its own punctuation, Latin digits '
+        'and Foorsa as فرصة', () {
+      final arabic = RegExp(r'[؀-ۿ]');
+      for (final step in BoardingStep.values) {
+        final copy = copyFor(step, AppLanguage.ar);
+        for (final w in words(copy)) {
+          expect(arabic.hasMatch(w), isTrue, reason: step.name);
+          expect(RegExp(r'[,;?]').hasMatch(w), isFalse,
+              reason: '${step.name}: ، ؛ ؟ after Arabic');
+          expect(RegExp(r'[٠-٩۰-۹]').hasMatch(w), isFalse,
+              reason: '${step.name}: Latin digits, as Morocco writes them');
+          expect(w.contains('Foorsa'), isFalse, reason: step.name);
+        }
+        expect(copy.spoken, startsWith('اضغط مرتين'), reason: step.name);
+        if (step.access != null) {
+          expect(copy.action, 'متابعة', reason: step.name);
+        }
+      }
+      expect(copyFor(BoardingStep.tracking, AppLanguage.ar).headline,
+          contains('فرصة'));
+    });
+
+    test(
+        'the language step says what the choice does and where to change it, '
+        'and nothing more', () {
+      final english = copyFor(BoardingStep.language);
+      expect(english.body, contains('emails'));
+      expect(english.body, contains('notifications'));
+      expect(english.body, contains('Profile › Settings'));
+      final french = copyFor(BoardingStep.language, AppLanguage.fr);
+      expect(french.body, contains('e-mails'));
+      expect(french.body, contains('Profil › Réglages'));
+      final arabic = copyFor(BoardingStep.language, AppLanguage.ar);
+      expect(arabic.body, contains('الإعدادات'));
+      expect(arabic.body, contains('ملفك الشخصي'));
+      // It asks the phone for nothing: no access step, no Continue.
+      expect(BoardingStep.language.access, isNull);
+    });
   });
 }

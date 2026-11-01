@@ -1,5 +1,6 @@
-/// The first-launch onboarding: the takeoff, the welcome board, a step for
-/// each phone access that can still be asked for, and the boarding pass.
+/// The first-launch onboarding: the takeoff, the languages, the welcome
+/// board, a step for each phone access that can still be asked for, and the
+/// boarding pass.
 ///
 /// There are no buttons. On each screen the student acts on the object
 /// itself, wherever it stands: throws the arrow up into the departures board,
@@ -16,6 +17,12 @@
 /// and unfolds as the next one. Once the stub is off, what is left of the
 /// pass folds into the arrow, which lands on the sign-in's own arrow, and the
 /// onboarding fades onto the portal underneath.
+///
+/// The languages come first (scene_language.dart): a tap on one is the
+/// choice, the words change to it at once, and from then on every word of the
+/// onboarding is in it, laid out right to left in Arabic. The drawings keep
+/// their own way round (an arrow thrown up, a page dragged into a frame, a
+/// flight from Casablanca east to China).
 library;
 
 import 'dart:async';
@@ -26,6 +33,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
+import '../app_language.dart';
 import 'arrow_flight.dart';
 import 'boarding_pass.dart';
 import 'boarding_style.dart';
@@ -36,6 +44,7 @@ import 'onboarding_flow.dart';
 import 'onboarding_sound.dart';
 import 'route_progress.dart';
 import 'scene_hint.dart';
+import 'scene_language.dart';
 import 'scene_location.dart';
 import 'scene_notifications.dart';
 import 'scene_scan.dart';
@@ -122,7 +131,17 @@ class FirstLaunchOnboarding extends StatefulWidget {
     this.findMark,
     this.onBoarded,
     this.onGranted,
+    this.language = AppLanguage.en,
+    this.onLanguage,
   });
+
+  /// The language the onboarding opens in: the one kept on the phone, else
+  /// English. It follows a change from outside until the student chooses.
+  final AppLanguage language;
+
+  /// The student chose a language on the first step (onboarding_gate.dart
+  /// keeps it and hands it to the portal behind the onboarding).
+  final ValueChanged<AppLanguage>? onLanguage;
 
   final BoardingSounds sounds;
 
@@ -224,8 +243,34 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   bool _introStarted = false;
 
   List<BoardingStep> get _steps =>
-      _plan?.steps ?? const [BoardingStep.welcome, BoardingStep.boarding];
+      _plan?.steps ??
+      const [
+        BoardingStep.language,
+        BoardingStep.welcome,
+        BoardingStep.boarding
+      ];
   BoardingStep get _step => _steps[_index];
+
+  /// The language the onboarding speaks now.
+  late AppLanguage _language = widget.language;
+
+  /// The student chose it here: a change from outside no longer moves it.
+  bool _chosenHere = false;
+
+  /// The welcome is the cover: the languages before it, the steps after it
+  /// counted, the route flown from it.
+  int get _cover => math.max(0, _steps.indexOf(BoardingStep.welcome));
+
+  /// Where the route's plane is on step [index]: at the start up to the
+  /// welcome, at the end on the pass.
+  double _routeFor(int index) {
+    final legs = _steps.length - 1 - _cover;
+    return legs <= 0 ? 0 : (index - _cover).clamp(0, legs) / legs;
+  }
+
+  /// How far the stars have drifted on step [index]: not at all up to the
+  /// welcome, one step's worth more on each step after it.
+  double _driftFor(int index) => math.max(0, index - _cover).toDouble();
 
   /// The student may act on the object: the takeoff is over, nothing is
   /// moving and nothing is being asked.
@@ -249,6 +294,14 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     _intro.addListener(_introTick);
     _flight.addListener(_flightTick);
     _exit.addListener(_exitTick);
+  }
+
+  @override
+  void didUpdateWidget(FirstLaunchOnboarding oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_chosenHere && widget.language != oldWidget.language) {
+      _language = widget.language;
+    }
   }
 
   @override
@@ -428,6 +481,29 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     _fly(_index + 1, arrow, velocity: velocity);
   }
 
+  /// The student tapped a language: the screen speaks it at once, and after
+  /// a beat, long enough to read the words in it, the pane folds into the
+  /// arrow and unfolds as the welcome.
+  Future<void> _chooseLanguage(AppLanguage language) async {
+    if (!_armed || _step != BoardingStep.language) return;
+    final changed = language != _language;
+    setState(() {
+      _busy = true;
+      _chosenHere = true;
+      _language = language;
+      // The words change now, not after the picture.
+      _wordsDelay = Duration.zero;
+    });
+    widget.feel('detent');
+    widget.onLanguage?.call(language);
+    await _pause(Duration(
+        milliseconds: _still
+            ? (changed ? 700 : 300)
+            : (changed ? 1100 : 450)));
+    if (!mounted) return;
+    _goTo(_index + 1);
+  }
+
   /// The arrow flies from where the student sent it (in the screen's
   /// points) into the picture, which becomes step [next].
   void _fly(int next, ArrowPose from, {Offset? velocity}) {
@@ -474,8 +550,8 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     _beats.clear();
     widget.sounds.play('swoop');
     _flight.duration = Duration(milliseconds: (_times.total * 1000).round());
-    _spring(_drift, _index.toDouble(), response: 1.1);
-    _spring(_route, _steps.length <= 1 ? 0 : _index / (_steps.length - 1));
+    _spring(_drift, _driftFor(_index), response: 1.1);
+    _spring(_route, _routeFor(_index));
     _flight.forward(from: 0).whenComplete(() {
       if (!mounted || _flight.value < 1) return;
       _away.value = false;
@@ -519,8 +595,8 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     _shift.forward(from: 0).whenComplete(() {
       if (mounted && _shift.value >= 1) setState(() => _previous = null);
     });
-    _spring(_drift, index.toDouble(), response: 0.9);
-    _spring(_route, _steps.length <= 1 ? 0 : index / (_steps.length - 1));
+    _spring(_drift, _driftFor(index), response: 0.9);
+    _spring(_route, _routeFor(index));
   }
 
   // Boarding.
@@ -638,9 +714,18 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   }
 
   Widget _scene(BoardingStep step) {
-    final copy = copyFor(step);
+    final copy = copyFor(step, _language);
     final armed = _armed && step == _step;
     return switch (step) {
+      BoardingStep.language => _contentShown
+          ? LanguageScene(
+              still: _still,
+              feel: _feel,
+              armed: armed,
+              chosen: _language,
+              hint: copy.hint,
+              onChoose: _chooseLanguage)
+          : const SizedBox.shrink(),
       BoardingStep.welcome => _contentShown
           ? WelcomeScene(
               still: _still,
@@ -713,7 +798,19 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
 
   @override
   Widget build(BuildContext context) {
-    final copy = copyFor(_step);
+    final copy = copyFor(_step, _language);
+    // Every word under it is in the student's language, and Arabic's lay out
+    // right to left; the drawings keep their own way round.
+    return AppLanguageScope(
+      language: _language,
+      child: Directionality(
+        textDirection: _language.direction,
+        child: _frame(copy),
+      ),
+    );
+  }
+
+  Widget _frame(BoardingCopy copy) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Material(
@@ -768,7 +865,11 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                 behavior: HitTestBehavior.opaque,
                 onTap: _skipIntro,
                 child: Semantics(
-                  label: 'Foorsa is opening. Tap to skip.',
+                  label: const Words(
+                          'Foorsa is opening. Tap to skip.',
+                          'Foorsa s’ouvre. Touchez pour passer.',
+                          'جارٍ فتح فرصة. اضغط للتخطي.')
+                      .of(_language),
                   child: TakeoffIntro(time: _introSeconds),
                 ),
               ),
@@ -856,7 +957,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                 child: Center(
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 420),
-                    child: _step == BoardingStep.welcome
+                    child: _index <= _cover
                         ? const FoorsaWordmark(
                             key: ValueKey('mark'),
                             height: 20,
@@ -866,8 +967,8 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                             progress: _route,
                             // The welcome is the cover: the steps after it
                             // are counted.
-                            step: _index,
-                            steps: _steps.length - 1),
+                            step: _index - _cover,
+                            steps: _steps.length - 1 - _cover),
                   ),
                 ),
               );
@@ -934,13 +1035,14 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                     // keep their state and simply fade; the words coming in
                     // bring themselves in.
                     transitionBuilder: (child, animation) => FadeTransition(
-                        opacity: child.key == ValueKey(_step)
+                        opacity: child.key == ValueKey((_step, _language))
                             ? kAlwaysCompleteAnimation
                             : animation,
                         child: child),
                     child: _Copy(
-                        key: ValueKey(_step),
+                        key: ValueKey((_step, _language)),
                         copy: copy,
+                        language: _language,
                         still: _still,
                         delay: _wordsDelay),
                   ),
@@ -1065,8 +1167,9 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     final base = DefaultTextStyle.of(context).style;
     double measure(String text, TextStyle style) {
       final painter = TextPainter(
-        text: TextSpan(text: text, style: base.merge(style)),
-        textDirection: TextDirection.ltr,
+        text: TextSpan(
+            text: text, style: base.merge(scriptStyle(style, _language))),
+        textDirection: _language.direction,
         textAlign: TextAlign.center,
         textScaler: scaler,
       )..layout(maxWidth: width);
@@ -1077,7 +1180,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
 
     var tallest = 0.0;
     for (final step in _steps) {
-      final c = copyFor(step);
+      final c = copyFor(step, _language);
       final h = measure(c.headline, Boarding.headline) +
           _Copy.gap +
           measure(c.body, Boarding.body);
@@ -1156,9 +1259,14 @@ class _Copy extends StatefulWidget {
   const _Copy(
       {super.key,
       required this.copy,
+      required this.language,
       required this.still,
       this.delay = Duration.zero});
   final BoardingCopy copy;
+
+  /// The words' own language: the words going out keep theirs as the new
+  /// ones come in.
+  final AppLanguage language;
   final bool still;
 
   /// The words wait for the picture to change.
@@ -1216,15 +1324,23 @@ class _CopyState extends State<_Copy> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final copy = widget.copy;
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      _line(
-          0,
-          Semantics(
-              header: true,
-              child: BalancedText(copy.headline, style: Boarding.headline))),
-      const SizedBox(height: _Copy.gap),
-      _line(1, BalancedText(copy.body, style: Boarding.body)),
-    ]);
+    final language = widget.language;
+    return Directionality(
+      textDirection: language.direction,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        _line(
+            0,
+            Semantics(
+                header: true,
+                child: BalancedText(copy.headline,
+                    style: scriptStyle(Boarding.headline, language)))),
+        const SizedBox(height: _Copy.gap),
+        _line(
+            1,
+            BalancedText(copy.body,
+                style: scriptStyle(Boarding.body, language))),
+      ]),
+    );
   }
 }
 
@@ -1234,6 +1350,9 @@ class _CopyState extends State<_Copy> with SingleTickerProviderStateMixin {
 extension OnboardingProbe on FirstLaunchOnboardingState {
   BoardingStep get currentStep => _step;
   List<BoardingStep> get plannedSteps => _steps;
+
+  /// The language the onboarding speaks now.
+  AppLanguage get language => _language;
 
   /// Whether the student may act on the object now.
   bool get armed => _armed;

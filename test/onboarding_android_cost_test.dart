@@ -77,6 +77,7 @@ Widget _onboarding(GlobalKey<FirstLaunchOnboardingState> key,
 /// Every scene the Android onboarding has, its object ready.
 const _scenes = [
   BoardingStep.welcome,
+  BoardingStep.language,
   BoardingStep.notifications,
   BoardingStep.camera,
   BoardingStep.microphone,
@@ -87,13 +88,28 @@ const _scenes = [
 Future<void> _goTo(WidgetTester tester,
     GlobalKey<FirstLaunchOnboardingState> key, BoardingStep step) async {
   if (step == BoardingStep.welcome) {
-    // After the takeoff.
+    // After the takeoff, past the languages' pane (English, the default).
     await _frames(tester, const Duration(milliseconds: 4200));
+    await _pastLanguage(tester, key);
   } else {
     key.currentState!.debugJumpTo(step);
     await _frames(tester, const Duration(milliseconds: 1600));
   }
   expect(key.currentState!.armed, isTrue, reason: step.name);
+}
+
+/// The first step is the languages' pane: English, the default, is tapped.
+Future<void> _pastLanguage(
+    WidgetTester tester, GlobalKey<FirstLaunchOnboardingState> key) async {
+  if (key.currentState!.currentStep != BoardingStep.language) return;
+  await tester.tap(find
+      .byWidgetPredicate((w) =>
+          w is Semantics &&
+          (w.properties.label ?? w.properties.attributedLabel?.string) ==
+              'English' &&
+          w.properties.button == true)
+      .last);
+  await _frames(tester, const Duration(milliseconds: 1600));
 }
 
 void main() {
@@ -233,12 +249,14 @@ void main() {
         await tester.tap(find
             .byWidgetPredicate((w) =>
                 w is Semantics &&
-                w.properties.label == label &&
+                (w.properties.label ?? w.properties.attributedLabel?.string) ==
+                    label &&
                 w.properties.button == true)
             .last);
         await _frames(tester, const Duration(milliseconds: 600));
       }
 
+      await act('English');
       await act('Get started');
       await tester.tap(find
           .byWidgetPredicate((w) =>

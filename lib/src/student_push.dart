@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'app_language.dart';
 import 'student_calls.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'dart:convert';
@@ -31,6 +32,36 @@ Future<void> studentFirebaseBackground(RemoteMessage message) async {
 bool isStudentChatPush(Map<String, dynamic> data) =>
     data['type'] == 'student_chat' && data['route'] == '/contact/chat';
 
+/// What the app's own notifications say, in the student's language, and
+/// what the phone's settings call their channels.
+const pushTitle = Words('Foorsa', 'Foorsa', 'فرصة');
+const pushChatBody = Words(
+    'You have a new message from your adviser.',
+    'Vous avez un nouveau message de votre conseiller.',
+    'لديك رسالة جديدة من مستشارك.');
+const pushUpdateBody = Words(
+    'An update is ready in your Foorsa app.',
+    'Une mise à jour vous attend dans votre application Foorsa.',
+    'تحديث جديد بانتظارك في تطبيق فرصة.');
+const pushTestBody = Words(
+    'This is a test notification from Foorsa.',
+    'Ceci est une notification de test de Foorsa.',
+    'هذا إشعار تجريبي من فرصة.');
+const pushCalendarBody = Words(
+    'Your class or calendar event is coming up.',
+    'Votre cours ou un événement de votre calendrier approche.',
+    'اقترب موعد حصتك أو حدث في تقويمك.');
+const messagesChannelName = Words(
+    'Messages from Foorsa', 'Messages de Foorsa', 'رسائل فرصة');
+const messagesChannelDescription = Words(
+    'New messages from your Foorsa adviser',
+    'Nouveaux messages de votre conseiller Foorsa',
+    'الرسائل الجديدة من مستشارك في فرصة');
+const updatesChannel =
+    Words('Foorsa updates', 'Actualités Foorsa', 'مستجدات فرصة');
+const calendarChannel = Words('Your calendar reminders',
+    'Rappels de votre calendrier', 'تذكيرات تقويمك');
+
 String? studentUpdateRoute(Map<String, dynamic> data) {
   final id = data['eventId'];
   if (data['type'] != 'student_update' || data['route'] != '/notifications' || id is! String ||
@@ -43,11 +74,8 @@ String? studentUpdateRoute(Map<String, dynamic> data) {
 bool isStudentTestPush(Map<String, dynamic> data) => data['type'] == 'student_test';
 
 /// What the banner says for each kind of push shown while the app is open.
-String foregroundPushBody({required bool chat, required bool test}) => test
-    ? 'This is a test notification from Foorsa.'
-    : chat
-        ? 'You have a new message from your adviser.'
-        : 'An update is ready in your Foorsa app.';
+String foregroundPushBody({required bool chat, required bool test, AppLanguage language = AppLanguage.en}) =>
+    (test ? pushTestBody : chat ? pushChatBody : pushUpdateBody).of(language);
 
 /// A banner the app shows itself, presented while the app is open: on iOS
 /// since 14 `presentAlert` alone shows nothing, a banner needs its own flag.
@@ -169,6 +197,9 @@ class StudentPush {
     return next;
   }
 
+  /// The student's language, for what the app says itself.
+  AppLanguage get _language => ShellLanguage.instance.current;
+
   /// Local notifications and Firebase, each on its own: a local notifications
   /// plugin that fails no longer keeps Firebase from starting, and a Firebase
   /// that fails is tried again by the next registration (push_registration.dart).
@@ -193,17 +224,20 @@ class StudentPush {
           unawaited(_openLocal(response.payload));
         },
       );
+      // The channels' names follow the student's language: Android renames a
+      // channel created again with the same id.
+      final language = _language;
       await _local
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(const AndroidNotificationChannel(
+          ?.createNotificationChannel(AndroidNotificationChannel(
             'student_messages',
-            'Messages from Foorsa',
-            description: 'New messages from your Foorsa adviser',
+            messagesChannelName.of(language),
+            description: messagesChannelDescription.of(language),
             importance: Importance.high,
           ));
       await _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(const AndroidNotificationChannel('student_updates', 'Foorsa updates', importance: Importance.high));
+          ?.createNotificationChannel(AndroidNotificationChannel('student_updates', updatesChannel.of(language), importance: Importance.high));
       _localReady = true;
       tzdata.initializeTimeZones();
       final localLaunch = await _local.getNotificationAppLaunchDetails();
@@ -248,14 +282,16 @@ class StudentPush {
         if ((!chat && !test && update == null) || (chat && await chatIsVisible()) || _disposed || !_localReady) {
           return;
         }
+        final language = _language;
         await _local.show(
           id: (message.data['eventId'] ?? message.data['messageId'] ?? message.messageId ?? '').hashCode &
               0x3fffffff,
-          title: 'Foorsa',
-          body: foregroundPushBody(chat: chat, test: test),
+          title: pushTitle.of(language),
+          body: foregroundPushBody(chat: chat, test: test, language: language),
           notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
-                chat ? 'student_messages' : 'student_updates', chat ? 'Messages from Foorsa' : 'Foorsa updates',
+                chat ? 'student_messages' : 'student_updates',
+                (chat ? messagesChannelName : updatesChannel).of(language),
                 importance: Importance.high,
                 priority: Priority.high,
                 icon: 'ic_stat_message'),
@@ -381,15 +417,20 @@ class StudentPush {
     if (action == 'calendarSync' && _calendarState!['enabled'] == true) {
       final raw = input['reminders'];
       if (raw is! List || raw.length > 60) return {'error': 'Invalid calendar reminders'};
-      final fingerprint = jsonEncode(raw);
+      // The reminders are written in the student's language: a new language
+      // writes them again (English keeps the fingerprint it always had).
+      final language = _language;
+      final fingerprint = language == AppLanguage.en
+          ? jsonEncode(raw)
+          : '${language.code}:${jsonEncode(raw)}';
       if (_calendarState!['fingerprint'] != fingerprint) {
         final enabled = _calendarState!['enabled'];
         await _clearCalendar();
         final times = validCalendarTimes(raw, DateTime.now()).take(60).toList();
         for (var i = 0; i < times.length; i++) {
-          await _local.zonedSchedule(id: 1900000000 + i, title: 'Foorsa', body: 'Your class or calendar event is coming up.',
+          await _local.zonedSchedule(id: 1900000000 + i, title: pushTitle.of(language), body: pushCalendarBody.of(language),
             scheduledDate: tz.TZDateTime.from(times[i].toUtc(), tz.UTC),
-            notificationDetails: const NotificationDetails(android: AndroidNotificationDetails('student_calendar', 'Your calendar reminders', importance: Importance.high, icon: 'ic_stat_message'), iOS: DarwinNotificationDetails()),
+            notificationDetails: NotificationDetails(android: AndroidNotificationDetails('student_calendar', calendarChannel.of(language), importance: Importance.high, icon: 'ic_stat_message'), iOS: const DarwinNotificationDetails()),
             androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle, payload: '/calendar');
         }
         _calendarState = {'owner': owner, 'enabled': enabled, 'fingerprint': fingerprint, 'count': times.length,

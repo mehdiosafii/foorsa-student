@@ -6,12 +6,14 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:foorsa_student/src/app_language.dart';
 import 'package:foorsa_student/src/onboarding/boarding_pass.dart';
 import 'package:foorsa_student/src/onboarding/boarding_style.dart';
 import 'package:foorsa_student/src/onboarding/gesture_demo.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_flow.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_page.dart';
 import 'package:foorsa_student/src/onboarding/scene_hint.dart';
+import 'package:foorsa_student/src/onboarding/scene_language.dart';
 import 'package:foorsa_student/src/onboarding/scene_location.dart';
 import 'package:foorsa_student/src/onboarding/scene_scan.dart';
 import 'package:foorsa_student/src/onboarding/scene_welcome.dart';
@@ -105,6 +107,19 @@ Future<Duration?> _untilShown(WidgetTester tester,
   }
   return _guide(tester).showing ? within : null;
 }
+
+/// What a screen reader calls [step]'s object: its action, or, on the
+/// languages' pane, the first row's name (English, the default).
+String _objectName(BoardingStep step) =>
+    step == BoardingStep.language ? 'English' : copyFor(step).action;
+
+Finder _objectNamed(String name) => find
+    .byWidgetPredicate((w) =>
+        w is Semantics &&
+        (w.properties.label ?? w.properties.attributedLabel?.string) ==
+            name &&
+        w.properties.button == true)
+    .last;
 
 /// WCAG's contrast ratio of [a] over [b].
 double _contrast(Color a, Color b) {
@@ -278,12 +293,7 @@ void main() {
       // It is on the object: the point it comes down on is the object's.
       final from = _onScreen(tester, guide.widget.demo.from);
       final hits = tester.hitTestOnBinding(from).path.map((e) => e.target);
-      final object = tester.renderObject(find
-          .byWidgetPredicate((w) =>
-              w is Semantics &&
-              w.properties.label == copy.action &&
-              w.properties.button == true)
-          .last);
+      final object = tester.renderObject(_objectNamed(_objectName(step)));
       expect(hits, contains(object), reason: step.name);
     }
     await tester.pumpWidget(const SizedBox());
@@ -500,22 +510,36 @@ void main() {
       key.currentState!.debugJumpTo(step);
       await _frames(tester, const Duration(milliseconds: 600));
       final copy = copyFor(step);
-      final object = find
-          .byWidgetPredicate((w) =>
-              w is Semantics &&
-              w.properties.label == copy.action &&
-              w.properties.button == true)
-          .last;
-      expect(
-          tester.getSemantics(object),
-          isSemantics(
-            label: copy.action,
-            hint: copy.spoken,
-            isButton: true,
-            isEnabled: true,
-            hasTapAction: true,
-          ),
-          reason: step.name);
+      if (step == BoardingStep.language) {
+        // Each language is a button named in itself, which says what a
+        // double tap does in its own language too.
+        for (final language in AppLanguage.values) {
+          expect(
+              tester.getSemantics(_objectNamed(language.nativeName)),
+              isSemantics(
+                label: language.nativeName,
+                hint: copyFor(step, language).spoken,
+                isButton: true,
+                isEnabled: true,
+                hasTapAction: true,
+                hasSelectedState: true,
+                isSelected: language == AppLanguage.en,
+              ),
+              reason: language.name);
+        }
+      } else {
+        final object = _objectNamed(copy.action);
+        expect(
+            tester.getSemantics(object),
+            isSemantics(
+              label: copy.action,
+              hint: copy.spoken,
+              isButton: true,
+              isEnabled: true,
+              hasTapAction: true,
+            ),
+            reason: step.name);
+      }
       // The words on the screen are for the eye: the object says them.
       expect(find.bySemanticsLabel(copy.hint), findsNothing, reason: step.name);
     }
@@ -531,12 +555,18 @@ void main() {
     await tester.pumpWidget(_onboarding(key, _Phone(), still: true));
     await tester.pump();
     final steps = key.currentState!.plannedSteps;
-    // The welcome is the cover: the steps after it are counted.
+    // The languages come before the welcome, which is the cover: the steps
+    // after it are counted.
+    final cover = steps.indexOf(BoardingStep.welcome);
+    expect(cover, 1);
     expect(find.textContaining(' OF '), findsNothing);
-    for (var i = 1; i < steps.length; i++) {
+    key.currentState!.debugJumpTo(BoardingStep.welcome);
+    await _frames(tester, const Duration(milliseconds: 600));
+    expect(find.textContaining(' OF '), findsNothing);
+    for (var i = cover + 1; i < steps.length; i++) {
       key.currentState!.debugJumpTo(steps[i]);
       await _frames(tester, const Duration(milliseconds: 600));
-      final where = 'Step $i of ${steps.length - 1}';
+      final where = 'Step ${i - cover} of ${steps.length - 1 - cover}';
       expect(find.text(where.toUpperCase()), findsOneWidget);
       expect(tester.getSemantics(find.bySemanticsLabel('Setting up')),
           isSemantics(label: 'Setting up', value: where));
@@ -565,6 +595,7 @@ void main() {
         final middle = scene.center;
         // What the student acts on, as it stands on the stage.
         final object = switch (step) {
+          BoardingStep.language => languagePaneRect(stage).shift(scene.topLeft),
           BoardingStep.welcome => Rect.fromCenter(
               center: scene.topLeft +
                   Offset(stage.width / 2,

@@ -9,6 +9,20 @@ import 'package:http/http.dart' as http;
 import 'package:local_auth/local_auth.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'app_language.dart';
+
+/// Android's fingerprint or face prompt, in the student's language. (An
+/// iPhone's Face ID line is Info.plist's NSFaceIDUsageDescription, which iOS
+/// shows in the phone's own language: ios/Runner/*.lproj/InfoPlist.strings.)
+const biometricPromptTitle =
+    Words('Sign in to Foorsa', 'Se connecter à Foorsa', 'تسجيل الدخول إلى فرصة');
+const biometricPromptSubtitle = Words(
+    'Use your fingerprint or face recognition',
+    'Utilisez votre empreinte ou la reconnaissance faciale',
+    'باستخدام بصمتك أو التعرف على الوجه');
+const biometricPromptCancel =
+    Words('Use password', 'Utiliser le mot de passe', 'استخدام كلمة المرور');
+
 /// Only the server can authenticate a token. These claims are used to reject
 /// expired/wrong-audience data before touching the vault or making a request.
 class StudentSession {
@@ -78,9 +92,12 @@ class StudentBiometrics {
         storageNamespace: _namespace,
         enforceBiometrics: true,
         biometricType: AndroidBiometricType.strongBiometricOnly,
-        biometricPromptTitle: 'Sign in to Foorsa',
-        biometricPromptSubtitle: 'Use your fingerprint or face recognition',
-        biometricPromptNegativeButton: 'Use password',
+        biometricPromptTitle:
+            biometricPromptTitle.of(ShellLanguage.instance.current),
+        biometricPromptSubtitle:
+            biometricPromptSubtitle.of(ShellLanguage.instance.current),
+        biometricPromptNegativeButton:
+            biometricPromptCancel.of(ShellLanguage.instance.current),
         resetOnError: false,
         migrateOnAlgorithmChange: false,
       );

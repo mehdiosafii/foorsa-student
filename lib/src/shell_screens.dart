@@ -6,6 +6,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app_language.dart';
 import 'config.dart';
 import 'onboarding/flight_loader.dart';
 import 'web_view_composition.dart';
@@ -87,15 +88,41 @@ class ShellLoadingLayer extends StatelessWidget {
   }
 }
 
-/// No connection: in English like the rest of the app, with the Arabic under
-/// it, in the theme the student chose. It retries on its own every 6 s.
+/// What the offline screen says. In English it keeps the Arabic line under
+/// its title, as it always had; in French and in Arabic it says it once, in
+/// the student's language.
+const offlineTitle = Words('No internet connection',
+    'Pas de connexion Internet', 'لا يوجد اتصال بالإنترنت');
+const offlineDetail = Words(
+    'Check your Wi-Fi or mobile data.\nThe app reconnects by itself.',
+    'Vérifiez votre Wi-Fi ou vos données mobiles.\n'
+        'L’application se reconnecte toute seule.',
+    'يرجى التحقق من شبكة Wi-Fi أو من بيانات الهاتف.\n'
+        'سيعاود التطبيق الاتصال تلقائيًا.');
+const offlineRetry = Words('Try again', 'Réessayer', 'إعادة المحاولة');
+
+/// No connection, in the student's language (in English with the Arabic
+/// under it), in the theme the student chose. It retries on its own every
+/// 6 s.
 class ShellOfflineScreen extends StatelessWidget {
-  const ShellOfflineScreen({super.key, required this.onRetry, required this.dark});
+  const ShellOfflineScreen(
+      {super.key, required this.onRetry, required this.dark, this.language});
   final VoidCallback onRetry;
   final bool dark;
 
+  /// The student's language; the app's (AppLanguageScope) when not given.
+  final AppLanguage? language;
+
   @override
   Widget build(BuildContext context) {
+    final language = this.language ?? AppLanguageScope.of(context);
+    return Directionality(
+      textDirection: language.direction,
+      child: _screen(language),
+    );
+  }
+
+  Widget _screen(AppLanguage language) {
     final ink = dark ? Colors.white : const Color(0xFF14273B);
     final muted = dark ? const Color(0xFFB6C2D6) : const Color(0xFF526474);
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -151,19 +178,23 @@ class ShellOfflineScreen extends StatelessWidget {
                         size: 30),
                   ),
                   const SizedBox(height: 18),
-                  Text('No internet connection',
+                  Text(offlineTitle.of(language),
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: ink,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 6),
-                  Text('لا يوجد اتصال بالإنترنت',
-                      textDirection: TextDirection.rtl,
-                      style: TextStyle(color: muted, fontSize: 14)),
+                      style: scriptStyle(
+                          TextStyle(
+                              color: ink,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700),
+                          language)),
+                  if (language == AppLanguage.en) ...[
+                    const SizedBox(height: 6),
+                    Text(offlineTitle.ar,
+                        textDirection: TextDirection.rtl,
+                        style: TextStyle(color: muted, fontSize: 14)),
+                  ],
                   const SizedBox(height: 14),
                   Text(
-                    'Check your Wi-Fi or mobile data.\nThe app reconnects by itself.',
+                    offlineDetail.of(language),
                     textAlign: TextAlign.center,
                     style: TextStyle(color: muted, fontSize: 13, height: 1.5),
                   ),
@@ -182,8 +213,8 @@ class ShellOfflineScreen extends StatelessWidget {
                     ),
                     onPressed: onRetry,
                     icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: const Text('Try again',
-                        style: TextStyle(fontWeight: FontWeight.w700)),
+                    label: Text(offlineRetry.of(language),
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ],
               ),

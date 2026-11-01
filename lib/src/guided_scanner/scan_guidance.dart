@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
 
+import '../app_language.dart';
 import 'scan_document_profile.dart';
 import 'scan_page_segment.dart';
 
@@ -85,16 +86,31 @@ enum ScanHint {
 }
 
 extension ScanHintLabel on ScanHint {
-  String get label => switch (this) {
-        ScanHint.position => 'Align all four edges',
-        ScanHint.moveCloser => 'Move a little closer',
-        ScanHint.moveBack => 'Move back to include every corner',
-        ScanHint.brighten => 'Find brighter, even light',
-        ScanHint.reduceGlare => 'Tilt slightly to remove glare',
-        ScanHint.focus => 'Move closer and let the camera focus',
-        ScanHint.holdSteady => 'Hold still',
-        ScanHint.ready => 'Document aligned',
-      };
+  String get label => labelIn(AppLanguage.en);
+
+  /// What the camera says, in the student's language.
+  String labelIn(AppLanguage language) => (switch (this) {
+        ScanHint.position => const Words('Align all four edges',
+            'Alignez les quatre bords', 'اضبط الحواف الأربعة'),
+        ScanHint.moveCloser => const Words('Move a little closer',
+            'Rapprochez-vous un peu', 'اقترب قليلًا'),
+        ScanHint.moveBack => const Words('Move back to include every corner',
+            'Reculez pour inclure chaque coin', 'ابتعد قليلًا لتظهر كل الزوايا'),
+        ScanHint.brighten => const Words('Find brighter, even light',
+            'Cherchez une lumière plus vive et égale',
+            'ابحث عن إضاءة أقوى ومتساوية'),
+        ScanHint.reduceGlare => const Words('Tilt slightly to remove glare',
+            'Inclinez légèrement pour éviter le reflet',
+            'أمِل الهاتف قليلًا لإزالة الانعكاس'),
+        ScanHint.focus => const Words('Move closer and let the camera focus',
+            'Rapprochez-vous et laissez l’appareil faire la mise au point',
+            'اقترب واترك الكاميرا تضبط التركيز'),
+        ScanHint.holdSteady =>
+          const Words('Hold still', 'Ne bougez plus', 'ثبّت الهاتف'),
+        ScanHint.ready => const Words(
+            'Document aligned', 'Document aligné', 'الوثيقة في مكانها'),
+      })
+          .of(language);
 }
 
 class ScanFrameAnalysis {

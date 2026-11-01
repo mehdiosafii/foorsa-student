@@ -1,0 +1,12 @@
+/* The phone's own permission prompts, in Arabic. iOS shows these in the
+   phone's language (Info.plist holds the English). */
+
+"NSFaceIDUsageDescription" = "يُستخدم Face ID لتسجيل الدخول بأمان إلى حسابك الطلابي في فرصة على هذا الجهاز.";
+
+"NSCameraUsageDescription" = "يستخدم Foorsa Student الكاميرا للمسح الضوئي لوثائقك والتقاط صورتك الشخصية لملف ترشيحك.";
+
+"NSLocationWhenInUseUsageDescription" = "يستخدم Foorsa Student موقعك أثناء استخدامك للتطبيق، لعرض أوقات الصلاة والطقس المحلي والأماكن القريبة مثل المتاجر الكبرى.";
+
+"NSMicrophoneUsageDescription" = "يستخدم Foorsa Student الميكروفون للمكالمات مع مستشارك والرسائل الصوتية والفيديوهات التقديمية.";
+
+"NSPhotoLibraryUsageDescription" = "يتيح لك Foorsa Student اختيار صورة وثيقة، أو الفيديو التقديمي، لرفعها إلى ملف ترشيحك.";

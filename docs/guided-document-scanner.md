@@ -87,7 +87,10 @@ anything else that asks the WebView for an image with a camera option.
 **Live guidance, one instruction at a time.** Both cameras say one thing, in the
 same words (`scan_coach.dart`, `ScannerLiveGuidance` in `ScannerGeometry.swift`;
 `test/scan_coach_test.dart` holds each string of one to the other, case by case),
-in the order the student fixes things:
+in the order the student fixes things. Those tables stay in English; on Android the
+panel shows them in the student's language (`scanCopyIn`, `scan_copy_language.dart`,
+French and Arabic for every line, held by `test/scan_copy_language_test.dart`). The
+iPhone scanner's own words are still English only.
 
 1. the page: "Find the page" (a passport: "Show the photo page", with the two
    lines at the bottom; a card: "Front side" or "Now the back" when the step

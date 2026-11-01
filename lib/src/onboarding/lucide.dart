@@ -69,6 +69,7 @@ class LucidePainter extends CustomPainter {
 class LucideIcons {
   LucideIcons._();
 
+  static const check = LucideGlyph(<String>['M20 6 9 17l-5-5']);
   static const mic = LucideGlyph(<String>[
     'M12 19v3',
     'M19 10v2a7 7 0 0 1-14 0v-2',

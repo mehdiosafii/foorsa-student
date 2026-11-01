@@ -108,7 +108,7 @@ void main() {
     expect(RegExp(r'pop\(const GuidedScanResult\.fallback\(\)\)').allMatches(page), hasLength(1));
     expect(body(page, 'Future<void> _useOtherCamera()'), contains('GuidedScanResult.fallback()'));
     // Its button is built only while the guided camera cannot open.
-    final button = page.substring(page.indexOf('if (_cameraFailed)'), page.indexOf("const Text('Camera app')"));
+    final button = page.substring(page.indexOf('if (_cameraFailed)'), page.indexOf('Text(_cameraApp.of(language))'));
     expect(button, contains('_useOtherCamera'));
     expect(RegExp(r'_useOtherCamera\b').allMatches(page), hasLength(2)); // its definition and that button
   });

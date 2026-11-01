@@ -242,9 +242,13 @@ class BalancedText extends StatelessWidget {
         Directionality.of(context),
       );
       return Align(
+        // Start and end follow the words' direction: an Arabic line starts
+        // at the right.
         alignment: switch (textAlign) {
-          TextAlign.left || TextAlign.start => Alignment.topLeft,
-          TextAlign.right || TextAlign.end => Alignment.topRight,
+          TextAlign.left => Alignment.topLeft,
+          TextAlign.right => Alignment.topRight,
+          TextAlign.start => AlignmentDirectional.topStart,
+          TextAlign.end => AlignmentDirectional.topEnd,
           _ => Alignment.topCenter,
         },
         widthFactor: 1,

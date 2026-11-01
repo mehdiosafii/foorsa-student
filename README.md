@@ -157,7 +157,7 @@ know one ignore it, so the portal sends them to every build.
 
 - `FoorsaShellCapabilities` answers what this build does (`shell_capabilities.dart`):
   `embeddedFrames`, `videoInput`, `hapticTextures` (3: the admission reveal's
-  textures and `error`), `bootHandoff`, `push` (2: push registration names its
+  textures and `error`), `bootHandoff`, `language`, `push` (2: push registration names its
   reasons and answers `pushStatus`) and the build's `appVersion` and `appBuild`.
 - `FoorsaBridge` with the page's session (`nonce`): `getPushToken` (a token, or
   why there is none), `pushStatus` (the permission, without asking),
@@ -172,6 +172,14 @@ know one ignore it, so the portal sends them to every build.
 - `FoorsaShellAppearance('light' | 'dark' | 'system')`: the theme the student
   chose, kept on the phone (`shell_appearance.dart`) so the next start's loader
   and the offline screen open in it.
+- `FoorsaShellLanguage('en' | 'fr' | 'ar')`: the language the portal runs in,
+  at start and when the student changes it in Profile › Settings, kept on the
+  phone (`app_language.dart`) so the app's own screens speak it. The other way
+  round, a language chosen in the onboarding's first step is written into the
+  portal's `localStorage.foorsa_portal_language` before its code runs (only
+  where nothing is chosen yet, or once per choice made in the onboarding), and
+  a page already open is told with `window.dispatchEvent(new
+  CustomEvent('foorsa:language', { detail: '<code>' }))`.
 - `FoorsaShellHaptic(name, level)`: a texture by name (`shell_haptics.dart`,
   `ShellHaptics.kt` on Android at media strength, Taptic impacts on iOS); a
   number is an ordinary press, one light tick. Builds 33 to 46 shipped without

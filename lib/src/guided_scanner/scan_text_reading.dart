@@ -13,6 +13,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
+import '../app_language.dart';
 import 'scan_document_profile.dart';
 
 /// Which rules decide that the paper in view is the right one.
@@ -1293,7 +1294,16 @@ enum ScanTextGuidance {
   bool get holdsCapture => this == ScanTextGuidance.differentPaper ||
       this == ScanTextGuidance.turnCardToFront || this == ScanTextGuidance.turnCardToBack;
 
-  ScanTextCopy copy(ScanPaperKind kind) => switch (this) {
+  /// What the camera says while it reads, in [language].
+  ScanTextCopy copy(ScanPaperKind kind,
+          [AppLanguage language = AppLanguage.en]) =>
+      switch (language) {
+        AppLanguage.en => _english(kind),
+        AppLanguage.fr => _french(kind),
+        AppLanguage.ar => _arabic(kind),
+      };
+
+  ScanTextCopy _english(ScanPaperKind kind) => switch (this) {
         ScanTextGuidance.reading => switch (kind) {
             ScanPaperKind.passport => const ScanTextCopy('Hold still', 'Reading the two lines at the bottom…', 'Reading…'),
             ScanPaperKind.idCard => const ScanTextCopy('Hold still', 'Reading the card…', 'Reading…'),
@@ -1339,6 +1349,142 @@ enum ScanTextGuidance {
           const ScanTextCopy('Show the printed side', 'Show the side of the page with the text.', 'Printed side.'),
         ScanTextGuidance.textRunsPastEdge => const ScanTextCopy(
             'Show all four corners', 'Some text runs past the edge of the view.', 'All four corners.'),
+      };
+
+  ScanTextCopy _french(ScanPaperKind kind) => switch (this) {
+        ScanTextGuidance.reading => switch (kind) {
+            ScanPaperKind.passport => const ScanTextCopy('Ne bougez plus',
+                'Lecture des deux lignes du bas…', 'Lecture…'),
+            ScanPaperKind.idCard => const ScanTextCopy(
+                'Ne bougez plus', 'Lecture de la carte…', 'Lecture…'),
+            ScanPaperKind.paper => const ScanTextCopy(
+                'Ne bougez plus', 'Lecture de la page…', 'Lecture…'),
+          },
+        ScanTextGuidance.showMachineLines => kind == ScanPaperKind.idCard
+            ? const ScanTextCopy('Montrez le verso de la carte',
+                'Montrez le verso, avec les trois lignes du bas.',
+                'Trois lignes du bas.')
+            : const ScanTextCopy('Montrez la page de la photo',
+                'Montrez la page de la photo, avec les deux lignes du bas.',
+                'Deux lignes du bas.'),
+        ScanTextGuidance.moveCloserMachineLines => ScanTextCopy(
+            'Rapprochez-vous',
+            kind == ScanPaperKind.idCard
+                ? 'Rapprochez-vous, les lignes de la carte sont trop petites.'
+                : 'Rapprochez-vous, les lignes du bas sont trop petites.',
+            'Rapprochez-vous.'),
+        ScanTextGuidance.glareOnMachineLines => const ScanTextCopy(
+            'Reflet sur les lignes du bas',
+            'Inclinez légèrement le téléphone.',
+            'Inclinez légèrement.'),
+        ScanTextGuidance.showWholeMachineLines => kind == ScanPaperKind.idCard
+            ? const ScanTextCopy('Montrez les trois lignes du bas',
+                'Gardez entièrement visibles les trois lignes au verso de la carte.',
+                'Les trois lignes.')
+            : const ScanTextCopy('Montrez les deux lignes du bas',
+                'Gardez entièrement visibles les deux lignes en bas de la page de la photo.',
+                'Les deux lignes.'),
+        ScanTextGuidance.differentPaper => ScanTextCopy(
+            'Ce document semble différent',
+            switch (kind) {
+              ScanPaperKind.passport =>
+                'Montrez la page de votre passeport avec la photo.',
+              ScanPaperKind.idCard => 'Montrez la carte d’identité.',
+              ScanPaperKind.paper => 'Montrez le document demandé à cette étape.',
+            },
+            'Autre document.'),
+        ScanTextGuidance.turnCardToFront => const ScanTextCopy(
+            'Retournez la carte',
+            'Montrez le recto de la carte, avec la photo.',
+            'Montrez le recto.'),
+        ScanTextGuidance.turnCardToBack => const ScanTextCopy(
+            'Retournez la carte',
+            'Montrez le verso de la carte, avec les lignes du bas.',
+            'Montrez le verso.'),
+        ScanTextGuidance.showCardDetails => const ScanTextCopy(
+            'Montrez la carte',
+            'Gardez visibles les informations imprimées de la carte.',
+            'Infos de la carte.'),
+        ScanTextGuidance.glareOnText => const ScanTextCopy(
+            'Reflet sur la carte',
+            'Inclinez légèrement le téléphone.',
+            'Inclinez légèrement.'),
+        ScanTextGuidance.moveCloserText => const ScanTextCopy(
+            'Rapprochez-vous',
+            'Rapprochez-vous pour que le texte soit lisible.',
+            'Rapprochez-vous.'),
+        ScanTextGuidance.showPrintedText => const ScanTextCopy(
+            'Montrez la face imprimée',
+            'Montrez le côté de la page où se trouve le texte.',
+            'Face imprimée.'),
+        ScanTextGuidance.textRunsPastEdge => const ScanTextCopy(
+            'Montrez les quatre coins',
+            'Une partie du texte dépasse du cadre.',
+            'Les quatre coins.'),
+      };
+
+  ScanTextCopy _arabic(ScanPaperKind kind) => switch (this) {
+        ScanTextGuidance.reading => switch (kind) {
+            ScanPaperKind.passport => const ScanTextCopy(
+                'ثبّت الهاتف', 'جارٍ قراءة السطرين في الأسفل…', 'جارٍ القراءة…'),
+            ScanPaperKind.idCard => const ScanTextCopy(
+                'ثبّت الهاتف', 'جارٍ قراءة البطاقة…', 'جارٍ القراءة…'),
+            ScanPaperKind.paper => const ScanTextCopy(
+                'ثبّت الهاتف', 'جارٍ قراءة الصفحة…', 'جارٍ القراءة…'),
+          },
+        ScanTextGuidance.showMachineLines => kind == ScanPaperKind.idCard
+            ? const ScanTextCopy('أظهر ظهر البطاقة',
+                'أظهر ظهر البطاقة مع الأسطر الثلاثة في الأسفل.',
+                'الأسطر الثلاثة في الأسفل.')
+            : const ScanTextCopy('أظهر صفحة الصورة',
+                'أظهر صفحة الصورة مع السطرين في الأسفل.',
+                'السطران في الأسفل.'),
+        ScanTextGuidance.moveCloserMachineLines => ScanTextCopy(
+            'اقترب أكثر',
+            kind == ScanPaperKind.idCard
+                ? 'اقترب أكثر، فأسطر البطاقة صغيرة جدًا.'
+                : 'اقترب أكثر، فالأسطر في الأسفل صغيرة جدًا.',
+            'اقترب أكثر.'),
+        ScanTextGuidance.glareOnMachineLines => const ScanTextCopy(
+            'انعكاس على الأسطر في الأسفل',
+            'أمِل الهاتف قليلًا.',
+            'أمِله قليلًا.'),
+        ScanTextGuidance.showWholeMachineLines => kind == ScanPaperKind.idCard
+            ? const ScanTextCopy('أظهر الأسطر الثلاثة في الأسفل',
+                'اجعل الأسطر الثلاثة على ظهر البطاقة ظاهرة كاملة.',
+                'الأسطر الثلاثة كاملة.')
+            : const ScanTextCopy('أظهر السطرين في الأسفل',
+                'اجعل السطرين أسفل صفحة الصورة ظاهرين كاملين.',
+                'السطران كاملان.'),
+        ScanTextGuidance.differentPaper => ScanTextCopy(
+            'يبدو أنها وثيقة أخرى',
+            switch (kind) {
+              ScanPaperKind.passport => 'أظهر صفحة الصورة في جواز سفرك.',
+              ScanPaperKind.idCard => 'أظهر بطاقة التعريف.',
+              ScanPaperKind.paper =>
+                'أظهر الوثيقة المطلوبة في هذه الخطوة.',
+            },
+            'وثيقة أخرى.'),
+        ScanTextGuidance.turnCardToFront => const ScanTextCopy(
+            'اقلب البطاقة', 'أظهر وجه البطاقة الذي فيه الصورة.', 'أظهر الوجه.'),
+        ScanTextGuidance.turnCardToBack => const ScanTextCopy('اقلب البطاقة',
+            'أظهر ظهر البطاقة مع الأسطر في الأسفل.', 'أظهر الظهر.'),
+        ScanTextGuidance.showCardDetails => const ScanTextCopy('أظهر البطاقة',
+            'اجعل البيانات المطبوعة على البطاقة ظاهرة.', 'بيانات البطاقة.'),
+        ScanTextGuidance.glareOnText => const ScanTextCopy(
+            'انعكاس على البطاقة',
+            'أمِل الهاتف قليلًا.',
+            'أمِله قليلًا.'),
+        ScanTextGuidance.moveCloserText => const ScanTextCopy('اقترب أكثر',
+            'اقترب أكثر ليصبح النص مقروءًا.', 'اقترب أكثر.'),
+        ScanTextGuidance.showPrintedText => const ScanTextCopy(
+            'أظهر الوجه المطبوع',
+            'أظهر وجه الصفحة الذي فيه النص.',
+            'الوجه المطبوع.'),
+        ScanTextGuidance.textRunsPastEdge => const ScanTextCopy(
+            'أظهر الزوايا الأربع',
+            'جزء من النص يتجاوز حافة الإطار.',
+            'الزوايا الأربع.'),
       };
 }
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'src/app_language.dart';
 import 'src/config.dart';
 import 'src/crash_reports.dart';
 import 'src/device_access.dart';
@@ -25,6 +26,9 @@ Future<void> main() async {
   // The theme the student chose, before the first frame: the loading screen
   // opens in it rather than in the phone's. One small file, a few ms.
   final appearance = await ShellAppearanceStore().read();
+  // And the language the student chose, so the app's own screens speak it
+  // from the first frame (app_language.dart). Another small file.
+  await ShellLanguage.instance.load();
   // First-time downloaders board through the onboarding; an update does not.
   final firstLaunch = await OnboardingStore().shouldShow();
   // And its sounds, behind the native splash, so the intro's starts with its
@@ -63,8 +67,15 @@ class FoorsaStudentApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Foorsa Student',
-      builder: (context, child) =>
-          StudentCallOverlay(child: child ?? const SizedBox.shrink()),
+      // Every screen of the app, and every dialog over it, speaks the
+      // student's language (app_language.dart).
+      builder: (context, child) => ListenableBuilder(
+        listenable: ShellLanguage.instance,
+        builder: (context, _) => AppLanguageScope(
+          language: ShellLanguage.instance.current,
+          child: StudentCallOverlay(child: child ?? const SizedBox.shrink()),
+        ),
+      ),
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

@@ -302,7 +302,8 @@ void main() {
     });
 
     test('what the reading still needs, for every paper', () {
-      final android = block(dartReading, '  ScanTextCopy copy(ScanPaperKind kind) => switch (this) {', '\n      };\n');
+      // The English table (the French and Arabic follow it in the same file).
+      final android = block(dartReading, '  ScanTextCopy _english(ScanPaperKind kind) => switch (this) {', '\n      };\n');
       final iphone = block(swiftReading, '  func copy(for kind: ScannerPaperKind) -> ScannerGuidanceCopy {', '\n  }\n}\n');
       // Case by case: the same words for the same guidance.
       for (final guidance in ScanTextGuidance.values) {

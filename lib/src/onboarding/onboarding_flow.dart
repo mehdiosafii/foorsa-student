@@ -10,7 +10,15 @@
 /// button named Continue. Whatever the student answers in the system prompt,
 /// the next step follows; nothing on the way promises a reward for allowing
 /// (ATT forbids that too).
+///
+/// The first step is the language (the owner, 1 Nov 2026): English, the
+/// default, French or Arabic, each named in itself. It asks the phone for
+/// nothing, so it is no pre-permission screen; it says only what the choice
+/// does (the app, the emails and the notifications) and where to change it.
+/// Every word of every step is written in the three ([copyFor]).
 library;
+
+import '../app_language.dart';
 
 /// Phone access the onboarding can ask for.
 enum BoardingAccess { notifications, camera, microphone, location, tracking }
@@ -30,6 +38,7 @@ enum AccessState {
 
 /// One screen of the onboarding.
 enum BoardingStep {
+  language,
   welcome,
   notifications,
   camera,
@@ -86,17 +95,18 @@ class BoardingPlan {
   final Map<BoardingAccess, AccessState> states;
 }
 
-/// The screens a student sees: the welcome, a step for each access the phone
-/// can still ask for, and the boarding pass. An access already granted, or
-/// refused before (the prompt would not show), gets no screen: a screen
-/// before a prompt that never comes is exactly what review refuses.
+/// The screens a student sees: the language, the welcome, a step for each
+/// access the phone can still ask for, and the boarding pass. An access
+/// already granted, or refused before (the prompt would not show), gets no
+/// screen: a screen before a prompt that never comes is exactly what review
+/// refuses.
 /// Tracking is asked only on an iPhone and only when [asksToTrack].
 Future<BoardingPlan> planBoarding(
   BoardingPermissions permissions, {
   required bool isIOS,
   required bool asksToTrack,
 }) async {
-  final steps = <BoardingStep>[BoardingStep.welcome];
+  final steps = <BoardingStep>[BoardingStep.language, BoardingStep.welcome];
   final states = <BoardingAccess, AccessState>{};
   for (final access in boardingOrder) {
     if (access == BoardingAccess.tracking && (!isIOS || !asksToTrack)) continue;
@@ -141,7 +151,32 @@ class BoardingCopy {
   final String spoken;
 }
 
-BoardingCopy copyFor(BoardingStep step) => switch (step) {
+/// The words of [step] in [language]. A step's words are a story told in a
+/// few of them, so French and Arabic say the same thing their own way rather
+/// than word for word (shared/i18n/README.md in foorsa-reward: vouvoiement
+/// and the typographic apostrophe in French; Modern Standard Arabic as a
+/// Moroccan student reads it, فرصة for Foorsa, the student addressed without
+/// a gender where the sentence allows).
+///
+/// The language step's [BoardingCopy.spoken] is what each language's row
+/// tells a screen reader, in that row's own language.
+BoardingCopy copyFor(BoardingStep step,
+        [AppLanguage language = AppLanguage.en]) =>
+    switch (language) {
+      AppLanguage.en => _english(step),
+      AppLanguage.fr => _french(step),
+      AppLanguage.ar => _arabic(step),
+    };
+
+BoardingCopy _english(BoardingStep step) => switch (step) {
+      BoardingStep.language => const BoardingCopy(
+          headline: 'Choose your language.',
+          body: 'For the app, emails and notifications. '
+              'Change it in Profile › Settings.',
+          action: 'Language',
+          hint: 'Tap your language',
+          spoken: 'Double-tap to choose this language.',
+        ),
       BoardingStep.welcome => const BoardingCopy(
           headline: 'Your journey to China starts here.',
           body: 'Let’s get your phone ready. It takes a minute.',
@@ -193,5 +228,131 @@ BoardingCopy copyFor(BoardingStep step) => switch (step) {
           action: 'Board',
           hint: 'Pull the stub down to board',
           spoken: 'Double-tap to tear off the stub and sign in.',
+        ),
+    };
+
+BoardingCopy _french(BoardingStep step) => switch (step) {
+      BoardingStep.language => const BoardingCopy(
+          headline: 'Choisissez votre langue.',
+          body: 'Pour l’application, vos e-mails et vos notifications. '
+              'Modifiable dans Profil › Réglages.',
+          action: 'Langue',
+          hint: 'Touchez votre langue',
+          spoken: 'Touchez deux fois pour choisir cette langue.',
+        ),
+      BoardingStep.welcome => const BoardingCopy(
+          headline: 'Votre voyage vers la Chine commence ici.',
+          body: 'Préparons votre téléphone. Cela ne prend qu’une minute.',
+          action: 'Commencer',
+          hint: 'Glissez la flèche vers le haut',
+          spoken: 'Touchez deux fois pour lancer la flèche et commencer.',
+        ),
+      BoardingStep.notifications => const BoardingCopy(
+          headline: 'Ne manquez aucun moment.',
+          body: 'Les réponses de votre conseiller et les nouvelles de votre '
+              'dossier, en temps réel.',
+          action: 'Continuer',
+          hint: 'Touchez la notification',
+          spoken: 'Touchez deux fois la notification pour continuer.',
+        ),
+      BoardingStep.camera => const BoardingCopy(
+          headline: 'Scannez vos documents en quelques secondes.',
+          body: 'Présentez un document à l’appareil photo, l’application '
+              'fait le reste.',
+          action: 'Continuer',
+          hint: 'Glissez la page dans le cadre',
+          spoken: 'Touchez deux fois pour placer la page dans le cadre.',
+        ),
+      BoardingStep.microphone => const BoardingCopy(
+          headline: 'Parlez à votre conseiller.',
+          body: 'Répondez aux appels et envoyez des messages vocaux, sans '
+              'quitter l’application.',
+          action: 'Continuer',
+          hint: 'Touchez le micro',
+          spoken: 'Touchez deux fois le micro pour continuer.',
+        ),
+      BoardingStep.location => const BoardingCopy(
+          headline: 'Sentez-vous chez vous en Chine.',
+          body: 'Les heures de prière, la météo et les lieux proches, quand '
+              'vous utilisez l’application.',
+          action: 'Continuer',
+          hint: 'Touchez la flèche pour vous situer',
+          spoken: 'Touchez deux fois la flèche de la carte pour vous situer.',
+        ),
+      BoardingStep.tracking => const BoardingCopy(
+          headline: 'Aidez d’autres personnes à découvrir Foorsa.',
+          body: 'Permettez à Foorsa de savoir quelle publicité vous a fait '
+              'venir. Rien de plus.',
+          action: 'Continuer',
+          hint: 'Touchez le bouclier',
+          spoken: 'Touchez deux fois le bouclier pour continuer.',
+        ),
+      BoardingStep.boarding => const BoardingCopy(
+          headline: 'Tout est prêt pour l’embarquement.',
+          body: 'Détachez le talon pour vous connecter.',
+          action: 'Embarquer',
+          hint: 'Tirez le talon vers le bas',
+          spoken:
+              'Touchez deux fois pour détacher le talon et vous connecter.',
+        ),
+    };
+
+BoardingCopy _arabic(BoardingStep step) => switch (step) {
+      BoardingStep.language => const BoardingCopy(
+          headline: 'اختر لغتك.',
+          body: 'للتطبيق ورسائلك الإلكترونية وإشعاراتك. '
+              'يمكنك تغييرها من الإعدادات في ملفك الشخصي.',
+          action: 'اللغة',
+          hint: 'اضغط على لغتك',
+          spoken: 'اضغط مرتين لاختيار هذه اللغة.',
+        ),
+      BoardingStep.welcome => const BoardingCopy(
+          headline: 'رحلتك إلى الصين تبدأ من هنا.',
+          body: 'لنجهز هاتفك. لن يستغرق ذلك سوى دقيقة.',
+          action: 'البدء',
+          hint: 'اسحب السهم إلى الأعلى',
+          spoken: 'اضغط مرتين لإطلاق السهم والبدء.',
+        ),
+      BoardingStep.notifications => const BoardingCopy(
+          headline: 'لن يفوتك أي جديد.',
+          body: 'ردود مستشارك وأخبار ملفك، أولًا بأول.',
+          action: 'متابعة',
+          hint: 'اضغط على الإشعار',
+          spoken: 'اضغط مرتين على الإشعار للمتابعة.',
+        ),
+      BoardingStep.camera => const BoardingCopy(
+          headline: 'المسح الضوئي لوثائقك في ثوانٍ.',
+          body: 'يكفي وضع الوثيقة أمام الكاميرا، والتطبيق يتكفل بالباقي.',
+          action: 'متابعة',
+          hint: 'اسحب الصفحة إلى الإطار',
+          spoken: 'اضغط مرتين لوضع الصفحة في الإطار.',
+        ),
+      BoardingStep.microphone => const BoardingCopy(
+          headline: 'مستشارك على بُعد مكالمة.',
+          body: 'الرد على المكالمات وإرسال الرسائل الصوتية، من داخل التطبيق.',
+          action: 'متابعة',
+          hint: 'اضغط على الميكروفون',
+          spoken: 'اضغط مرتين على الميكروفون للمتابعة.',
+        ),
+      BoardingStep.location => const BoardingCopy(
+          headline: 'كأنك في بيتك، في الصين.',
+          body: 'أوقات الصلاة والطقس والأماكن القريبة، أثناء استخدامك للتطبيق.',
+          action: 'متابعة',
+          hint: 'اضغط على السهم لتحديد موقعك',
+          spoken: 'اضغط مرتين على سهم الخريطة لتحديد موقعك.',
+        ),
+      BoardingStep.tracking => const BoardingCopy(
+          headline: 'ساعد غيرك على اكتشاف فرصة.',
+          body: 'دع فرصة تعرف أي إعلان من إعلاناتها أوصلك إلى هنا، لا أكثر.',
+          action: 'متابعة',
+          hint: 'اضغط على الدرع',
+          spoken: 'اضغط مرتين على الدرع للمتابعة.',
+        ),
+      BoardingStep.boarding => const BoardingCopy(
+          headline: 'كل شيء جاهز للصعود.',
+          body: 'اقطع كعب التذكرة لتسجيل الدخول.',
+          action: 'الصعود',
+          hint: 'اسحب كعب التذكرة إلى الأسفل',
+          spoken: 'اضغط مرتين لقطع كعب التذكرة وتسجيل الدخول.',
         ),
     };

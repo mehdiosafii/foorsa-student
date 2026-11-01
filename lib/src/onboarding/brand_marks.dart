@@ -4,6 +4,7 @@ library;
 
 import 'package:flutter/widgets.dart';
 
+import '../app_language.dart';
 import 'brand_vectors.dart';
 import 'svg_path.dart';
 
@@ -19,7 +20,9 @@ class FoorsaWordmark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Foorsa',
+      // Read as the student's language names it: فرصة in Arabic.
+      label: const Words('Foorsa', 'Foorsa', 'فرصة')
+          .of(AppLanguageScope.of(context)),
       image: true,
       child: SizedBox(
         height: height,
