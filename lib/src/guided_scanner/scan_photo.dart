@@ -111,7 +111,7 @@ extension ScanPhotoSharpness on ScanPhotoChannel {
 /// missed softens every edge; a hand that moved streaks the print along one
 /// direction, and only the edges across that direction lose their strength,
 /// which is why the weaker direction decides. Only stills of one page are
-/// compared with it; [scanStillSoft] is a floor for a page with print on it.
+/// compared with it: its value depends on how much print the page has.
 double scanStillSharpness(Uint8List luma, int width, int height) {
   if (width < 3 || height < 3 || luma.length < width * height) return 0;
   final histogram = List<int>.filled(256, 0);
@@ -157,26 +157,22 @@ double scanStillSharpness(Uint8List luma, int width, int height) {
   return math.min(strongest(across), strongest(down)) / contrast;
 }
 
-/// Below this, a page with print reads as soft (scan_still_sharpness_test.dart: crisp
-/// print scores near 3.9, print blurred by a 1.5-pixel radius 2.2, a hand
-/// that moved 8 pixels 1.0).
-const scanStillSoft = 2.5;
+/// The stills the guided camera takes of one page: the first, and one more
+/// straight after it, while the page is still held. A hand that moved as the
+/// shutter went, the press of the shutter, or focus that settled a moment late
+/// each blur one still, rarely two in a row. Only the two are compared: a
+/// floor of "sharp enough" cannot be set for every paper (on simulated photos
+/// a steady ID card scores 1.0 and a steady transcript 3.2, because a card has
+/// less print in its middle), so a third still on a low score would be taken of
+/// every card for nothing.
+const scanStillsAtMost = 2;
 
-/// The most stills the guided camera takes of one page.
-const scanStillsAtMost = 3;
-
-/// Whether to take another still of the page: always a second (a hand that
-/// moved as the first was taken, a press of the shutter, focus that settled
-/// a moment late), and a third only when neither is sharp.
+/// Whether to take another still of the page: a second, always, unless the
+/// phone could not measure the first (it then keeps it, as before).
 bool wantsAnotherStill(List<double?> scores) {
   if (scores.isEmpty) return true;
   if (scores.length >= scanStillsAtMost) return false;
-  // A phone that cannot measure keeps its first still, as before.
-  if (scores.first == null) return false;
-  if (scores.length == 1) return true;
-  final best = bestStill(scores);
-  final bestScore = best < 0 ? null : scores[best];
-  return bestScore != null && bestScore < scanStillSoft;
+  return scores.first != null;
 }
 
 /// The sharpest still (the first among equals); -1 when there is none.

@@ -45,6 +45,8 @@ dependency_overrides:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # A fake camera for the Android scanner's screen test (guided_scan_page_test.dart).
+  camera_platform_interface: ^2.15.0
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.3
   flutter_native_splash: ^2.4.4

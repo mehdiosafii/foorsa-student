@@ -1,10 +1,10 @@
 # Custom iPhone document scanner
 
-## The Android still: quality mode, the sharpest of a burst, the camera's tones (1.2.34, 65)
+## The Android still: quality mode and the sharpest of a burst (1.2.34, 65)
 
 The owner, 1 Nov 2026, on Android: "the scan quality is still very bad, make
 sure the android app is as good as ios", then "even the quality of the camera is
-bad it's not as the original camera of the phone". Three things stood between the
+bad it's not as the original camera of the phone". Two things stood between the
 phone's camera and the page the student reviews:
 
 - **CameraX's fast mode.** The camera plugin never chose a capture mode, so
@@ -15,30 +15,31 @@ phone's camera and the page the student reviews:
 - **One still, blurred or not.** The shutter fires by itself once the page has
   been in view for a while, steady or not (above), and nothing checked the
   photo. Now the camera takes a second still straight after the first, while
-  the page is still held, and a third when neither is sharp, and keeps the
-  sharpest (`_sharpestStill` in `guided_scan_page.dart`). Sharpness is measured
-  on the phone: `ScanPhoto.kt` decodes only the middle of each still (its
-  central half, about 900 pixels long), and `scanStillSharpness`
-  (`scan_photo.dart`) takes the mean Sobel strength of its sharpest 2% of
-  pixels across and down, keeps the weaker of the two (a hand that moved
-  streaks print one way only), and divides it by the contrast. On synthetic
-  print (`test/scan_still_sharpness_test.dart`) crisp print scores about 3.9,
-  print blurred by 0.7 pixels 3.1, by 1.5 pixels 2.2, by 3 pixels 1.2, and a
-  hand that moved 8 pixels 1.0; `scanStillSoft` is 2.5. A phone that cannot
-  measure keeps its first still, as before. The other stills are deleted. It
-  costs one more still (two when the first two are soft), about half a second
-  to a second on most phones, while the screen says "Hold still · Taking the
-  photo."
-- **The paper brightened in the portal.** The portal cropped an Android photo
-  and then divided each pixel by the light on its paper (up to 2.4 times),
-  which an iPhone page never gets: in a dim room that multiplied the sensor's
-  noise and gave the page a look the camera had not. The guided camera's still
-  now goes to the portal with `engine: 'android_guided'`, and the portal crops
-  and warps it but keeps the camera's own tones (foorsa-reward,
-  `keepsCameraTones` in `guidedScanBridge.ts`). The CRM's AI main scan relights
-  the page for staff, as it does an iPhone page. Builds before 1.2.34 send no
-  engine and their pages are flattened as before; photos chosen from the
-  library and a browser's camera keep the clean scanned look the team asked for.
+  the page is still held, and keeps the sharper (`_sharpestStill` in
+  `guided_scan_page.dart`). Sharpness is measured on the phone: `ScanPhoto.kt`
+  decodes only the middle of each still (its central half, about 900 pixels
+  long), and `scanStillSharpness` (`scan_photo.dart`) takes the mean Sobel
+  strength of its sharpest 2% of pixels across and down, keeps the weaker of
+  the two (a hand that moved streaks print one way only), and divides it by the
+  contrast. On synthetic print (`test/scan_still_sharpness_test.dart`) crisp
+  print scores about 3.9, print blurred by 0.7 pixels 3.1, by 1.5 pixels 2.2,
+  by 3 pixels 1.2, and a hand that moved 8 pixels 1.0. On simulated 12 MP
+  photos of the reference documents (a desk, a slant, sensor noise), sampled as
+  the phone samples them, a still shaken by the hand against a steady one
+  scored 0.63 / 3.14 (diploma), 0.67 / 3.25 (transcript), 0.70 / 1.83
+  (passport) and 0.33 / 0.96 (ID card): the steady one kept every time. Those
+  steady scores also show why there is no "sharp enough" line and no third
+  still: a card has less print in its middle and scores low however sharp it
+  is. A phone that cannot measure keeps its first still, as before. The other
+  still is deleted. It costs one more still, about half a second to a second on
+  most phones, while the screen says "Hold still · Taking the photo."
+- **Not changed: the portal's flattening.** Keeping the camera's own tones on
+  the page instead was tried and checked first on simulated 12 MP Android photos
+  of the reference documents (a desk, a slant, daylight, a dim room, a hand's
+  shadow), through the portal's own crop in Chromium. Indoors the pages came out
+  grey and dull, while the flattened ones read like a scan. Flattening scales
+  the ink and the grain by the same factor, so it costs no legibility. It
+  stayed.
 
 What only a phone can confirm: the capture time in quality mode on a cheap phone,
 that the second still is taken while the page is still held, and the page beside

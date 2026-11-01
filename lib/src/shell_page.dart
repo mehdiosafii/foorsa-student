@@ -792,10 +792,6 @@ class _ShellPageState extends State<ShellPage> {
       }
       return {
         'files': [await _fileEntry(picture.name, bytes)],
-        // The Android guided camera's still: the portal crops the page out of
-        // it and keeps the camera's own tones, as it keeps an iPhone page's,
-        // instead of brightening its paper (guidedScanBridge.ts).
-        'engine': guidedScanAndroidEngine,
         if (result.liveReading != null) 'liveReading': result.liveReading,
       };
     } catch (_) {

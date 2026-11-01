@@ -1,1 +1,1 @@
-L'application ne reste plus bloquée sur l'écran de chargement sur certains téléphones Android. Scanner : photos plus nettes (l'application garde la plus nette de plusieurs prises), en mode qualité de l'appareil photo, avec les couleurs fidèles de la page. Corrections.
+L'application ne reste plus bloquée sur l'écran de chargement sur certains téléphones Android. Scanner : photos plus nettes, prises en mode qualité de l'appareil photo, l'application garde la plus nette de plusieurs prises. Corrections.
