@@ -104,6 +104,26 @@ class MainActivity : FlutterFragmentActivity() {
         val scanPhoto = ScanPhoto()
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/scan_photo")
             .setMethodCallHandler { call, result -> scanPhoto.handle(call, result) }
+        // Which of the portal's map apps the phone has (map_apps.dart): the
+        // packages asked about that are installed. Android 11 and later see only
+        // the packages the manifest's <queries> name.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/map_apps")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "installed") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val asked = (call.arguments as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                result.success(asked.filter { name ->
+                    try {
+                        @Suppress("DEPRECATION")
+                        packageManager.getPackageInfo(name, 0)
+                        true
+                    } catch (_: Exception) {
+                        false
+                    }
+                })
+            }
         // The portal's textures, by name (shell_haptics.dart). Answers false
         // when the phone cannot play one, so Dart falls back to system impacts.
         val haptics = ShellHaptics(applicationContext)

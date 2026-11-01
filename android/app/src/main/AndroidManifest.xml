@@ -137,5 +137,11 @@
             <action android:name="android.intent.action.GET_CONTENT"/>
             <data android:mimeType="*/*"/>
         </intent>
+        <!-- The map apps the portal's Open in maps may offer (map_apps.dart):
+             Android 11 and later say whether one is installed only for these. -->
+        <package android:name="com.google.android.apps.maps"/>
+        <package android:name="com.autonavi.minimap"/>
+        <package android:name="com.baidu.BaiduMap"/>
+        <package android:name="com.waze"/>
     </queries>
 </manifest>

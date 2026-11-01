@@ -26,11 +26,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:url_launcher/url_launcher.dart' as launcher;
+import 'package:url_launcher/url_launcher_string.dart' as launcher_string;
 
 import 'app_language.dart';
 import 'boot_loader_gate.dart';
 import 'config.dart';
 import 'embedded_navigation.dart';
+import 'map_apps.dart';
 import 'quick_sign_in_offer.dart';
 import 'shell_appearance.dart';
 import 'shell_capabilities.dart';
@@ -615,8 +617,14 @@ class _ShellPageState extends State<ShellPage> {
     return isTrustedPortalOrigin(uri, AppConfig.baseUrl);
   }
 
-  Future<bool> _openExternally(Uri uri) async {
+  Future<bool> _openExternally(Uri uri, {String? raw}) async {
     try {
+      // An app's own address keeps its case (map_apps.dart).
+      final asWritten = raw == null ? null : appAddressAsWritten(raw);
+      if (asWritten != null) {
+        return await launcher_string.launchUrlString(asWritten,
+            mode: launcher.LaunchMode.externalApplication);
+      }
       return await launcher.launchUrl(uri,
           mode: launcher.LaunchMode.externalApplication);
     } catch (_) {
@@ -1393,7 +1401,7 @@ class _ShellPageState extends State<ShellPage> {
                     callback: (args) async {
                       if (args.isNotEmpty) {
                         final uri = Uri.tryParse(args[0].toString());
-                        if (uri != null && await _openExternally(uri)) {
+                        if (uri != null && await _openExternally(uri, raw: args[0].toString())) {
                           return true;
                         }
                       }
@@ -1414,6 +1422,12 @@ class _ShellPageState extends State<ShellPage> {
                       final info = _packageInfo ?? await PackageInfo.fromPlatform().catchError((Object _) => PackageInfo(appName: '', packageName: '', version: '', buildNumber: ''));
                       return shellCapabilities(isIOS: Platform.isIOS, appVersion: info.version, appBuild: info.buildNumber);
                     },
+                  );
+                  // The map apps the phone has, for the portal's Open in maps
+                  // (map_apps.dart): names only, nothing about the student.
+                  controller.addJavaScriptHandler(
+                    handlerName: 'FoorsaShellMapApps',
+                    callback: (args) async => {'apps': await installedMapApps(isIOS: Platform.isIOS)},
                   );
                   // A texture by name (and the grain's level), or a number for
                   // an ordinary press: shell_haptics.dart.
