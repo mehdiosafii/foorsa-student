@@ -282,6 +282,10 @@ class AndroidCameraCameraX extends CameraPlatform {
   /// The preset resolution selector for the camera.
   ResolutionSelector? _presetResolutionSelector;
 
+  /// The resolution selector for [imageAnalysis]: the preset's, except at
+  /// [ResolutionPreset.max] (Foorsa patch, [foorsaImageAnalysisMaxSelector]).
+  ResolutionSelector? _imageAnalysisResolutionSelector;
+
   /// The configured target FPS range for the camera.
   CameraIntegerRange? _targetFpsRange;
 
@@ -397,6 +401,12 @@ class AndroidCameraCameraX extends CameraPlatform {
     _presetResolutionSelector = _getResolutionSelectorFromPreset(
       mediaSettings?.resolutionPreset,
     );
+    // Foorsa patch: at the maximum, only the still and the preview ask for the
+    // sensor's highest resolution; the image stream keeps to preview size.
+    _imageAnalysisResolutionSelector =
+        mediaSettings?.resolutionPreset == ResolutionPreset.max
+        ? foorsaImageAnalysisMaxSelector()
+        : _presetResolutionSelector;
 
     final int? targetFps = mediaSettings?.fps;
     if (targetFps != null) {
@@ -477,7 +487,7 @@ class AndroidCameraCameraX extends CameraPlatform {
     _imageAnalysisOutputImageFormat =
         _imageAnalysisOutputFormatFromImageFormatGroup(imageFormatGroup);
     imageAnalysis = ImageAnalysis(
-      resolutionSelector: _presetResolutionSelector,
+      resolutionSelector: _imageAnalysisResolutionSelector,
       targetFpsRange: _targetFpsRange,
       outputImageFormat: _imageAnalysisOutputImageFormat,
     );
@@ -1859,4 +1869,42 @@ class AndroidCameraCameraX extends CameraPlatform {
         );
     }
   }
+}
+
+/// The largest image-stream frame asked for beside a still at
+/// [ResolutionPreset.max] (Foorsa patch, [foorsaImageAnalysisMaxSelector]).
+const ({int width, int height}) foorsaImageAnalysisMaxSize = (
+  width: 1440,
+  height: 1080,
+);
+
+/// Foorsa patch (foorsa-student, 1 Nov 2026; the owner, on an Android 17
+/// phone: "the scanning didn't show the auto scanning interface").
+///
+/// Upstream gives every use case the same selector, and at
+/// [ResolutionPreset.max] that is the highest available resolution, so the
+/// image stream (YUV) asks for the sensor's largest frame beside the still
+/// (JPEG) that does. A camera guarantees a YUV stream at that size beside a
+/// full-resolution still on only some hardware, and CameraX has to settle the
+/// stream lower; each frame the guided scanner asks for also crosses the
+/// platform channel whole. The scanner reads a 160-cell grid and a crop for the
+/// text reader from each frame, and needs no more than the preview's size. So
+/// at the maximum the stream asks for 4:3 at most [foorsaImageAnalysisMaxSize]
+/// (the preview's size, the camera's guaranteed "YUV at preview size beside a
+/// JPEG at maximum"), while the still and the preview keep the highest
+/// available.
+ResolutionSelector foorsaImageAnalysisMaxSelector() {
+  return ResolutionSelector(
+    resolutionStrategy: ResolutionStrategy(
+      boundSize: CameraSize(
+        width: foorsaImageAnalysisMaxSize.width,
+        height: foorsaImageAnalysisMaxSize.height,
+      ),
+      fallbackRule: ResolutionStrategyFallbackRule.closestLowerThenHigher,
+    ),
+    aspectRatioStrategy: AspectRatioStrategy(
+      preferredAspectRatio: AspectRatio.ratio4To3,
+      fallbackRule: AspectRatioStrategyFallbackRule.auto,
+    ),
+  );
 }

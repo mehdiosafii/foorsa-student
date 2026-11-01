@@ -1,5 +1,86 @@
 # Custom iPhone document scanner
 
+## When the Android camera loses automatic capture (1 Nov 2026)
+
+The owner, 1 Nov 2026, on an Android 17 phone: "In Android the scanning didn't
+show the auto scanning interface." That evening the phone's sessions on the
+usage board had no app version, and nothing on the crash board explained the
+scan. The guided camera could not have said anything. When its image stream
+failed, or sent a frame it could not read, it quietly became a camera with a
+shutter only ("never fake auto-ready"), and nothing was reported.
+
+**What takes automatic capture away on Android.**
+
+- `startImageStream` throws.
+- The stream sends no frame. This is the likely failure on Android, and it was
+  the silent one. `camera_android_camerax` sets up the stream's camera side
+  (binding `ImageAnalysis`, setting its analyzer) in the stream's `onListen`,
+  after `startImageStream` has returned, and its errors never reach the page.
+  Until now the page then waited for a frame forever, with auto on, saying
+  "Find the page".
+- A frame in a format the scanner cannot read (`ScanLumaPlane.whyUnreadable`),
+  or one whose grid cannot be sampled.
+
+**What the camera does now** (`guided_scan_page.dart`):
+
+- A frame asked for and not in within 4 s (`guidedScanFrameWait`) counts as a
+  failed stream. Frames normally come within a few hundred milliseconds. Once
+  frames have come, a late one is asked for once more first, for a busy phone
+  or a frame lost between two asks. Before, a lost frame also left the page
+  waiting forever.
+- If the stream fails at `ResolutionPreset.max` before its first frame, the
+  camera reopens once at `veryHigh` (`guidedScanPresets`). There it streams and
+  captures by itself, but its stills are 1920 × 1080, the photos the owner
+  called "very very very bad" on 31 Oct. So this is the last resort. If
+  `veryHigh` does not open, the camera opens at `max` again with the shutter
+  alone. A stream that worked at `max` and then stopped stays at `max`, with
+  the shutter: the resolution did not cause that.
+- The first line is in the camera plugin (`third_party/README.md`). At `max`
+  only the still and the preview ask for the sensor's highest resolution. The
+  image stream asks for 4:3 at 1440 × 1080 at most, which is about what CameraX
+  gave it beside a full-resolution still anyway. Every camera guarantees a YUV
+  stream at preview size beside a JPEG at its maximum, so a phone should not
+  need the reopen and keeps its full-resolution stills.
+
+**What the crash board shows** (Admin Portal › Student App › Crashes, place
+"Guided scanner", `scan_trouble.dart`). Each kind is sent at most once a scan,
+whatever the camera does after. Each also carries the build and the Android
+release, as every app report does (`crash_reports.dart`):
+
+| When | The line |
+|---|---|
+| The stream failed at `max`, the camera reopens lower | `Scanner: image stream failed at max, preview 1440x1080 (no frame in 4 s); reopening at veryHigh (1080p stills) to keep auto-capture` |
+| Auto-capture lost for the rest of the camera | `Scanner: no auto-capture, shutter only (frame format nv21 (raw 17)); camera max, preview 1440x1080` |
+| The camera did not open | `Scanner: camera did not open (CameraException IllegalArgumentException at max, veryHigh, high)` |
+| The student chose the phone's camera app | `Scanner: student chose the phone camera app (camera did not open: …)` |
+
+The reasons are `startImageStream threw <type> <code>`, `no frame in 4 s`,
+`frames stopped after <n>`, `frame format <group> (raw <n>)` and
+`frame not sampled (<width>x<height>, row <n>, pixel <n>, <n> KB)`. The camera
+is named by the preset that opened, the preview's size, and any preset above it
+that did not open, with its error ("veryHigh, preview 1920x1080, after max:
+CameraException IllegalArgumentException"). Nothing about the student is sent:
+no pixels, nothing read from the page, and of an exception only its type and
+code, never its message.
+
+**What the board still cannot show.** If the portal opens the phone's own
+camera without the scanner having been on screen, the scanner was never opened:
+the bridge threw, or answered `unsupported`, or answered too late
+(foorsa-reward, `guidedScanBridge.ts`). That happens before this page, and
+nothing here reports it. The build on the phone says which.
+
+`test/guided_scan_stream_test.dart` runs the page against a camera whose stream
+throws, sends nothing, stops, or sends a format it cannot read, at one preset
+or every preset, and one that never opens. `test/scan_trouble_test.dart` holds
+the board's lines, and checks that they survive the server's cleaning
+(`cleanCrashText`). `test/android_plugin_patches_test.dart` pins the plugin
+patch.
+
+**What only a phone can confirm.** Whether the owner's phone's stream fails at
+all, and how: its first report will say. How long the first frame takes on the
+slowest phones, against the 4 s wait. That the stream at 1440 × 1080 gives the
+text reader the same frames as before on a phone with a 1080p screen.
+
 ## The Android still: quality mode and the sharpest of a burst (1.2.34, 65)
 
 The owner, 1 Nov 2026, on Android: "the scan quality is still very bad, make
