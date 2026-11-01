@@ -201,7 +201,7 @@ extend it or store passwords to work around expiry.
   chat in that session too. Hardware prompts and store delivery
   cannot be proven by unit tests alone.
 
-**Until the build after 1.2.35 (66), no Android phone saw the fingerprint or face prompt.**
+**Until 1.2.36 (67), no Android phone saw the fingerprint or face prompt.**
 flutter_secure_storage (10.3.4, and 11.x alike) reads a store with no cipher
 markers yet as data written under its old default ciphers, so the first
 opening of a new biometric store looks to it like an algorithm change. With
