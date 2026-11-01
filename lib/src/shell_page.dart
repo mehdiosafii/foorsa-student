@@ -365,6 +365,16 @@ class _ShellPageState extends State<ShellPage> {
     );
   }
 
+  Future<void> _republishScannerNonce() async {
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      await _publishScannerNonce(controller);
+    } catch (_) {
+      // The page is going; the next load publishes it.
+    }
+  }
+
   Future<void> _publishScannerNonce(InAppWebViewController controller) async {
     final current = await controller.getUrl();
     if (!_isTrustedPortal(current)) return;
@@ -378,7 +388,11 @@ class _ShellPageState extends State<ShellPage> {
       '{value: ${jsonEncode(nonce)}, configurable: true, enumerable: false});'
       // Quick sign-in talks to the shell with the same nonce. Until 1.2.21 it
       // was handed over only before a scan, so the sign-in offer never showed.
-      'window.__foorsaBiometrics?.ready(${jsonEncode(nonce)});}'
+      'window.__foorsaBiometrics?.ready(${jsonEncode(nonce)});'
+      // The push registration waits for it (studentPush.ts): the portal
+      // often asks before the page has finished loading, and was answered
+      // "pending" until it gave up.
+      'window.dispatchEvent(new Event("foorsa-shell-session"));}'
     );
   }
 
@@ -998,8 +1012,25 @@ class _ShellPageState extends State<ShellPage> {
         await showStudentCall(invite);
         return {'ok': true};
       case 'getPushToken':
-        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'token': null, 'status': 'pending'};
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) {
+          // Asked before this page had the session (or with an old one): hand
+          // it over and say so, so the portal asks again at once.
+          unawaited(_republishScannerNonce());
+          return {'token': null, 'status': 'pending', 'reason': 'session'};
+        }
         return _push.token();
+      // Where this phone stands, without asking anything: the portal's
+      // Settings row (On, Off, Not set up yet).
+      case 'pushStatus':
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) {
+          unawaited(_republishScannerNonce());
+          return {'status': 'pending', 'reason': 'session'};
+        }
+        return _push.status();
+      // Off in the phone's settings: the button that takes the student there.
+      case 'openNotificationSettings':
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'ok': false};
+        return {'ok': await _push.openSettings()};
       case 'clearPushToken':
         if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'ok': false};
         await _push.clear();
@@ -1214,7 +1245,10 @@ class _ShellPageState extends State<ShellPage> {
                   // older builds (shell_capabilities.dart).
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellCapabilities',
-                    callback: (args) => shellCapabilities(isIOS: Platform.isIOS),
+                    callback: (args) async {
+                      final info = _packageInfo ?? await PackageInfo.fromPlatform().catchError((Object _) => PackageInfo(appName: '', packageName: '', version: '', buildNumber: ''));
+                      return shellCapabilities(isIOS: Platform.isIOS, appVersion: info.version, appBuild: info.buildNumber);
+                    },
                   );
                   // A texture by name (and the grain's level), or a number for
                   // an ordinary press: shell_haptics.dart.

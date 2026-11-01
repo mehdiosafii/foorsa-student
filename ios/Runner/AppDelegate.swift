@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import UserNotifications
 import PushKit
 import CallKit
 import AVFAudio
@@ -11,12 +12,28 @@ import flutter_callkit_incoming
   private var voipRegistry: PKPushRegistry?
   private var pendingAnswers: [String: CXAnswerCallAction] = [:]
   private var callChannel: FlutterMethodChannel?
+  private var pushChannel: FlutterMethodChannel?
+  /// What Apple answered when the app registered for remote notifications. A
+  /// build signed without the push entitlement is refused here ("no valid
+  /// aps-environment entitlement string found"), and nothing told anyone:
+  /// student_push.dart now asks for it (`apnsState`) and reports it.
+  private var apnsRegistered = false
+  private var apnsError: String?
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     RTCAudioSession.sharedInstance().useManualAudio = true
     RTCAudioSession.sharedInstance().isAudioEnabled = false
+    // The notification centre's delegate is the app delegate, set before
+    // launch ends as Apple requires, and Flutter hands what it hears to every
+    // plugin: firebase_messaging and flutter_local_notifications both. Left
+    // unset, firebase_messaging made itself the delegate and answered for the
+    // local notifications too, with no banner: the app's own banners (a reply
+    // while the app is open on another screen, the first notification of the
+    // onboarding, a calendar reminder) never showed, and a tap on one never
+    // reached the app.
+    UNUserNotificationCenter.current().delegate = self as UNUserNotificationCenterDelegate
     let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     let registry = PKPushRegistry(queue: .main)
     registry.delegate = self
@@ -40,6 +57,33 @@ import flutter_callkit_incoming
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "FoorsaDocumentScanner") {
       DocumentScanner.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "FoorsaStudentPush") {
+      let channel = FlutterMethodChannel(name: "ma.foorsa.student/push", binaryMessenger: registrar.messenger())
+      pushChannel = channel
+      channel.setMethodCallHandler { [weak self] call, result in
+        if call.method == "apnsState" {
+          var state: [String: Any] = [
+            "registered": self?.apnsRegistered ?? false,
+            "registeredForRemoteNotifications": UIApplication.shared.isRegisteredForRemoteNotifications,
+          ]
+          if let error = self?.apnsError { state["error"] = error }
+          result(state)
+        } else { result(FlutterMethodNotImplemented) }
+      }
+    }
+  }
+
+  override func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    apnsRegistered = true
+    apnsError = nil
+    super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
+  }
+
+  override func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+    let refusal = error as NSError
+    // Apple's words and code only: nothing about the student is in them.
+    apnsError = String("\(refusal.domain) \(refusal.code): \(refusal.localizedDescription)".prefix(200))
+    super.application(application, didFailToRegisterForRemoteNotificationsWithError: error)
   }
 
   func pushRegistry(_ registry: PKPushRegistry, didUpdate credentials: PKPushCredentials, for type: PKPushType) {
