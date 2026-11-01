@@ -338,28 +338,81 @@ jobs:
             [[ ${#found[@]} -gt 0 ]] && bash scripts/push_entitlement.sh "${found[0]}" || true
           }
 
+          exported_keys() {
+            shopt -s nullglob
+            local found=(build/ios/ipa/*.ipa)
+            [[ ${#found[@]} -gt 0 ]] && bash scripts/push_entitlement.sh --keys "${found[0]}" || true
+          }
+
+          # The first export that carries the production push entitlement is
+          # the build; $signed_from says which archive it came from.
+          signed_from=""
+          try_export() {
+            if ! export_ipa "$1"; then
+              echo "::warning::$2 did not export; see the errors above."
+              return 1
+            fi
+            if [[ "$(exported_push)" != production ]]; then
+              echo "::warning::$2 exported without the push entitlement (entitlements: $(exported_keys))."
+              return 1
+            fi
+            signed_from="$2"
+          }
+
           # The archive is built unsigned and signed once, by Apple, at export.
           flutter build ipa --release --no-codesign \
             --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
-          # An archive that was never signed carries no entitlements of its own,
-          # and an export may sign it without the push entitlement: such an
-          # app is refused by APNs and can never register for notifications
-          # (docs/student-push.md). It is archived again, signed, as below.
-          if ! export_ipa build/ios/archive/Runner.xcarchive || [[ "$(exported_push)" != production ]]; then
-            # An export can refuse an archive that was never signed. Archive
-            # again with automatic signing: Xcode makes a development
-            # certificate through the key, which the clean-up step revokes.
-            # The development profile's aps-environment is development, which
-            # the App Store export turns into production.
-            echo "::warning::The unsigned archive did not export, or exported without the push entitlement ($(exported_push || true)); archiving again with automatic signing."
-            xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
-              -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Runner.xcarchive" archive "${auth[@]}" \
-              DEVELOPMENT_TEAM="$TEAM_ID" \
-              CODE_SIGN_STYLE=Automatic 'CODE_SIGN_STYLE[sdk=iphoneos*]=Automatic' \
-              CODE_SIGN_IDENTITY='Apple Development' 'CODE_SIGN_IDENTITY[sdk=iphoneos*]=Apple Development' \
-              PROVISIONING_PROFILE_SPECIFIER= 'PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]=' \
-              APS_ENVIRONMENT=development
-            export_ipa "$RUNNER_TEMP/Runner.xcarchive"
+          unsigned=build/ios/archive/Runner.xcarchive
+
+          # Apple's export signs an app with the entitlements its archived
+          # binary carries, kept to what the profile allows. An archive that
+          # was never signed carries none: its export of 1 Nov 2026 had no
+          # aps-environment, so APNs refused the app and no iPhone could
+          # register for notifications (docs/student-push.md). So the archived
+          # app is first signed ad hoc with the Release entitlements, which
+          # asks nothing of Apple; the export replaces that signature. If the
+          # profile refuses one of them, the push entitlement alone.
+          entitled="$RUNNER_TEMP/Runner-entitled.xcarchive"
+          for set in all push-only; do
+            case "$set" in
+              all) made="The archive signed ad hoc with the Release entitlements" ;;
+              *) made="The archive signed ad hoc with the push entitlement alone" ;;
+            esac
+            rm -rf "$entitled"
+            ditto "$unsigned" "$entitled"
+            if bash scripts/sign_archive_entitlements.sh "$entitled" "$set" \
+                && try_export "$entitled" "$made"; then
+              break
+            fi
+          done
+
+          if [[ -z "$signed_from" ]]; then
+            # Then a development-signed archive: Xcode makes a development
+            # certificate through the key, which the clean-up step revokes, and
+            # a development profile, whose aps-environment is development (the
+            # App Store export turns it into production). The settings go in an
+            # xcconfig: on xcodebuild's command line a [sdk=iphoneos*]
+            # condition is read as part of the value, and the archive fails.
+            printf '%s\n' "DEVELOPMENT_TEAM = $TEAM_ID" \
+              'CODE_SIGN_STYLE = Automatic' 'CODE_SIGN_STYLE[sdk=iphoneos*] = Automatic' \
+              'CODE_SIGN_IDENTITY = Apple Development' 'CODE_SIGN_IDENTITY[sdk=iphoneos*] = Apple Development' \
+              'PROVISIONING_PROFILE_SPECIFIER =' 'PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*] =' \
+              'APS_ENVIRONMENT = development' > "$RUNNER_TEMP/development-signing.xcconfig"
+            if xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
+                -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Runner.xcarchive" archive "${auth[@]}" \
+                -xcconfig "$RUNNER_TEMP/development-signing.xcconfig"; then
+              try_export "$RUNNER_TEMP/Runner.xcarchive" "A development-signed archive" || true
+            else
+              echo "::warning::The development-signed archive did not build; see the errors above."
+            fi
+          fi
+
+          if [[ -z "$signed_from" ]]; then
+            # Last, the unsigned archive as it is: the build still ships, and
+            # the next step marks it as one no iPhone can get notifications on.
+            echo "::warning::No export carried the push entitlement; exporting the unsigned archive as it is."
+            export_ipa "$unsigned" || true
+            signed_from="The unsigned archive"
           fi
           shopt -s nullglob
           ipas=(build/ios/ipa/*.ipa)
@@ -369,7 +422,7 @@ jobs:
             exit 1
           fi
           echo "IPA=$ipa" >> "$GITHUB_ENV"
-          echo "Built $ipa ($(du -h "$ipa" | cut -f1)), signed by Apple in the cloud" >> "$GITHUB_STEP_SUMMARY"
+          echo "Built $ipa ($(du -h "$ipa" | cut -f1)), signed by Apple in the cloud. Made from: $signed_from." >> "$GITHUB_STEP_SUMMARY"
 
       # Every signed build should carry the production push entitlement:
       # without it APNs refuses the app and no phone can register for

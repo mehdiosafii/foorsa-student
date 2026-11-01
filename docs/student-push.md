@@ -81,26 +81,41 @@ which Admin Portal › Student App reads to show which build a student runs.
 ## The push entitlement in TestFlight builds
 
 The App Store build is archived **unsigned** and signed by Apple at export
-(cloud signing, README "iOS release build"). An unsigned archive carries no
-entitlements of its own; if an export signs it without `aps-environment`,
-APNs refuses the app ("no valid aps-environment entitlement string found for
-application"), the APNs token never comes, and no iPhone can register: the
-failure this document began with. Since 1 Nov 2026 the TestFlight workflow:
+(cloud signing, README "iOS release build"). Apple's export signs an app with
+the entitlements its archived binary carries, kept to what the profile
+allows, and an archive that was never signed carries none. The pull request
+run of 1 Nov 2026 settled it: the unsigned archive's export had no
+`aps-environment`. So every TestFlight build signed this way, from 1.2.18 (48)
+to 1.2.30 (61), was an app APNs refuses ("no valid aps-environment entitlement
+string found for application"): the APNs token never comes and no iPhone can
+register, the failure this document began with. Its Associated Domains
+(`webcredentials:student.foorsa.ma`, the saved password) were missing for the
+same reason. Android was never affected.
 
-- checks the exported IPA (`scripts/push_entitlement.sh`, `codesign` and
-  `plutil`) and lists its entitlements in the run's summary;
-- in the cloud path, archives again **signed** (automatic signing,
-  `APS_ENVIRONMENT=development` to match the development profile, which the
-  App Store export turns into production) when the unsigned archive's export
-  lacks it;
-- marks a build whose `aps-environment` is not `production` with an error
-  in the run and its summary, and still uploads it: holding the build back
-  would hold back every other fix it carries, and push on it is no worse
-  than on the build before.
+The cloud path now ships the first export whose `aps-environment` is
+`production`, trying in order:
 
-Whether the builds up to 1.2.30 (61) carried it is not known from here (the
-exported IPA was never kept): the next run's summary says, and an iPhone on a
-build with this change reports Apple's own refusal if there is one.
+1. The archived app signed **ad hoc** with the Release entitlements
+   (`scripts/sign_archive_entitlements.sh`). That needs no certificate, no
+   profile and nothing from Apple; the export replaces the signature with
+   Apple's own.
+2. The same with the push entitlement alone, in case the profile refuses
+   another one.
+3. A development-signed archive: automatic signing through the key, so Xcode
+   makes a development certificate (the clean-up step revokes it) and a
+   development profile (which needs a device registered to the team). Its
+   settings go in an xcconfig: on xcodebuild's command line a
+   `[sdk=iphoneos*]` condition is read as part of the value, which failed the
+   first attempt ("provisioning profile iphoneos*]= has been manually
+   specified").
+4. The unsigned archive as it is.
+
+The run's summary says which one shipped and lists the exported app's
+entitlements (`scripts/push_entitlement.sh`, which says on the log when it
+cannot read a signature rather than reading it as none). A build whose
+`aps-environment` is not `production` is marked with an error in the run and
+its summary and still uploaded: holding it back would hold back every other
+fix it carries, and push on it is no worse than on the build before.
 
 ## What only a real phone can confirm
 

@@ -23,7 +23,12 @@ trap 'rm -rf "$work"' EXIT
 unzip -q "$ipa" 'Payload/*' -d "$work"
 app=$(find "$work/Payload" -maxdepth 1 -name '*.app' -print -quit)
 [[ -n "$app" ]] || exit 0
-codesign -d --entitlements - --xml "$app" > "$work/entitlements.plist" 2>/dev/null || exit 0
+# A signature that cannot be read is said so on stderr, so it is not mistaken
+# for an app without entitlements.
+if ! codesign -d --entitlements - --xml "$app" > "$work/entitlements.plist" 2> "$work/codesign.err"; then
+  echo "codesign could not read the entitlements of $(basename "$app"): $(tr '\n' ' ' < "$work/codesign.err")" >&2
+  exit 0
+fi
 [[ -s "$work/entitlements.plist" ]] || exit 0
 
 if [[ "$mode" == keys ]]; then
