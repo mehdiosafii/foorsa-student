@@ -1,1 +1,1 @@
-Connexion rapide sur Android : la demande d'empreinte digitale ou de reconnaissance faciale s'affiche enfin, et la connexion rapide s'enregistre. Écran de chargement : la flèche Foorsa se transforme à nouveau en avion, comme sur le site. Corrections.
+Passeport : ouvrez-le à la page photo et prenez les deux pages sur une seule photo, la page photo et la page en face, qui porte le numéro du passeport. Sur iPhone, le scanner garde maintenant les deux pages. Corrections.
