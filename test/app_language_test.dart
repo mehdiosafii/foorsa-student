@@ -112,7 +112,7 @@ void main() {
     });
 
     test('a hand-over the portal never confirms does not hold the app for good',
-        () {
+        () async {
       var now = DateTime(2026, 11, 1, 9);
       final shell = ShellLanguage(store: store(), clock: () => now);
       shell.chooseInOnboarding(AppLanguage.fr);
@@ -120,15 +120,19 @@ void main() {
       expect(shell.portalSays('ar'), isTrue);
       expect(shell.current, AppLanguage.ar);
       expect(shell.handOver, isNull);
+      await shell.flush();
     });
 
-    test('the portal\'s word is taken only when it is a language', () {
+    test('the portal\'s word is taken only when it is a language', () async {
       final shell = ShellLanguage(store: store());
       expect(shell.portalSays('klingon'), isFalse);
       expect(shell.portalSays(null), isFalse);
       expect(shell.chosen, isNull);
       expect(shell.portalSays('fr'), isTrue);
       expect(shell.current, AppLanguage.fr);
+      // The word is kept on the phone: let that write finish before the
+      // folder is removed, or the removal races it ("Directory not empty").
+      await shell.flush();
     });
   });
 
@@ -174,6 +178,7 @@ void main() {
       shell.portalSays('fr');
       expect(portalLanguageScriptFor(shell, origin),
           contains('var language = "fr";'));
+      await shell.flush();
     });
   });
 }
