@@ -115,6 +115,16 @@ Play Console draft included, carries the release notes, and refuses a build
 number Play does not have or the track already holds. 1.2.29 (60) went from
 internal testing to production this way on 31 October 2026.
 
+Once main has moved past a version, name it after the track:
+`production 1.2.31+62`. The job then sends that build, and its release notes
+are the ones it was released with, read from history: the notes of the last
+commit whose `pubspec.yaml` still said `1.2.31+62` (the parent of the commit
+that replaced it), never main's notes for a newer build. A version that was
+never in `pubspec.yaml` on main, or a line that is not a track and a version
+like `1.2.31+62`, stops the run before Play is asked. 1.2.31 (62) went to
+production this way on 1 November 2026, while 1.2.32 (63) stayed on internal
+testing.
+
 A green publishing run means Google accepted the release submission, not that
 review or managed publishing has finished. Verify availability in Play Console
 and test an **in-place update** of the current Play-installed app. The previous

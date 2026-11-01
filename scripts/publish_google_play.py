@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import re
+import subprocess
 
 import google.auth
 from googleapiclient.discovery import build
@@ -13,16 +14,44 @@ from googleapiclient.http import MediaFileUpload
 RELEASE_NOTES = Path('android/play-release-notes')
 
 
-def release_notes():
+def git(*args):
+    return subprocess.run(['git', *args], capture_output=True, text=True, check=True).stdout
+
+
+def release_notes(commit=None):
+    """The notes in the checkout, or as they stood at `commit`."""
+    if commit is None:
+        files = [(path.stem, path.read_text(encoding='utf-8')) for path in sorted(RELEASE_NOTES.glob('*.txt'))]
+    else:
+        names = git('ls-tree', '--name-only', commit, f'{RELEASE_NOTES.as_posix()}/').split()
+        files = [(Path(name).stem, git('show', f'{commit}:{name}')) for name in sorted(names) if name.endswith('.txt')]
     notes = []
-    for path in sorted(RELEASE_NOTES.glob('*.txt')):
-        text = path.read_text(encoding='utf-8').strip()
+    for language, raw in files:
+        text = raw.strip()
         if not text:
             continue
         if len(text) > 500:
-            raise SystemExit(f'{path} is over Play\'s 500 characters')
-        notes.append({'language': path.stem, 'text': text})
+            raise SystemExit(f'{language}.txt is over Play\'s 500 characters')
+        notes.append({'language': language, 'text': text})
     return notes
+
+
+def last_commit_of_version(name, number):
+    """The last commit on this history whose pubspec.yaml still said this version.
+
+    A version promoted after main has moved on keeps the notes it was released
+    with: they are the notes of its last commit, the parent of the commit that
+    replaced its version line. None when the version is still main's.
+    """
+    line = f'version: {name}+{number}'
+    if re.search(rf'^{re.escape(line)}\s*$', Path('pubspec.yaml').read_text(), re.M):
+        return None
+    # Newest first: the first commit that changed how often the line appears
+    # is the one that replaced it.
+    changes = git('log', '--format=%H', '-S', line, '--', 'pubspec.yaml').split()
+    if not changes:
+        raise SystemExit(f'{name} ({number}) was never the version in pubspec.yaml on this branch.')
+    return git('rev-parse', f'{changes[0]}^').strip()
 
 
 def needs_manual_review_send(error):
@@ -42,10 +71,20 @@ def main():
     if not version:
         raise SystemExit('pubspec.yaml must contain a version name and numeric build number')
     name, number = version.groups()
-    notes = release_notes()
-    # PLAY_PROMOTE=1: send pubspec.yaml's build number, already in Play, to the
-    # track (google-play.yml's promote job, from .github/google-play-promote.txt).
+    # PLAY_PROMOTE=1: send a build already in Play to the track
+    # (google-play.yml's promote job, from .github/google-play-promote.txt):
+    # pubspec.yaml's build number, or the version the file names
+    # (PLAY_PROMOTE_VERSION, e.g. 1.2.31+62) once main has moved past it.
     promote = os.environ.get('PLAY_PROMOTE') == '1'
+    named = os.environ.get('PLAY_PROMOTE_VERSION', '').strip()
+    notes_commit = None
+    if promote and named:
+        match = re.fullmatch(r'([\d.]+)\+(\d+)', named)
+        if not match:
+            raise SystemExit('PLAY_PROMOTE_VERSION must look like 1.2.31+62')
+        name, number = match.groups()
+        notes_commit = last_commit_of_version(name, number)
+    notes = release_notes(notes_commit)
     # Short-lived credentials from google-github-actions/auth (Workload Identity
     # Federation impersonating the Play publisher service account). No key file.
     credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/androidpublisher'])
@@ -97,6 +136,8 @@ def main():
             summary.write(f'Google Play accepted **{name} ({number})** for **{track}**'
                           f'{" (promoted, not rebuilt)" if promote else ""}.\n\n'
                           f'Commit: `{os.environ["GITHUB_SHA"]}`. Google review/managed publishing may delay availability.\n')
+            if notes_commit:
+                summary.write(f'\nRelease notes as they stood for that version, at `{notes_commit}`.\n')
             if waiting_for_send:
                 summary.write('\nPlay Console holds other changes waiting to be sent, so this release is saved '
                               'but not yet sent: Publishing overview → **Send changes for review**.\n')
