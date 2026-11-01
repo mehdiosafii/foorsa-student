@@ -73,7 +73,7 @@ import flutter_callkit_incoming
     }
   }
 
-  override func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+  override func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Foundation.Data) {
     apnsRegistered = true
     apnsError = nil
     super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
