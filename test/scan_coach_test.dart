@@ -61,7 +61,7 @@ void main() {
 
     test('a passport asks for its photo page and its two lines, a card for the side the step asks for', () {
       expect(guide(null, of: passport).copy.detail, 'Show the photo page with the two lines at the bottom.');
-      expect(title(guide(frame(ScanHint.position), of: passport)), 'Show only the photo page');
+      expect(title(guide(frame(ScanHint.position), of: passport)), 'Open the passport flat');
       expect(title(guide(null, of: profile('parent_id', side: 'front'))), 'Front side');
       expect(title(guide(null, of: profile('parent_id', side: 'back'))), 'Now the back');
       expect(title(guide(null, of: profile('parent_id'))), 'Find the card');
