@@ -2,7 +2,7 @@ name: foorsa_student
 description: "Foorsa Student portal."
 publish_to: "none"
 
-version: 1.2.33+64
+version: 1.2.34+65
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -32,9 +32,21 @@ dependencies:
   local_auth: 3.0.2
   flutter_secure_storage: 10.3.4
 
+# Two Android plugins carry a small Foorsa patch (third_party/README.md).
+dependency_overrides:
+  # The web view: its androidx.webkit settings calls threw on some phones'
+  # WebView, the web view was never created and the app sat on its loader.
+  flutter_inappwebview_android:
+    path: third_party/flutter_inappwebview_android
+  # The camera: the guided scanner's still in CameraX's quality mode.
+  camera_android_camerax:
+    path: third_party/camera_android_camerax
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # A fake camera for the Android scanner's screen test (guided_scan_page_test.dart).
+  camera_platform_interface: ^2.15.0
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.3
   flutter_native_splash: ^2.4.4

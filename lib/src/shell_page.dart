@@ -29,6 +29,7 @@ import 'package:url_launcher/url_launcher.dart' as launcher;
 
 import 'app_language.dart';
 import 'boot_loader_gate.dart';
+import 'bridge_files.dart';
 import 'config.dart';
 import 'embedded_navigation.dart';
 import 'quick_sign_in_offer.dart';
@@ -169,6 +170,9 @@ class _ShellPageState extends State<ShellPage> {
   /// Bumped to build a new web view: Android's is unusable once its render
   /// process is gone.
   int _webViewGeneration = 0;
+  /// Running from the moment a web view is put on the screen until it says it
+  /// was created (web_view_recovery.dart, [webViewStartLimit]).
+  Timer? _startWatch;
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
   String _scannerNonce = _newScannerNonce();
@@ -200,6 +204,7 @@ class _ShellPageState extends State<ShellPage> {
       _bootWebView = true;
       _decideComposition();
     });
+    _watchWebViewStart();
   }
 
   UserScript _sessionScript() => UserScript(
@@ -572,6 +577,21 @@ class _ShellPageState extends State<ShellPage> {
       _webViewGeneration++;
       _decideComposition();
     });
+    _watchWebViewStart();
+  }
+
+  /// A web view that never says it was created (on 1 Nov 2026 some phones'
+  /// WebView refused a settings call while it was being made) would leave the
+  /// student on the loader for good. After [webViewStartLimit] the offline
+  /// screen takes over: it says so, and its retry makes a new web view.
+  void _watchWebViewStart() {
+    _startWatch?.cancel();
+    final generation = _webViewGeneration;
+    _startWatch = Timer(webViewStartLimit, () {
+      if (!mounted || generation != _webViewGeneration || _controller != null) return;
+      unawaited(CrashReports.instance.report('Web view stopped: not created in time'));
+      _enterOffline();
+    });
   }
 
   /// The page's process died (memory, most often after big uploads). Report it
@@ -626,24 +646,9 @@ class _ShellPageState extends State<ShellPage> {
 
 
   // ── Native pick for portal uploads (FoorsaShellPickFile) ─────────────────
-  static const _pickMimes = {
-    'jpg': 'image/jpeg',
-    'jpeg': 'image/jpeg',
-    'png': 'image/png',
-    'webp': 'image/webp',
-    'heic': 'image/heic',
-    'pdf': 'application/pdf',
-  };
-
-  Map<String, dynamic> _fileEntry(String name, List<int> bytes) {
-    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
-    final mime = _pickMimes[ext] ?? 'application/octet-stream';
-    return {
-      'name': name,
-      'mime': mime,
-      'dataUrl': 'data:$mime;base64,${base64Encode(bytes)}',
-    };
-  }
+  // Each file's base64 is made off the UI isolate (bridge_files.dart).
+  Future<Map<String, dynamic>> _fileEntry(String name, List<int> bytes) =>
+      bridgeFileEntry(name, bytes);
 
   /// Photos picked at once from the library: the portal reviews them as the
   /// pages of one paper, and each crosses the bridge as a data URL.
@@ -663,7 +668,7 @@ class _ShellPageState extends State<ShellPage> {
         return {
           'files': [
             for (final shot in shots.take(_maxPickedPhotos))
-              _fileEntry(shot.name, await shot.readAsBytes()),
+              await _fileEntry(shot.name, await shot.readAsBytes()),
           ]
         };
       }
@@ -677,7 +682,7 @@ class _ShellPageState extends State<ShellPage> {
         if (shot == null) return {'cancelled': true};
         final bytes = await shot.readAsBytes();
         return {
-          'files': [_fileEntry(shot.name, bytes)]
+          'files': [await _fileEntry(shot.name, bytes)]
         };
       }
       final res = await FilePicker.platform.pickFiles(
@@ -690,7 +695,7 @@ class _ShellPageState extends State<ShellPage> {
       final out = <Map<String, dynamic>>[];
       for (final f in res.files) {
         if (f.bytes == null) continue;
-        out.add(_fileEntry(f.name, f.bytes!));
+        out.add(await _fileEntry(f.name, f.bytes!));
       }
       if (out.isEmpty) return {'cancelled': true};
       return {'files': out};
@@ -786,7 +791,7 @@ class _ShellPageState extends State<ShellPage> {
         return {'cancelled': true};
       }
       return {
-        'files': [_fileEntry(picture.name, bytes)],
+        'files': [await _fileEntry(picture.name, bytes)],
         if (result.liveReading != null) 'liveReading': result.liveReading,
       };
     } catch (_) {
@@ -1249,6 +1254,7 @@ class _ShellPageState extends State<ShellPage> {
     _push.dispose();
     _retryTimer?.cancel();
     _holdTimer?.cancel();
+    _startWatch?.cancel();
     super.dispose();
   }
 
@@ -1322,9 +1328,12 @@ class _ShellPageState extends State<ShellPage> {
                   // first-launch onboarding is drawn over it
                   // (web_view_composition.dart).
                   useHybridComposition: _webViewHybrid,
-                  // Rasterise slightly beyond the viewport so fast scrolling
-                  // and large moving surfaces don't reveal unpainted tiles.
-                  offscreenPreRaster: true,
+                  // Android only, and off: it rasterised every tile of the page
+                  // in view and kept it, on top of what the page itself holds,
+                  // in a web view a phone closes when it grows too large (after
+                  // uploads, the owner, 1 Nov 2026: "the app still freezes").
+                  // Chromium already rasters a margin round the view.
+                  offscreenPreRaster: false,
                   // iOS draws its form toolbar (previous, next, done) above the
                   // keyboard in a web view. The portal's fields carry their own
                   // controls, and in the live chat the bar sat between the
@@ -1335,6 +1344,7 @@ class _ShellPageState extends State<ShellPage> {
                   useOnRenderProcessGone: true,
                 ),
                 onWebViewCreated: (controller) {
+                  _startWatch?.cancel();
                   _controller = controller;
                   PortalHandover.instance.controller = controller;
                   controller.addJavaScriptHandler(

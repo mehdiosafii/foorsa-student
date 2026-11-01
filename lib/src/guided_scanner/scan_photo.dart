@@ -12,6 +12,9 @@
 /// of memory. Nothing is sharpened, whitened or otherwise "enhanced" here.
 library;
 
+import 'dart:isolate';
+import 'dart:math' as math;
+
 import 'package:flutter/services.dart';
 
 class ScanPhoto {
@@ -58,4 +61,127 @@ class ScanPhotoChannel {
     if (width <= 0 || height <= 0) return null;
     return ScanPhoto(bytes, width: width, height: height, reencoded: reply['reencoded'] == true);
   }
+}
+
+/// The middle of a still as grey levels (ScanPhoto.kt `sample`), for telling
+/// the sharpest of a few stills of the same page.
+class ScanLumaSample {
+  const ScanLumaSample(this.luma, {required this.width, required this.height});
+  final Uint8List luma;
+  final int width;
+  final int height;
+}
+
+extension ScanPhotoSharpness on ScanPhotoChannel {
+  /// The middle of the still at [path], about 900 pixels long; null when the
+  /// phone cannot say (a build without the method, a file it cannot read).
+  Future<ScanLumaSample?> sample(String path) async {
+    try {
+      final reply = await ScanPhotoChannel.channel.invokeMapMethod<String, Object?>('sample', {
+        'path': path,
+        'edge': 900,
+      }).timeout(const Duration(seconds: 6));
+      final luma = reply?['luma'], width = reply?['width'], height = reply?['height'];
+      if (luma is! Uint8List || width is! int || height is! int) return null;
+      if (width < 16 || height < 16 || luma.length != width * height) return null;
+      return ScanLumaSample(luma, width: width, height: height);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// How sharp the still at [path] is ([scanStillSharpness]), worked off the
+  /// UI isolate; null when it cannot be measured.
+  Future<double?> sharpness(String path) async {
+    final sampled = await sample(path);
+    if (sampled == null) return null;
+    try {
+      return await Isolate.run(() => scanStillSharpness(sampled.luma, sampled.width, sampled.height),
+          debugName: 'scan-sharpness');
+    } catch (_) {
+      return scanStillSharpness(sampled.luma, sampled.width, sampled.height);
+    }
+  }
+}
+
+/// How sharp a still is: the strongest edges in the middle of the page (the
+/// mean horizontal and vertical Sobel strength of its sharpest 2% of pixels,
+/// whichever is weaker), over its contrast, so a shot a touch darker or
+/// brighter than the one beside it is judged on its focus alone. Focus that
+/// missed softens every edge; a hand that moved streaks the print along one
+/// direction, and only the edges across that direction lose their strength,
+/// which is why the weaker direction decides. Only stills of one page are
+/// compared with it: its value depends on how much print the page has.
+double scanStillSharpness(Uint8List luma, int width, int height) {
+  if (width < 3 || height < 3 || luma.length < width * height) return 0;
+  final histogram = List<int>.filled(256, 0);
+  for (final value in luma) {
+    histogram[value]++;
+  }
+  int quantile(double p) {
+    final goal = math.max(1, (luma.length * p).ceil());
+    var running = 0;
+    for (var v = 0; v < 256; v++) {
+      running += histogram[v];
+      if (running >= goal) return v;
+    }
+    return 255;
+  }
+  final contrast = math.max(16, quantile(0.98) - quantile(0.02));
+  // |gx| and |gy| of the Sobel operator: 0 to 1020 each.
+  final across = List<int>.filled(1021, 0), down = List<int>.filled(1021, 0);
+  var counted = 0;
+  for (var y = 1; y < height - 1; y++) {
+    final above = (y - 1) * width, row = y * width, below = (y + 1) * width;
+    for (var x = 1; x < width - 1; x++) {
+      final a = luma[above + x - 1], b = luma[above + x], c = luma[above + x + 1];
+      final d = luma[row + x - 1], f = luma[row + x + 1];
+      final g = luma[below + x - 1], h = luma[below + x], i = luma[below + x + 1];
+      across[((c + 2 * f + i) - (a + 2 * d + g)).abs()]++;
+      down[((g + 2 * h + i) - (a + 2 * b + c)).abs()]++;
+      counted++;
+    }
+  }
+  if (counted == 0) return 0;
+  final top = math.max(1, (counted * 0.02).ceil());
+  double strongest(List<int> strength) {
+    var taken = 0;
+    var sum = 0.0;
+    for (var s = strength.length - 1; s >= 0 && taken < top; s--) {
+      final n = math.min(strength[s], top - taken);
+      sum += n * s;
+      taken += n;
+    }
+    return sum / taken;
+  }
+  return math.min(strongest(across), strongest(down)) / contrast;
+}
+
+/// The stills the guided camera takes of one page: the first, and one more
+/// straight after it, while the page is still held. A hand that moved as the
+/// shutter went, the press of the shutter, or focus that settled a moment late
+/// each blur one still, rarely two in a row. Only the two are compared: a
+/// floor of "sharp enough" cannot be set for every paper (on simulated photos
+/// a steady ID card scores 1.0 and a steady transcript 3.2, because a card has
+/// less print in its middle), so a third still on a low score would be taken of
+/// every card for nothing.
+const scanStillsAtMost = 2;
+
+/// Whether to take another still of the page: a second, always, unless the
+/// phone could not measure the first (it then keeps it, as before).
+bool wantsAnotherStill(List<double?> scores) {
+  if (scores.isEmpty) return true;
+  if (scores.length >= scanStillsAtMost) return false;
+  return scores.first != null;
+}
+
+/// The sharpest still (the first among equals); -1 when there is none.
+int bestStill(List<double?> scores) {
+  var best = -1;
+  for (var i = 0; i < scores.length; i++) {
+    final score = scores[i];
+    if (score == null) continue;
+    if (best < 0 || score > scores[best]! * 1.02) best = i;
+  }
+  return best < 0 && scores.isNotEmpty ? 0 : best;
 }
