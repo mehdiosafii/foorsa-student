@@ -49,7 +49,8 @@ class NativeDocumentScanner {
     try {
       final response = await channel.invokeMapMethod<String, dynamic>(
         'scan',
-        {'profile': profile?.toNativeRequest()},
+        // The iPhone scanner says its own words in the student's language (ScannerWords).
+        {'profile': profile?.toNativeRequest(), 'language': language.code},
       );
       if (response?['unsupported'] == true) return {'unsupported': true};
       if (response?['cancelled'] == true) return {'cancelled': true};

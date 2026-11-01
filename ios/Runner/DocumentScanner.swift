@@ -28,8 +28,10 @@ final class DocumentScanner: NSObject, FlutterPlugin {
       result(FlutterMethodNotImplemented)
       return
     }
+    // The student's language for this scan (ScannerWords); English when the app sends none.
+    ScannerWords.use((call.arguments as? [String: Any])?["language"])
     guard pending == nil else {
-      result(["error": "A scan is already open. Finish or cancel it first."])
+      result(["error": ScannerWords.say("A scan is already open. Finish or cancel it first.")])
       return
     }
     guard AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil else {
@@ -48,14 +50,14 @@ final class DocumentScanner: NSObject, FlutterPlugin {
           if granted {
             self.presentScanner(profile: profile)
           } else {
-            self.resolve(["error": "Allow camera access for Foorsa Student in Settings, then try again."])
+            self.resolve(["error": ScannerWords.say("Allow camera access for Foorsa Student in Settings, then try again.")])
           }
         }
       }
     case .denied, .restricted:
-      resolve(["error": "Allow camera access for Foorsa Student in Settings, then try again."])
+      resolve(["error": ScannerWords.say("Allow camera access for Foorsa Student in Settings, then try again.")])
     @unknown default:
-      resolve(["error": "The camera permission could not be checked. Please try again."])
+      resolve(["error": ScannerWords.say("The camera permission could not be checked. Please try again.")])
     }
   }
 
@@ -64,7 +66,7 @@ final class DocumentScanner: NSObject, FlutterPlugin {
           presenter.viewIfLoaded?.window != nil,
           presenter.presentedViewController == nil,
           presenter.view.window?.windowScene?.activationState == .foregroundActive else {
-      resolve(["error": "The camera could not open. Return to your document and try again."])
+      resolve(["error": ScannerWords.say("The camera could not open. Return to your document and try again.")])
       return
     }
     let scanner = FoorsaScannerViewController(profile: profile) { [weak self] response in

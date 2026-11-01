@@ -288,15 +288,15 @@ final class FoorsaScannerViewController: UIViewController {
 
     let cancel = UIButton(type: .system)
     cancel.translatesAutoresizingMaskIntoConstraints = false
-    cancel.setTitle("Cancel", for: .normal)
+    cancel.setTitle(ScannerWords.say("Cancel"), for: .normal)
     cancel.setTitleColor(.white, for: .normal)
     cancel.titleLabel?.font = .preferredFont(forTextStyle: .headline)
     cancel.addTarget(self, action: #selector(cancelPressed), for: .touchUpInside)
-    cancel.accessibilityHint = "Closes the scanner without capturing the document"
+    cancel.accessibilityHint = ScannerWords.say("Closes the scanner without capturing the document")
 
     let titleLabel = UILabel()
     titleLabel.translatesAutoresizingMaskIntoConstraints = false
-    titleLabel.text = profile.title
+    titleLabel.text = ScannerWords.say(profile.title)
     titleLabel.textColor = .white
     titleLabel.font = .preferredFont(forTextStyle: .headline)
     titleLabel.textAlignment = .center
@@ -317,7 +317,7 @@ final class FoorsaScannerViewController: UIViewController {
     torchButton.backgroundColor = UIColor.black.withAlphaComponent(0.58)
     torchButton.layer.cornerRadius = 24
     torchButton.addTarget(self, action: #selector(torchPressed), for: .touchUpInside)
-    torchButton.accessibilityLabel = "Turn torch on"
+    torchButton.accessibilityLabel = ScannerWords.say("Turn torch on")
     view.addSubview(torchButton)
 
     shutterButton.translatesAutoresizingMaskIntoConstraints = false
@@ -328,8 +328,8 @@ final class FoorsaScannerViewController: UIViewController {
     shutterButton.layer.borderColor = UIColor.black.withAlphaComponent(0.35).cgColor
     shutterButton.setImage(UIImage(systemName: "camera.fill"), for: .normal)
     shutterButton.tintColor = .black
-    shutterButton.accessibilityLabel = "Take the photo"
-    shutterButton.accessibilityHint = "Takes the photo now if automatic capture has not started"
+    shutterButton.accessibilityLabel = ScannerWords.say("Take the photo")
+    shutterButton.accessibilityHint = ScannerWords.say("Takes the photo now if automatic capture has not started")
     shutterButton.addTarget(self, action: #selector(shutterPressed), for: .touchUpInside)
     view.addSubview(shutterButton)
 
@@ -338,7 +338,7 @@ final class FoorsaScannerViewController: UIViewController {
     let resume = UIButton(type: .system)
     resume.translatesAutoresizingMaskIntoConstraints = false
     var resumeConfiguration = UIButton.Configuration.filled()
-    resumeConfiguration.title = "Resume scanning"
+    resumeConfiguration.title = ScannerWords.say("Resume scanning")
     resumeConfiguration.image = UIImage(systemName: "camera.fill")
     resumeConfiguration.imagePadding = 8
     resume.configuration = resumeConfiguration
@@ -474,7 +474,7 @@ final class FoorsaScannerViewController: UIViewController {
       self?.interruptionView.isHidden = false
       self?.guidanceCoach.reset()
       self?.guidanceView.show(title: "Camera paused", detail: "Resume when you’re ready.", stage: 0, accepted: 0, holding: false)
-      UIAccessibility.post(notification: .announcement, argument: "Camera paused")
+      UIAccessibility.post(notification: .announcement, argument: ScannerWords.say("Camera paused"))
     })
     observers.append(center.addObserver(
       forName: .AVCaptureSessionInterruptionEnded,
@@ -628,7 +628,7 @@ final class FoorsaScannerViewController: UIViewController {
             ? "Move the reflection off the page, then hold still."
             : "Move the shadow off the page, then hold still.",
           compact: "Tilt slightly.", holding: false)
-        UIAccessibility.post(notification: .announcement, argument: "Tilt the phone slightly, then hold still.")
+        UIAccessibility.post(notification: .announcement, argument: ScannerWords.say("Tilt the phone slightly, then hold still."))
         return
       }
       burstRemaining = 1
@@ -862,7 +862,8 @@ final class FoorsaScannerViewController: UIViewController {
     if update.line == copy { coachedHolding = holding }
     guidanceView.show(update.line, holding: coachedHolding)
     if update.changed, update.line.title != previousTitle {
-      UIAccessibility.post(notification: .announcement, argument: "\(update.line.title). \(update.line.detail)")
+      UIAccessibility.post(notification: .announcement,
+        argument: "\(ScannerWords.say(update.line.title)). \(ScannerWords.say(update.line.detail))")
     }
   }
 
@@ -880,7 +881,7 @@ final class FoorsaScannerViewController: UIViewController {
     guidanceCoach.reset()
     guidanceView.show(title: retryTitle, detail: retryDetail, compact: "Try again.", holding: false)
     UINotificationFeedbackGenerator().notificationOccurred(.warning)
-    UIAccessibility.post(notification: .announcement, argument: retryDetail)
+    UIAccessibility.post(notification: .announcement, argument: ScannerWords.say(retryDetail))
   }
 
   private func setCaptureControls(enabled: Bool) {
@@ -918,8 +919,8 @@ final class FoorsaScannerViewController: UIViewController {
       let on = camera.torchMode == .on
       camera.unlockForConfiguration()
       torchButton.setImage(UIImage(systemName: on ? "flashlight.on.fill" : "flashlight.off.fill"), for: .normal)
-      torchButton.accessibilityLabel = on ? "Turn torch off" : "Turn torch on"
-      torchButton.accessibilityValue = on ? "On" : "Off"
+      torchButton.accessibilityLabel = ScannerWords.say(on ? "Turn torch off" : "Turn torch on")
+      torchButton.accessibilityValue = ScannerWords.say(on ? "On" : "Off")
     } catch {
       showMessage("The torch is unavailable right now.")
     }
@@ -937,14 +938,14 @@ final class FoorsaScannerViewController: UIViewController {
   private func fail(_ message: String) {
     guard !finishing, completionFlow.terminate() else { return }
     finishing = true
-    completion(["error": message])
+    completion(["error": ScannerWords.say(message)])
   }
 
   private func showMessage(_ message: String) {
     guidanceCoach.reset()
     guidanceView.show(title: "Try again", detail: message, stage: 0, accepted: 0, holding: false)
     UINotificationFeedbackGenerator().notificationOccurred(.warning)
-    UIAccessibility.post(notification: .announcement, argument: message)
+    UIAccessibility.post(notification: .announcement, argument: ScannerWords.say(message))
   }
 
   private func updateVideoOrientation() {
@@ -1535,7 +1536,7 @@ private final class ScannerGuidanceView: UIView {
     ])
     isAccessibilityElement = true
     accessibilityTraits = .staticText
-    accessibilityHint = "Useful photos are captured automatically. You can cancel at any time."
+    accessibilityHint = ScannerWords.say("Useful photos are captured automatically. You can cancel at any time.")
     titleLabel.isAccessibilityElement = false
     detailLabel.isAccessibilityElement = false
     symbol.isAccessibilityElement = false
@@ -1574,6 +1575,9 @@ private final class ScannerGuidanceView: UIView {
           : fullDetail.contains("focusing") ? "Hold still." : "Keep corners visible.")
         : fullDetail
     } else { detailLabel.text = fullDetail }
+    // Decided on the English words above; shown in the student's language.
+    titleLabel.text = ScannerWords.say(titleLabel.text ?? "")
+    detailLabel.text = ScannerWords.say(detailLabel.text ?? "")
     let checking = fullTitle == "Checking the detail"
     symbol.isHidden = compactInstructions || checking
     activity.isHidden = !checking
@@ -1608,7 +1612,7 @@ private final class ScannerGuidanceView: UIView {
       compactDetail = compact
       updateVisibleText()
     }
-    accessibilityLabel = "\(title). \(detail)"
+    accessibilityLabel = "\(ScannerWords.say(title)). \(ScannerWords.say(detail))"
     accessibilityValue = nil
     let finished = title == "Scan ready" || title == "Photos ready" || title == ScannerLiveGuidance.gotIt.title
     let image = finished ? "checkmark.circle"
