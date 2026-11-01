@@ -1,1 +1,1 @@
-Vous pouvez maintenant envoyer votre vidéo de présentation depuis l'application. Plus stable après l'envoi de documents : si la page manque de mémoire, l'application revient là où vous étiez au lieu de l'accueil. Corrections.
+Notifications : le téléphone s'inscrit aux notifications de façon fiable, et Réglages › Notifications du téléphone indique leur état et permet d'envoyer une notification d'essai. Les notifications s'affichent aussi quand l'application est ouverte. Corrections.

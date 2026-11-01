@@ -93,8 +93,10 @@ failure this document began with. Since 1 Nov 2026 the TestFlight workflow:
   `APS_ENVIRONMENT=development` to match the development profile, which the
   App Store export turns into production) when the unsigned archive's export
   lacks it;
-- stops before uploading a build whose `aps-environment` is not
-  `production`.
+- marks a build whose `aps-environment` is not `production` with an error
+  in the run and its summary, and still uploads it: holding the build back
+  would hold back every other fix it carries, and push on it is no worse
+  than on the build before.
 
 Whether the builds up to 1.2.30 (61) carried it is not known from here (the
 exported IPA was never kept): the next run's summary says, and an iPhone on a

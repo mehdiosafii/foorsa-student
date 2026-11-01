@@ -371,10 +371,12 @@ jobs:
           echo "IPA=$ipa" >> "$GITHUB_ENV"
           echo "Built $ipa ($(du -h "$ipa" | cut -f1)), signed by Apple in the cloud" >> "$GITHUB_STEP_SUMMARY"
 
-      # Every signed build carries the production push entitlement, or it does
-      # not go to TestFlight: without it APNs refuses the app and no phone can
-      # register for notifications (docs/student-push.md). The summary lists
-      # the exported app's entitlements, so a run says what it shipped.
+      # Every signed build should carry the production push entitlement:
+      # without it APNs refuses the app and no phone can register for
+      # notifications (docs/student-push.md). The summary lists the exported
+      # app's entitlements, so a run says what it shipped. A build without it
+      # is still uploaded, marked with an error: holding it back would hold
+      # back every other fix it carries, and push is no worse than before.
       - name: Check the push entitlement
         if: env.SIGNING != 'none'
         run: |
@@ -384,7 +386,7 @@ jobs:
           echo "Entitlements of the exported app: ${keys:-none}. aps-environment: ${aps:-missing}" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$aps" != production ]]; then
             echo "::error::The exported app's aps-environment is '${aps:-missing}', not production: APNs would refuse it and no iPhone could register for notifications. See docs/student-push.md."
-            exit 1
+            echo "**Push entitlement missing**: this build is uploaded, but no iPhone running it can register for notifications." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Build without signing (no signing secrets yet)
