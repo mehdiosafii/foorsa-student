@@ -46,6 +46,8 @@
 	<string>Foorsa Student uses your location while you use the app for prayer times, local weather and nearby places such as supermarkets.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Foorsa Student uses your microphone for adviser calls, voice messages and introduction videos.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Foorsa Student uses how you hold your phone to tilt your admission letter, and to tell you whether the phone is upright when you film your introduction video.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Foorsa Student lets you choose a photo of a document, or your introduction video, to upload to your application file.</string>
 	<key>UIApplicationSceneManifest</key>

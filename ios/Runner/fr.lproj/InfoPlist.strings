@@ -9,4 +9,6 @@
 
 "NSMicrophoneUsageDescription" = "Foorsa Student utilise votre micro pour les appels avec votre conseiller, les messages vocaux et les vidéos de présentation.";
 
+"NSMotionUsageDescription" = "Foorsa Student utilise la façon dont vous tenez votre téléphone pour incliner votre lettre d’admission, et pour vous dire si le téléphone est bien droit quand vous filmez votre vidéo de présentation.";
+
 "NSPhotoLibraryUsageDescription" = "Foorsa Student vous permet de choisir la photo d’un document, ou votre vidéo de présentation, à envoyer dans votre dossier de candidature.";

@@ -12,6 +12,7 @@ void main() {
       'bootHandoff': true,
       'language': true,
       'push': 2,
+      'pagePermissions': 2,
     });
   });
 
@@ -23,6 +24,7 @@ void main() {
       'bootHandoff': true,
       'language': true,
       'push': 2,
+      'pagePermissions': 2,
     });
   });
 

@@ -9,4 +9,6 @@
 
 "NSMicrophoneUsageDescription" = "يستخدم Foorsa Student الميكروفون للمكالمات مع مستشارك والرسائل الصوتية والفيديوهات التقديمية.";
 
+"NSMotionUsageDescription" = "يستخدم Foorsa Student طريقة إمساكك للهاتف لإمالة رسالة قبولك، ولإخبارك إن كان الهاتف مستقيمًا عند تصوير الفيديو التقديمي.";
+
 "NSPhotoLibraryUsageDescription" = "يتيح لك Foorsa Student اختيار صورة وثيقة، أو الفيديو التقديمي، لرفعها إلى ملف ترشيحك.";
