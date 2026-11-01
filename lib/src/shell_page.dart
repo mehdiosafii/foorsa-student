@@ -41,6 +41,7 @@ import 'guided_scanner/native_document_scanner.dart';
 import 'guided_scanner/scan_document_profile.dart';
 import 'onboarding/onboarding_gate.dart';
 import 'portal_handover.dart';
+import 'portal_permissions.dart';
 import 'trusted_portal.dart';
 import 'student_push.dart';
 import 'student_calls.dart';
@@ -1020,18 +1021,16 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
-  /// Only the trusted portal may use camera/microphone after OS consent.
+  /// Only the trusted portal may use what portal_permissions.dart allows: its
+  /// camera and microphone once the phone allows them, and how the phone is
+  /// held, which iOS asks about.
   Future<PermissionResponse> _onPermissionRequest(
       InAppWebViewController controller, PermissionRequest request) async {
-    var granted = _isTrustedPortal(request.origin) &&
-        _isTrustedPortal(await controller.getUrl()) &&
-        request.resources.isNotEmpty &&
-        request.resources.every((r) => r == PermissionResourceType.CAMERA ||
-            r == PermissionResourceType.MICROPHONE);
+    var granted = portalMayUse(request.resources) &&
+        _isTrustedPortal(request.origin) &&
+        _isTrustedPortal(await controller.getUrl());
     if (granted) {
-      for (final resource in request.resources) {
-        final permission = resource == PermissionResourceType.CAMERA
-            ? ph.Permission.camera : ph.Permission.microphone;
+      for (final permission in phonePermissionsFor(request.resources)) {
         if (!(await permission.request()).isGranted) { granted = false; break; }
       }
     }
