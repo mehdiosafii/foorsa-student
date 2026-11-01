@@ -122,8 +122,9 @@ commit whose `pubspec.yaml` still said `1.2.31+62` (the parent of the commit
 that replaced it), never main's notes for a newer build. A version that was
 never in `pubspec.yaml` on main, or a line that is not a track and a version
 like `1.2.31+62`, stops the run before Play is asked. 1.2.31 (62) went to
-production this way on 1 November 2026, while 1.2.32 (63) stayed on internal
-testing.
+production this way on 1 November 2026, and 1.2.32 (63) replaced it in review
+the same afternoon (`production 1.2.32+63`, main's own version, with main's
+notes).
 
 A green publishing run means Google accepted the release submission, not that
 review or managed publishing has finished. Verify availability in Play Console
