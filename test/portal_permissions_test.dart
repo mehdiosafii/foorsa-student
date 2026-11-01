@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,8 +10,8 @@ void main() {
   const portal = 'https://student.foorsa.ma';
 
   // The plugin works out a resource's native value the first time it is read,
-  // for the platform of that moment, and how the phone is held has one only
-  // on iOS. This file runs as an iPhone, so nothing may read a resource before
+  // for the platform of that moment, and the resources below have theirs on
+  // iOS. This file runs as an iPhone, so nothing may read a resource before
   // setUpAll: the lists below are late.
   setUpAll(() => debugDefaultTargetPlatformOverride = TargetPlatform.iOS);
   tearDownAll(() => debugDefaultTargetPlatformOverride = null);
@@ -17,6 +19,7 @@ void main() {
   late final allowed = [
     PermissionResourceType.CAMERA,
     PermissionResourceType.MICROPHONE,
+    PermissionResourceType.CAMERA_AND_MICROPHONE,
     PermissionResourceType.DEVICE_ORIENTATION_AND_MOTION,
   ];
   late final others = PermissionResourceType.values
@@ -32,8 +35,17 @@ void main() {
         baseUrl: portal,
       );
 
-  test('the portal has its camera and microphone once the phone allows them',
-      () {
+  // How the iOS plugin (flutter_inappwebview_ios 1.1.2, InAppWebView.swift)
+  // hands WebKit's question over: the page's origin as protocol://host, and
+  // one native resource.
+  PermissionRequest fromIPhone(Object nativeResource) =>
+      PermissionRequest.fromMap({
+        'origin': 'https://student.foorsa.ma',
+        'resources': [nativeResource],
+      })!;
+
+  test('the portal has its camera and microphone, apart or together, once the '
+      'phone allows them', () {
     expect(decide([PermissionResourceType.CAMERA]), [Permission.camera]);
     expect(
         decide([PermissionResourceType.MICROPHONE]), [Permission.microphone]);
@@ -42,6 +54,8 @@ void main() {
           PermissionResourceType.CAMERA,
           PermissionResourceType.MICROPHONE,
         ]),
+        [Permission.camera, Permission.microphone]);
+    expect(decide([PermissionResourceType.CAMERA_AND_MICROPHONE]),
         [Permission.camera, Permission.microphone]);
   });
 
@@ -72,10 +86,8 @@ void main() {
   });
 
   test('any other resource is denied, and so is a request for nothing', () {
-    // Among them CAMERA_AND_MICROPHONE, WKWebView's name for a getUserMedia
-    // call asking for video and audio together.
-    expect(others, contains(PermissionResourceType.CAMERA_AND_MICROPHONE));
     expect(others, contains(PermissionResourceType.UNKNOWN));
+    expect(others, contains(PermissionResourceType.MIDI_SYSEX));
     for (final resource in others) {
       expect(decide([resource]), isNull, reason: '$resource');
     }
@@ -90,6 +102,7 @@ void main() {
           PermissionResourceType.CAMERA,
         ]),
         [Permission.camera]);
+    // Each phone permission is asked for once.
     expect(decide(allowed), [Permission.camera, Permission.microphone]);
     for (final other in others) {
       expect(
@@ -103,13 +116,8 @@ void main() {
 
   test("an iPhone's request for the tilt, as the plugin hands it over, is granted",
       () {
-    // flutter_inappwebview_ios 1.1.2 (InAppWebView.swift) turns WebKit's
-    // requestDeviceOrientationAndMotionPermissionFor into this: the page's
-    // origin as protocol://host, and one native resource.
-    final request = PermissionRequest.fromMap({
-      'origin': 'https://student.foorsa.ma',
-      'resources': ['deviceOrientationAndMotion'],
-    })!;
+    // WebKit's requestDeviceOrientationAndMotionPermissionFor.
+    final request = fromIPhone('deviceOrientationAndMotion');
     expect(request.resources,
         [PermissionResourceType.DEVICE_ORIENTATION_AND_MOTION]);
     expect(
@@ -120,5 +128,30 @@ void main() {
           baseUrl: portal,
         ),
         const <Permission>[]);
+  });
+
+  test("an iPhone's request to film with sound, as the plugin hands it over, "
+      'is granted after the camera and the microphone', () {
+    // WebKit's requestMediaCapturePermissionFor with
+    // WKMediaCaptureType.cameraAndMicrophone (2): one getUserMedia call asking
+    // for video and audio, as the introduction video's studio films.
+    final request = fromIPhone(2);
+    expect(request.resources, [PermissionResourceType.CAMERA_AND_MICROPHONE]);
+    expect(
+        phonePermissionsBeforeGrant(
+          origin: request.origin,
+          page: Uri.parse('$portal/'),
+          resources: request.resources,
+          baseUrl: portal,
+        ),
+        [Permission.camera, Permission.microphone]);
+  });
+
+  test('the iPhone app says why it reads how the phone is held', () {
+    // Nothing asks for it today, but iOS 27.2 adds
+    // CMMotionManager.authorizationStatus, and an app that reads protected
+    // motion data without this key is closed.
+    final plist = File('ios/Runner/Info.plist').readAsStringSync();
+    expect(plist, contains('<key>NSMotionUsageDescription</key>'));
   });
 }
