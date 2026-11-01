@@ -172,20 +172,6 @@ namespaced encrypted store with an authenticated Android KeyStore key,
 strong biometrics only, and enrollment-change invalidation. Android backup and
 device transfer are disabled for app data; biometric keys never migrate.
 
-**Until 1.2.36 (67) no Android phone saw the fingerprint or face prompt.**
-flutter_secure_storage (10.3.4, and 11.x alike) reads a store with no cipher
-markers yet as data written under its old default ciphers, so the first
-opening of a new biometric store looks to it like an algorithm change. With
-`migrateOnAlgorithmChange` and `resetOnError` off, as the app sets them so
-nothing is rewritten or wiped behind the student's back, it refuses that
-opening ("Key mismatch after algorithm change") before Android draws its
-prompt, and enrollment opens a new namespace every time, so every attempt
-ended on "Quick sign-in could not be saved". The refusal records the store's
-ciphers, so `StudentBiometrics._write` tries that one refusal once more and the
-second opening goes straight to the prompt (`isNewAndroidStoreRefusal`, pinned
-in `test/student_biometrics_test.dart`). Any other error is not retried. A
-plugin upgrade must keep this, or turn migration on for a new store only.
-
 While quick sign-in is on, the web login and media tokens live in the current
 tab's session storage, and each new native launch clears them, so the app
 opens on the portal's sign-in screen with Face ID. Cancellation and temporary
@@ -214,3 +200,17 @@ extend it or store passwords to work around expiry.
   plugin's own copy and paste bar in that session), autofill and type in the
   chat in that session too. Hardware prompts and store delivery
   cannot be proven by unit tests alone.
+
+**Until the build after 1.2.35 (66), no Android phone saw the fingerprint or face prompt.**
+flutter_secure_storage (10.3.4, and 11.x alike) reads a store with no cipher
+markers yet as data written under its old default ciphers, so the first
+opening of a new biometric store looks to it like an algorithm change. With
+`migrateOnAlgorithmChange` and `resetOnError` off, as the app sets them so
+nothing is rewritten or wiped behind the student's back, it refuses that
+opening ("Key mismatch after algorithm change") before Android draws its
+prompt, and enrollment opens a new namespace every time, so every attempt
+ended on "Quick sign-in could not be saved". The refusal records the store's
+ciphers, so `StudentBiometrics._write` tries that one refusal once more and the
+second opening goes straight to the prompt (`isNewAndroidStoreRefusal`, pinned
+in `test/student_biometrics_test.dart`). Any other error is not retried. A
+plugin upgrade must keep this, or turn migration on for a new store only.
