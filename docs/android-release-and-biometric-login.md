@@ -200,3 +200,17 @@ extend it or store passwords to work around expiry.
   plugin's own copy and paste bar in that session), autofill and type in the
   chat in that session too. Hardware prompts and store delivery
   cannot be proven by unit tests alone.
+
+**Until 1.2.36 (67), no Android phone saw the fingerprint or face prompt.**
+flutter_secure_storage (10.3.4, and 11.x alike) reads a store with no cipher
+markers yet as data written under its old default ciphers, so the first
+opening of a new biometric store looks to it like an algorithm change. With
+`migrateOnAlgorithmChange` and `resetOnError` off, as the app sets them so
+nothing is rewritten or wiped behind the student's back, it refuses that
+opening ("Key mismatch after algorithm change") before Android draws its
+prompt, and enrollment opens a new namespace every time, so every attempt
+ended on "Quick sign-in could not be saved". The refusal records the store's
+ciphers, so `StudentBiometrics._write` tries that one refusal once more and the
+second opening goes straight to the prompt (`isNewAndroidStoreRefusal`, pinned
+in `test/student_biometrics_test.dart`). Any other error is not retried. A
+plugin upgrade must keep this, or turn migration on for a new store only.
