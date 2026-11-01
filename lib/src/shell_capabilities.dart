@@ -33,6 +33,13 @@ Map<String, Object> shellCapabilities({required bool isIOS, String? appVersion, 
       // register, and answers pushStatus and openNotificationSettings, so the
       // portal's Settings shows On, Off or Not set up yet.
       'push': 2,
+      // What the page may be granted (portal_permissions.dart). 2, from
+      // 1.2.33 (64): the camera and the microphone together, as an iPhone
+      // asks for video with sound (the introduction video's studio), and how
+      // the phone is held (its set-up, the admission reveal's tilt). Builds
+      // before answer nothing: an iPhone was granted the camera and the
+      // microphone only one at a time, and never the tilt.
+      'pagePermissions': 2,
       // Which build a student runs, for Admin Portal › Student App (the board
       // read it from here, and no build said it until this one).
       if (appVersion != null && RegExp(r'^[0-9A-Za-z.+_-]{1,40}$').hasMatch(appVersion)) 'appVersion': appVersion,

@@ -186,6 +186,29 @@ know one ignore it, so the portal sends them to every build.
   the textures and played a tick for every one.
 - `FoorsaShellTheme(color)`: the status bar follows the page.
 
+## What the app lets the portal use
+
+When a page asks for a device, the web view asks the app
+(`onPermissionRequest` in `shell_page.dart`), and `portal_permissions.dart`
+decides. Only the configured portal is granted anything, and only while it is
+the page on show; every other resource is denied.
+
+- The camera and the microphone, each once the phone allows it. An iPhone asks
+  for video with sound in one request (`CAMERA_AND_MICROPHONE`, the
+  introduction video's studio); it is granted after the camera, then the
+  microphone. Android names the two separately.
+- How the phone is held (`DEVICE_ORIENTATION_AND_MOTION`): iOS 15 and later
+  ask when the page calls `DeviceOrientationEvent.requestPermission()` inside a
+  tap (the studio's set-up, the admission reveal's tilt). The phone has no
+  permission to ask for, so nothing is asked of it; Info.plist says why the
+  app reads the motion sensors (`NSMotionUsageDescription`), in case iOS ever
+  asks. Android delivers the orientation without asking.
+
+Before 1.2.33 (64) the iPhone app denied both: the studio stopped at
+"Foorsa can’t use your camera and microphone" before its set-up, and the
+reveal's letter never followed the phone. `FoorsaShellCapabilities` answers
+`pagePermissions: 2` from that build on.
+
 ## Firebase phone notifications
 
 ### Android device-test build
