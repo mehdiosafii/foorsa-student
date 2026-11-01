@@ -442,7 +442,7 @@ welcome's first moment). Now (`lib/src/web_view_composition.dart`):
   session back on HC, and the onboarding back on its old cost.
 
 **The app's loader played under the onboarding.** Its loading screen (the
-arrow, the stairs, the plane, the cap) stays over the web view until the
+arrow that turns into the plane) stays over the web view until the
 portal is ready: on a first launch, through the takeoff and the first scenes,
 drawn and animated every frame under the opaque night, three or four blurs
 through offscreen passes and a full-screen fill each frame. It now neither
