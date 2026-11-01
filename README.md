@@ -19,13 +19,13 @@ samples, guidance on mobile development, and a full API reference.
 
 Android now validates a release App Bundle as well as the test APK, and has a
 Google Play publishing workflow using the same shared version as iOS. Students
-stay signed in when the app closes (from 1.2.34), and can opt into securely
+stay signed in when the app closes (from 1.2.36), and can opt into securely
 saved Face ID, Touch ID, or Android biometric sign-in for after a sign-out.
 See [release setup, session behavior, and device checks](docs/android-release-and-biometric-login.md).
 
 ## The adhan
 
-From 1.2.34 (65) the app sounds a recorded adhan at the prayer times the
+From 1.2.36 (67) the app sounds a recorded adhan at the prayer times the
 student chose in the portal, with the app closed: local notifications the
 portal schedules through `FoorsaBridge`. See [the adhan](docs/adhan.md).
 

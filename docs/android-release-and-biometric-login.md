@@ -174,10 +174,10 @@ device transfer are disabled for app data; biometric keys never migrate.
 
 **The student stays signed in when the app closes**, quick sign-in or not
 (the owner, 1 Nov 2026: "once you log to the app, even if the app closes
-let's make sure you stay signed in"). Until 1.2.34 (65), while quick sign-in
+let's make sure you stay signed in"). Until 1.2.36 (67), while quick sign-in
 was on, the web login and media tokens lived in the tab's session storage and
 each new launch cleared them, so every launch opened on the sign-in screen.
-From 1.2.34 they stay in the page's lasting storage, and the first launch of
+From 1.2.36 they stay in the page's lasting storage, and the first launch of
 the new build moves a tab copy an older build left back there
 (`biometric_session.js`). Quick sign-in is for signing back in after a
 sign-out: the saved login stays behind Face ID or the fingerprint.
