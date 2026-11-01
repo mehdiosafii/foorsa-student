@@ -13,6 +13,7 @@ void main() {
       'language': true,
       'push': 2,
       'pagePermissions': 2,
+      'mapApps': 1,
     });
   });
 
@@ -25,6 +26,7 @@ void main() {
       'language': true,
       'push': 2,
       'pagePermissions': 2,
+      'mapApps': 1,
     });
   });
 

@@ -40,6 +40,10 @@ Map<String, Object> shellCapabilities({required bool isIOS, String? appVersion, 
       // before answer nothing: an iPhone was granted the camera and the
       // microphone only one at a time, and never the tilt.
       'pagePermissions': 2,
+      // Which map apps the phone has (FoorsaShellMapApps, map_apps.dart), so
+      // the portal's Open in maps offers only those. Builds before answer
+      // nothing, and the portal offers the apps for the place.
+      'mapApps': 1,
       // Which build a student runs, for Admin Portal › Student App (the board
       // read it from here, and no build said it until this one).
       if (appVersion != null && RegExp(r'^[0-9A-Za-z.+_-]{1,40}$').hasMatch(appVersion)) 'appVersion': appVersion,
