@@ -11,6 +11,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../portal_handover.dart';
 import '../shell_haptics.dart';
+import 'glass.dart';
 import 'onboarding_config.dart';
 import 'onboarding_flow.dart';
 import 'onboarding_page.dart';
@@ -22,11 +23,25 @@ import 'onboarding_store.dart';
 /// button and the status bar to it.
 class OnboardingScope extends InheritedWidget {
   const OnboardingScope(
-      {super.key, required this.active, required super.child});
+      {super.key,
+      required this.active,
+      bool? covering,
+      required super.child})
+      : covering = covering ?? active;
   final bool active;
+
+  /// The onboarding hides the shell from edge to edge: from its first frame
+  /// until it starts to fade onto the sign-in. What the shell draws under it
+  /// in that time nobody sees (web_view_composition.dart).
+  final bool covering;
 
   static bool activeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<OnboardingScope>()?.active ??
+      false;
+
+  /// Whether the onboarding hides the shell completely, now.
+  static bool coveringOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<OnboardingScope>()?.covering ??
       false;
 
   /// The same, read once without subscribing: for callbacks outside build.
@@ -34,7 +49,8 @@ class OnboardingScope extends InheritedWidget {
       context.getInheritedWidgetOfExactType<OnboardingScope>()?.active ?? false;
 
   @override
-  bool updateShouldNotify(OnboardingScope old) => old.active != active;
+  bool updateShouldNotify(OnboardingScope old) =>
+      old.active != active || old.covering != covering;
 }
 
 /// The first real notification, the moment the student turns them on: the
@@ -72,7 +88,12 @@ class FirstLaunchGate extends StatefulWidget {
     this.haptics,
     this.asksToTrack = OnboardingConfig.asksToTrack,
     this.sounds,
+    this.bakeGlass = false,
   });
+
+  /// Android: the glass's blurs are rastered once while the onboarding runs
+  /// (glass.dart's GlassBake), and let go when it ends.
+  final bool bakeGlass;
 
   /// When the shell may make its WebView on a first launch: after the
   /// takeoff (takeoff_intro.dart), which a platform view's set-up would
@@ -96,20 +117,51 @@ class FirstLaunchGate extends StatefulWidget {
 
 class _FirstLaunchGateState extends State<FirstLaunchGate> {
   late bool _showing = widget.show;
+
+  /// Until the onboarding starts to fade, it hides the shell completely.
+  late bool _covering = widget.show;
   final GlobalKey<FirstLaunchOnboardingState> _onboarding =
       GlobalKey<FirstLaunchOnboardingState>();
   late final ShellHaptics _haptics = widget.haptics ?? ShellHaptics();
 
+  @override
+  void initState() {
+    super.initState();
+    if (_showing && widget.bakeGlass) GlassBake.enabled = true;
+  }
+
+  @override
+  void dispose() {
+    if (widget.bakeGlass) GlassBake.enabled = false;
+    super.dispose();
+  }
+
   void _finish() {
     (widget.store ?? OnboardingStore()).markDone();
     widget.sounds?.release();
-    if (mounted) setState(() => _showing = false);
+    // Its pictures go with it.
+    if (widget.bakeGlass) GlassBake.enabled = false;
+    if (mounted) {
+      setState(() {
+        _showing = false;
+        _covering = false;
+      });
+    }
+  }
+
+  /// The arrow is on the sign-in's and the onboarding fades onto it: the
+  /// shell is seen again, so it draws again (its web view first, which the
+  /// fade shows), and the sign-in plays its entrance.
+  void _boarded() {
+    if (mounted && _covering) setState(() => _covering = false);
+    unawaited(PortalHandover.instance.boarded());
   }
 
   @override
   Widget build(BuildContext context) {
     return OnboardingScope(
       active: _showing,
+      covering: _covering,
       child: Stack(fit: StackFit.expand, children: [
         widget.child,
         if (_showing)
@@ -124,7 +176,7 @@ class _FirstLaunchGateState extends State<FirstLaunchGate> {
               feel: (touch, [level = 1]) => _haptics.play(touch, level),
               sounds: widget.sounds ?? const SilentSounds(),
               findMark: PortalHandover.instance.markRect,
-              onBoarded: PortalHandover.instance.boarded,
+              onBoarded: _boarded,
               onGranted: (access) {
                 if (access == BoardingAccess.notifications) {
                   unawaited(showFirstNotification());

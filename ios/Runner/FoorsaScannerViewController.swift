@@ -77,6 +77,9 @@ final class FoorsaScannerViewController: UIViewController {
   private var previewLayer: AVCaptureVideoPreviewLayer!
   private let overlay = ScannerOverlayView()
   private let guidanceView = ScannerGuidanceView()
+  /// One instruction at a time, held long enough to be read (ScannerGuidanceCoach).
+  private var guidanceCoach = ScannerGuidanceCoach()
+  private var coachedHolding = false
   private let torchButton = UIButton(type: .system)
   private let interruptionView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
   private var tracker = ScannerStabilityTracker()
@@ -469,6 +472,7 @@ final class FoorsaScannerViewController: UIViewController {
       self?.setAnalysisActive(false)
       self?.abortCapture()
       self?.interruptionView.isHidden = false
+      self?.guidanceCoach.reset()
       self?.guidanceView.show(title: "Camera paused", detail: "Resume when you’re ready.", stage: 0, accepted: 0, holding: false)
       UIAccessibility.post(notification: .announcement, argument: "Camera paused")
     })
@@ -491,6 +495,7 @@ final class FoorsaScannerViewController: UIViewController {
       } else {
         self.abortCapture()
         self.interruptionView.isHidden = false
+        self.guidanceCoach.reset()
         self.guidanceView.show(title: "Camera unavailable", detail: "Tap Resume scanning.", stage: 0, accepted: 0, holding: false)
       }
     })
@@ -582,7 +587,8 @@ final class FoorsaScannerViewController: UIViewController {
     lastCaptureTime = now
     setCaptureControls(enabled: false)
     updateShutterVisibility(at: now)
-    guidanceView.show(ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: profile.layout), holding: true)
+    showLive(ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: profile.layout, side: profile.side),
+      holding: true, at: now, immediate: true)
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
     let generation = captureGeneration
     DispatchQueue.main.asyncAfter(deadline: .now() + ScannerImagegenCapturePolicy.totalDuration + 8) { [weak self] in
@@ -616,6 +622,7 @@ final class FoorsaScannerViewController: UIViewController {
         awaitingMovedShot = CACurrentMediaTime()
         shotTracker.reset()
         setCaptureAnalysisPaused(false)
+        guidanceCoach.reset()
         guidanceView.show(title: "Tilt the phone slightly",
           detail: lightingAtFirstShot == .glare
             ? "Move the reflection off the page, then hold still."
@@ -641,7 +648,8 @@ final class FoorsaScannerViewController: UIViewController {
     // Keep checking the page while focus settles: an outline accepted before
     // the student moved cannot authorize this photo.
     setCaptureAnalysisPaused(false)
-    guidanceView.show(ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: profile.layout), holding: true)
+    showLive(ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: profile.layout, side: profile.side),
+      holding: true, at: CACurrentMediaTime(), immediate: true)
 #if SCANNER_DIAGNOSTICS
     diagnosticEvent?(cameraDiagnosticFields(event: "capture_settle_started", elapsed: 0))
 #endif
@@ -699,6 +707,7 @@ final class FoorsaScannerViewController: UIViewController {
       awaitingSteadyShotSince = now
       shotTracker.reset()
       overlay.progress = 0
+      guidanceCoach.reset()
       guidanceView.show(title: "Hold still", detail: documentIsStable
         ? "The camera is still focusing. Keep this position."
         : "Keep the whole page in view and hold the phone steady.", compact: "Hold still.", holding: false)
@@ -805,9 +814,10 @@ final class FoorsaScannerViewController: UIViewController {
     case let .complete(page):
       finishing = true
       abortCapture()
-      guidanceView.show(title: "Photos ready", detail: "Preparing your document…", compact: "Ready.", holding: false)
+      // A calm word, said once ("Got it. Preparing your page.").
+      showLive(ScannerLiveGuidance.gotIt, holding: false, at: CACurrentMediaTime())
+      overlay.style = .tracking
       UINotificationFeedbackGenerator().notificationOccurred(.success)
-      UIAccessibility.post(notification: .announcement, argument: "Page captured. Preparing your document.")
       var capabilities = ["live_quadrilateral", "stable_auto_capture", "one_hold_capture",
         "perspective_correction", "automatic_single_page", "live_framing_guidance",
         "document_model_detection", "manual_fallback_shutter", "live_text_reading", "right_document_gate"]
@@ -837,8 +847,23 @@ final class FoorsaScannerViewController: UIViewController {
   }
 
   private func showPlacementGuide() {
-    guidanceView.show(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: profile.layout),
-      holding: false)
+    guidanceCoach.reset()
+    showLive(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: profile.layout, side: profile.side),
+      holding: false, at: CACurrentMediaTime())
+  }
+
+  /// The live guidance, one instruction at a time (the owner, 1 Nov 2026: "guide the student to
+  /// take the perfect picture while taking the picture"): a line stays at least a second and is
+  /// replaced only by one that has lasted (ScannerGuidanceCoach), and VoiceOver hears a new
+  /// instruction once, when its words are new.
+  private func showLive(_ copy: ScannerGuidanceCopy, holding: Bool, at time: TimeInterval, immediate: Bool = false) {
+    let previousTitle = guidanceCoach.shown?.title
+    let update = guidanceCoach.update(copy, at: time, immediate: immediate)
+    if update.line == copy { coachedHolding = holding }
+    guidanceView.show(update.line, holding: coachedHolding)
+    if update.changed, update.line.title != previousTitle {
+      UIAccessibility.post(notification: .announcement, argument: "\(update.line.title). \(update.line.detail)")
+    }
   }
 
   private func retryCapture(title: String = FoorsaScannerViewController.captureRetryMessage,
@@ -852,6 +877,7 @@ final class FoorsaScannerViewController: UIViewController {
     // Ask for a deliberate reframe (or a short pause) so an unchanged bad
     // view does not immediately restart the same failed capture.
     lastCaptureTime = CACurrentMediaTime()
+    guidanceCoach.reset()
     guidanceView.show(title: retryTitle, detail: retryDetail, compact: "Try again.", holding: false)
     UINotificationFeedbackGenerator().notificationOccurred(.warning)
     UIAccessibility.post(notification: .announcement, argument: retryDetail)
@@ -915,6 +941,7 @@ final class FoorsaScannerViewController: UIViewController {
   }
 
   private func showMessage(_ message: String) {
+    guidanceCoach.reset()
     guidanceView.show(title: "Try again", detail: message, stage: 0, accepted: 0, holding: false)
     UINotificationFeedbackGenerator().notificationOccurred(.warning)
     UIAccessibility.post(notification: .announcement, argument: message)
@@ -1081,6 +1108,10 @@ final class FoorsaScannerViewController: UIViewController {
     }
     let quad = observation.quadrilateral
     let readyQuad = observation.framing == .ready && countsTowardHold ? quad : nil
+    // A page under a slanted phone is asked to be held flat, and given a moment for it, like the
+    // light (ScannerLiveGuidance's order: the page, the phone held flat, the light, the reading).
+    let heldFlat = readyQuad.map { $0.isHeldFlat(in: imageSize) } ?? true
+    let pageIsRight = readyQuad != nil && heldFlat && observation.lighting == .good
     liveLighting = observation.lighting
     // The capture geometry and the focus-settle check use complete pages
     // only; a soft frame keeps its outline so motion is still measured.
@@ -1094,7 +1125,8 @@ final class FoorsaScannerViewController: UIViewController {
       restartTextReading(sessionAlreadyReset: true)
     }
     updatePreviewGeometry()
-    overlay.style = readyQuad != nil ? .tracking : .adjusting
+    // Solid while the page is held for the photo, dashed while something is still to fix.
+    overlay.style = pageIsRight ? .tracking : .adjusting
     renderQuadrilateral(smoother.update(quad), imageSize: imageSize)
     updateShutterVisibility(at: time)
 #if SCANNER_DIAGNOSTICS
@@ -1123,6 +1155,7 @@ final class FoorsaScannerViewController: UIViewController {
       // A short pause also counts as a fresh attempt.
       if time - (lightingRetrySince ?? time) >= 3 { lightingRetryAnchor = nil }
       if lightingRetryAnchor != nil {
+        guidanceCoach.reset()
         guidanceView.show(title: retryTitle, detail: retryDetail, compact: "Try again.", holding: false)
         return
       }
@@ -1138,12 +1171,12 @@ final class FoorsaScannerViewController: UIViewController {
     overlay.progress = reading.allowsCapture ? state.progress : min(state.progress, 0.85)
     let shownFraming: ScannerLiveFraming = observation.framing == .ready && readyQuad == nil
       ? .blurry : observation.framing
-    if shownFraming == .ready, readyQuad != nil, !reading.allowsCapture, let guidance = reading.guidance {
-      // Framing is right; what the reading still needs comes first.
-      guidanceView.show(guidance.copy(for: profile.paperKind), holding: guidance.asksToHold)
+    if shownFraming == .ready, pageIsRight, !reading.allowsCapture, let guidance = reading.guidance {
+      // The page, the phone and the light are right; what the reading still needs comes next.
+      showLive(guidance.copy(for: profile.paperKind), holding: guidance.asksToHold, at: time)
     } else {
-      guidanceView.show(ScannerLiveGuidance.copy(framing: shownFraming, lighting: observation.lighting,
-        layout: profile.layout), holding: readyQuad != nil)
+      showLive(ScannerLiveGuidance.copy(framing: shownFraming, lighting: observation.lighting,
+        layout: profile.layout, side: profile.side, flat: heldFlat), holding: pageIsRight, at: time)
     }
     // Taken with no tap: steady and read, steady for a moment, or in view long
     // enough (ScannerAutoShutter). A soft frame or a tremor no longer starts the
@@ -1152,7 +1185,7 @@ final class FoorsaScannerViewController: UIViewController {
     let page: ScannerAutoShutter.Page = state.ready ? .steady
       : (countsAsPage && quad != nil ? .inView : .missing)
     let due = autoShutter.observe(page, at: time, reading: reading, kind: profile.paperKind,
-      lightingGood: observation.lighting == .good)
+      lightingGood: observation.lighting == .good && heldFlat)
     if due && time - lastCaptureTime > 1.2 {
       captureMatchedReading = reading.passed
       beginCapture()
@@ -1181,8 +1214,8 @@ final class FoorsaScannerViewController: UIViewController {
     guard awaitingSteadyShot else { return }
     let state = shotTracker.observe(readyQuad, at: time, processingDuration: processingDuration)
     overlay.progress = state.progress
-    guidanceView.show(ScannerLiveGuidance.copy(framing: readyQuad == nil ? observation.framing : .ready,
-      lighting: .good, layout: profile.layout), holding: readyQuad != nil)
+    showLive(ScannerLiveGuidance.copy(framing: readyQuad == nil ? observation.framing : .ready,
+      lighting: .good, layout: profile.layout, side: profile.side), holding: readyQuad != nil, at: time)
     // Bounded like the angle request: a whole page still in view is taken
     // where it is once the wait is over, never left waiting for a steadier one.
     let waitIsOver = time - (awaitingSteadyShotSince ?? time) >= Self.steadyShotLimit
@@ -1432,9 +1465,10 @@ extension FoorsaScannerViewController: AVCapturePhotoCaptureDelegate {
           } else if case let .failure(reason) = processingResult {
             self.lastPhotoFailure = reason
             // Say what to change while the next photo is taken.
-            self.guidanceView.show(ScannerLiveGuidance.copy(
+            self.showLive(ScannerLiveGuidance.copy(
               framing: reason == .documentBoundaryNotFound ? .searching : .blurry,
-              lighting: .good, layout: self.profile.layout), holding: false)
+              lighting: .good, layout: self.profile.layout, side: self.profile.side),
+              holding: false, at: CACurrentMediaTime(), immediate: true)
           }
 #if SCANNER_DIAGNOSTICS
           let processingFailure: String
@@ -1576,10 +1610,11 @@ private final class ScannerGuidanceView: UIView {
     }
     accessibilityLabel = "\(title). \(detail)"
     accessibilityValue = nil
-    let finished = title == "Scan ready" || title == "Photos ready"
+    let finished = title == "Scan ready" || title == "Photos ready" || title == ScannerLiveGuidance.gotIt.title
     let image = finished ? "checkmark.circle"
-      : title.hasPrefix("Tilt") ? "iphone.radiowaves.left.and.right"
-      : title == "More light needed" ? "lightbulb"
+      : title.hasPrefix("Tilt") || title.hasPrefix("Glare") ? "iphone.radiowaves.left.and.right"
+      : title == "More light needed" || title == "Too dark" ? "lightbulb"
+      : title == "Shadow on the page" ? "hand.raised"
       : holding ? "iphone" : "viewfinder"
     symbol.image = UIImage(systemName: image)
     symbol.tintColor = finished ? .systemGreen : .white
@@ -1642,8 +1677,10 @@ private final class ScannerOverlayView: UIView {
       ? (style == .adjusting ? UIColor.white.withAlphaComponent(0.85)
         : progress >= 1 ? UIColor.systemGreen : UIColor.systemBlue)
       : UIColor.white.withAlphaComponent(0.7)).cgColor
-    outline.lineWidth = detected ? 2 : 3
-    outline.lineDashPattern = nil
+    // The state is in the pattern, not only in the colour: dashed while something is still to
+    // fix, solid and thicker while the page is held for the photo.
+    outline.lineWidth = detected ? (style == .tracking ? 3 : 2) : 3
+    outline.lineDashPattern = detected && style == .adjusting ? [8, 6] : nil
     CATransaction.commit()
     if animated, detected, let previous, !UIAccessibility.isReduceMotionEnabled {
       let movement = CABasicAnimation(keyPath: "path")

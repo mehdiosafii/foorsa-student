@@ -864,51 +864,141 @@ struct ScannerGuidanceCopy: Equatable {
   let compact: String
 }
 
-/// One short instruction per state: framing first, then light, then the hold.
+/// One short instruction per state, in the order the student fixes things
+/// (the owner, 1 Nov 2026: "guide the student to take the perfect picture
+/// while taking the picture"): the page (found, whole, close enough), the
+/// phone held flat above it, then the light, then the hold. The words are the
+/// Android camera's too: lib/src/guided_scanner/scan_coach.dart mirrors this
+/// table line for line, and test/scan_coach_test.dart holds each string of
+/// one to the other. A card names its side when the step asks for one.
 enum ScannerLiveGuidance {
   static func copy(framing: ScannerLiveFraming, lighting: ScannerLiveLighting,
-                   layout: FoorsaScannerProfile.Layout) -> ScannerGuidanceCopy {
+                   layout: FoorsaScannerProfile.Layout, side: String? = nil,
+                   flat: Bool = true) -> ScannerGuidanceCopy {
     switch framing {
     case .searching:
       switch layout {
       case .passport:
         return .init(title: "Show the photo page",
-          detail: "Open the passport and fit the whole photo page in view.", compact: "Photo page in view.")
+          detail: "Show the photo page with the two lines at the bottom.", compact: "Two bottom lines.")
       case .card:
-        return .init(title: "Show the card", detail: "Fit the whole card in view, all four corners.",
-          compact: "Whole card in view.")
+        if side == "front" {
+          return .init(title: "Front side", detail: "Show the side with the photo.", compact: "The photo side.")
+        }
+        if side == "back" {
+          return .init(title: "Now the back", detail: "Turn the card over.", compact: "Turn it over.")
+        }
+        return .init(title: "Find the card", detail: "Fit the whole card in view.", compact: "Whole card in view.")
       case .portrait, .adaptive:
-        return .init(title: "Show the whole page", detail: "Fit all four corners in view. Any orientation works.",
-          compact: "Whole page in view.")
+        return .init(title: "Find the page", detail: "Fit the whole page in view.", compact: "Whole page in view.")
       }
     case .clipped:
-      return .init(title: "Move back a little", detail: "Keep all four corners inside the view.",
+      return .init(title: "Move back a little", detail: "Keep all four corners in view.",
         compact: "Show all corners.")
     case .tooSmall:
-      return .init(title: "Move closer", detail: "Let the document fill more of the view.",
+      return .init(title: "Move closer", detail: "Let the page fill more of the view.",
         compact: "Move closer.")
     case .wrongShape:
       return layout == .passport
         ? .init(title: "Show only the photo page", detail: "Keep the passport open on the page with your photo.",
           compact: "Photo page only.")
-        : .init(title: "Fit the whole page", detail: "Show the complete document with all four corners.",
-          compact: "Show all corners.")
+        : .init(title: "Show all four corners", detail: "Fit the whole page in view.",
+          compact: "All four corners.")
     case .blurry:
-      return .init(title: "Hold still", detail: "Keep the phone steady so the text is sharp.", compact: "Hold still.")
+      return .init(title: "Hold still", detail: "Keep the phone steady.", compact: "Hold still.")
     case .ready:
+      if !flat {
+        return .init(title: "Hold the phone flat", detail: "Keep it level above the page.", compact: "Hold it flat.")
+      }
       switch lighting {
-      case .shadow:
-        return .init(title: "Shadow on the page", detail: "Move the phone or the light so the page is evenly lit.",
-          compact: "Avoid the shadow.")
-      case .glare:
-        return .init(title: "Glare on the page", detail: "Tilt the phone slightly to move the reflection.",
-          compact: "Tilt slightly.")
       case .dim:
-        return .init(title: "More light needed", detail: "Turn on a light or use the torch.", compact: "More light.")
+        return .init(title: "Too dark", detail: "Move to a brighter place.", compact: "More light.")
+      case .glare:
+        return .init(title: "Glare on the page", detail: "Tilt the phone slightly.", compact: "Tilt slightly.")
+      case .shadow:
+        return .init(title: "Shadow on the page", detail: "Move your hand or the phone.",
+          compact: "Avoid the shadow.")
       case .good:
-        return .init(title: "Hold still", detail: "Capturing automatically.", compact: "Capturing.")
+        return .init(title: "Hold still", detail: "Taking the photo.", compact: "Taking the photo.")
       }
     }
+  }
+
+  /// The calm word once the camera has the photos.
+  static let gotIt = ScannerGuidanceCopy(title: "Got it", detail: "Preparing your page.", compact: "Got it.")
+}
+
+extension ScannerQuadrilateral {
+  /// Whether the page is held about flat under the phone: every corner near a
+  /// right angle and the opposite sides about as long (a slanted phone makes
+  /// the far edge short). A page turned on the desk is flat; only the phone's
+  /// slant is asked about. Mirrors scanPageHeldFlat (scan_coach.dart).
+  func isHeldFlat(in imageSize: CGSize) -> Bool {
+    guard imageSize.width > 0, imageSize.height > 0 else { return true }
+    let p = points.map { CGPoint(x: $0.x * imageSize.width, y: $0.y * imageSize.height) }
+    func side(_ i: Int) -> CGFloat { hypot(p[(i + 1) % 4].x - p[i].x, p[(i + 1) % 4].y - p[i].y) }
+    let top = side(0), right = side(1), bottom = side(2), left = side(3)
+    if min(top, bottom) < max(top, bottom) * 0.82 || min(left, right) < max(left, right) * 0.82 { return false }
+    for i in 0..<4 {
+      let a = CGPoint(x: p[(i + 3) % 4].x - p[i].x, y: p[(i + 3) % 4].y - p[i].y)
+      let b = CGPoint(x: p[(i + 1) % 4].x - p[i].x, y: p[(i + 1) % 4].y - p[i].y)
+      let lengths = hypot(a.x, a.y) * hypot(b.x, b.y)
+      guard lengths > 0 else { return false }
+      let cosine = Double((a.x * b.x + a.y * b.y) / lengths)
+      let angle = acos(max(-1, min(1, cosine))) * 180 / Double.pi
+      if angle < 72 || angle > 108 { return false }
+    }
+    return true
+  }
+}
+
+/// Shows one instruction at a time: a line stays at least `minimumDisplay`,
+/// and another takes its place only once it has been asked for `settle`
+/// without a break, so a page at the edge of two states does not make the
+/// words flicker. "Got it" shows at once. Mirrors ScanGuidanceCoach
+/// (scan_coach.dart).
+struct ScannerGuidanceCoach {
+  static let minimumDisplay: TimeInterval = 1.0
+  static let settle: TimeInterval = 0.35
+
+  private(set) var shown: ScannerGuidanceCopy?
+  private var shownAt: TimeInterval = 0
+  private var pending: ScannerGuidanceCopy?
+  private var pendingSince: TimeInterval = 0
+
+  /// The line to show at `time`, given what this frame asks for, and whether
+  /// it is a new line (for VoiceOver).
+  mutating func update(_ candidate: ScannerGuidanceCopy, at time: TimeInterval,
+                       immediate: Bool = false) -> (line: ScannerGuidanceCopy, changed: Bool) {
+    guard let current = shown, !immediate, candidate != ScannerLiveGuidance.gotIt else {
+      let changed = shown != candidate
+      show(candidate, at: time)
+      return (candidate, changed)
+    }
+    if candidate == current {
+      pending = nil
+      return (current, false)
+    }
+    if pending != candidate {
+      pending = candidate
+      pendingSince = time
+    }
+    if time - pendingSince >= Self.settle, time - shownAt >= Self.minimumDisplay {
+      show(candidate, at: time)
+      return (candidate, true)
+    }
+    return (current, false)
+  }
+
+  private mutating func show(_ line: ScannerGuidanceCopy, at time: TimeInterval) {
+    shown = line
+    shownAt = time
+    pending = nil
+  }
+
+  mutating func reset() {
+    shown = nil
+    pending = nil
   }
 }
 

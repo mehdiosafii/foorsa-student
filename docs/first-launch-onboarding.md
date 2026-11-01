@@ -192,6 +192,8 @@ cards, the board's case, the prayer chip), `Glass.tile` its lit
 `.portal-tile-pane` (the mic and shield orbs, the map's locate button), and
 `Glass.pearl` the arrow: a solid piece of pearl glass. Nothing blurs what is
 behind it, as on the portal: on the night there is nothing a blur would show.
+On Android its soft light is drawn once and kept as pictures while the
+onboarding runs (`GlassBake`, see **Android** below).
 
 **The first picture is the arrow alone** (`takeoff_intro.dart`, 3.4 s). The
 native launch image is rendered from the onboarding's own painter
@@ -319,7 +321,13 @@ with whatever else is playing (the student's music never stops), so the silent
 switch does not silence them and the phone's volume buttons set how loud they
 are; on Android the media stream, with no audio focus. (The first version
 played in iOS's ambient session, which the ring/silent switch silences, and on
-Android's interface-sound stream, near zero on most phones.) There is no
+Android's interface-sound stream, near zero on most phones.) On Android the
+short cues timed to the picture (the arrow's air and its dock, a yes, the
+flaps, the shutter, the tear: `lowLatencyCues`) play through its low-latency
+player, decoded ahead into memory; through its media player a cue starts a
+tenth of a second or more after it is asked for, and the dock's note came
+after the arrow had docked. The intro, which a late start seeks into, and the
+six-second arrival keep the media player. iOS has one player. There is no
 speaker button on the screen: the volume buttons are the control. Nothing
 plays while the app is in the background (the app has the audio background
 mode, which would otherwise keep the bed playing). The intro loads first,
@@ -346,6 +354,150 @@ are illustrations at a fixed text size; the words above them follow the
 phone's text size, smaller on short screens, and so does the line saying
 what to do; below 220 pt of room the screen scrolls. Android's back goes one
 step back.
+
+## Android: why it was sluggish, and what changed (1 Nov 2026)
+
+The owner, 31 Oct 2026: "the introduction animations on android are very
+sluggish and buggy". No Android phone was at hand. The causes below are read
+from the engine and documentation of the Flutter this app builds with (3.47.5:
+`engine/src/flutter` and `docs/platforms/android` in the SDK), and every change
+is measured by tests that count what each frame asks the GPU for
+(`test/onboarding_android_cost_test.dart`, with `test/frame_cost.dart`), on a
+1080 x 2400 phone.
+
+**The web view was composited under the whole onboarding.** The portal's web
+view is made 3.6 s in, so the sign-in loads under the onboarding for the
+hand-off. It used Hybrid Composition (HC), the real Android view in the
+window. While such a view is in a frame, Flutter rasters its frames on
+Android's main thread, draws everything over the view into image views
+(`FlutterImageView`, `PlatformViewsController.onDisplayPlatformView`), and
+before Android 10 copies each frame from the GPU to memory and back; Flutter's
+own page on it: "the rendering changes can significantly impact Flutter's
+performance". Flutter does not leave out a view hidden under an opaque
+picture, so from the welcome to the hand-off every frame went that way, on the
+main thread the web view was loading the portal on, and the frame the view
+first appeared in was dropped and drawn again as the threads merged (the
+welcome's first moment). Now (`lib/src/web_view_composition.dart`):
+
+- A web view made while the onboarding covers the shell uses Texture Layer
+  Hybrid Composition (TLHC): the view is in the window at its place, so
+  touches, the keyboard, text selection and accessibility reach it as they do
+  with HC, but it draws into a texture that Flutter composes on its own raster
+  thread. Flutter's docs say this mode "should be preferred when possible".
+- While covered it is not drawn at all (`CoveredByOnboarding`): it is laid
+  out, loads and draws into its texture, but is in none of the onboarding's
+  frames, until the onboarding starts to fade (`OnboardingScope.covering`
+  turns false at `onBoarded`, 0.1 s before the fade), when the texture is
+  current and the fade shows it. An HC view cannot be left out like this:
+  Android lays it out only once Flutter draws it, so the page would load at no
+  size and the arrow could not be landed on the sign-in's.
+- Every other web view is HC as before: later launches, one rebuilt after the
+  onboarding (a render process gone), and iOS, which has one way.
+- Trade-off: the first session after install (the onboarding, the sign-in, and
+  whatever the student does before closing the app) runs its web view as a
+  texture. TLHC is what Flutter's own web view plugin uses unless told
+  otherwise ("for most use cases, this flag should be set to false",
+  webview_flutter_android), but this app has always shipped HC, and
+  flutter_inappwebview (1.1.3) behaves differently without it: it routes the
+  keyboard through a bridge kept from Flutter's older virtual-display mode
+  (`InputAwareWebView`; read from its code, it hands the keyboard Chromium's
+  own input connection before Android 10 and stands aside from 10 on), and it
+  replaces Android's copy and paste bar with one of its own drawn in the page
+  (`InAppWebView.rebuildActionMode`: the same actions, cut, copy, paste,
+  select all, in a plainer bar). As a texture the web view also costs one more
+  copy per frame, and its texture is remade as the keyboard resizes the page.
+  So HC is kept for every other launch, and what only a phone can show is that
+  first session: typing in the sign-in, a password pasted or filled by a
+  password manager, the copy and paste bar, the keyboard in the chat. Should
+  any of it fail, `webViewUsesHybridComposition` returning true puts the first
+  session back on HC, and the onboarding back on its old cost.
+
+**The app's loader played under the onboarding.** Its loading screen (the
+arrow, the stairs, the plane, the cap) stays over the web view until the
+portal is ready: on a first launch, through the takeoff and the first scenes,
+drawn and animated every frame under the opaque night, three or four blurs
+through offscreen passes and a full-screen fill each frame. It now neither
+draws nor ticks while covered (`ShellLoadingLayer`); its fade still runs, so a
+loader the portal let go of meanwhile is gone before the onboarding fades.
+Both platforms; nothing on the screen changes.
+
+**Frames drew what nobody saw, and repainted what did not move.** Both
+platforms, same pixels:
+
+| per frame, at rest | welcome | notifications | camera | mic | location | pass |
+| --- | --- | --- | --- | --- | --- | --- |
+| render objects repainted, before | 36 | 49 | 16 | 22 | 25 | 65 |
+| render objects repainted, now | 3 | 6 | 3 | 3 | 4 | 8 |
+
+- The change from one object to the next drew into an offscreen layer the
+  size of the stage on every frame, at full opacity, which draws the same as
+  drawing straight onto the stage: now only for its last 7 %, as it fades
+  (`stage_morph.dart`). The map's lens did the same after its first 0.9 s.
+- What moves every frame (the arrow at rest, the voice, the map, the locate
+  arrow, the scanner, the shield's rings, the flaps, the flying arrow, the
+  change) has a layer of its own, so the scene around it is not redrawn with
+  it.
+- The pass rebuilt itself and redrew its two shadows every frame, on a clock
+  nothing read: gone. Its notched outlines (a `Path.combine`) are made once.
+- Anything rebuilt inside a LayoutBuilder is rebuilt within that builder's
+  layout (`layout_builder.dart`, `_scheduleRebuild`). The prayer chip's
+  builder, on the map's clock, laid the whole location scene out again every
+  frame, found or not; it has its own controller now. The notification stack
+  and the pass move in an `OwnFrame` (`boarding_style.dart`: their own builder
+  and layer), and the cards are made once (`BalancedText` measured their words
+  every frame they moved). The stack's springs stop once still.
+- The scanner's passport lines are laid out once; the app icon on the cards is
+  decoded at its 38 pt, not at 1024 px (a 4 MB texture made as the first card
+  landed), and ahead of the scene.
+
+**Blurs Impeller cannot draw in one pass (Android only).** Impeller, Flutter's
+renderer on Android 10 and later, draws a blurred rectangle, rounded
+rectangle, circle or convex shape in one pass; any other blurred shape goes
+through an offscreen picture and two blur passes, every frame
+(`impeller/display_list/canvas.cc`), and it keeps no raster cache
+(`EnableRasterCache` is false for its surfaces). The arrow (three pieces, not
+convex), the plane, the pass's notched shadows and the light inside every
+piece of glass (a frame with a hole in it) are such shapes. On Android, while
+the onboarding runs, `GlassBake` (`glass.dart`) draws each of those blurred
+fields once at the size it is shown and then as a picture, under the same
+vector clips, between the same face, wall and rim. Only glass whose shape and
+light stay the same is baked, never a blur narrower than 1.5 px on the screen
+(a small arrow's bevel, which resampling would soften), and nothing that
+changes as it moves (the touch showing what to do, the change between
+objects). Each picture is made once and drawn again from then on, keyed by its
+shape, its glass and its size on the screen in quarter octaves (so an arrow
+that grows as it flies is made a handful of times, never every frame): the
+takeoff and the six scenes make 25 together, about 12 MB of textures on a
+1080 x 2400 phone, and they go when the onboarding ends. iOS draws as before.
+
+| blurs through offscreen passes, per frame | takeoff arrow | plane | welcome | notifications | mic | location | pass |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| before | 4 | 2 | 7 | 2 | 2 | 8 | 1 |
+| Android now | 0 | 0 | 3 | 0 | 0 | 2 | 0 |
+
+(The welcome's three are its arrow's bevel and the touch; the location's, the
+locate arrow's two narrow lights. The change between objects keeps its four
+for its second.) Every scene was drawn with and without, at 2, 2.625 and 3.5
+pixels per point, with Skia and with Impeller: 5 levels of 255 apart at most,
+0.01 on average.
+
+**Impeller stays.** Impeller compiles every shader when the app is built; the
+onboarding is the first thing a new install draws, and Skia would compile its
+shaders during the takeoff. Opting out (`EnableImpeller` false) is deprecated
+in this Flutter, which logs that the option will go away. The engine already
+draws with Skia below Android 10 and on Vivante GPUs, and with Impeller's
+OpenGL ES backend on the drivers it knows to be bad (emulators, Huawei, older
+MediaTek, several Exynos; `flutter_main.cc`,
+`android_context_dynamic_impeller.cc`). `test/onboarding_android_cost_test.dart`
+fails on an opt-out.
+
+**Checked, unchanged.** Every animation runs on time, not on frames: a 120 Hz
+screen sees the same flight as a 60 Hz one (test). `MainActivity` asks for
+the display's highest rate, so a 90 or 120 Hz phone draws the onboarding at
+that rate. Android's back steps back; the gestures are in the middle of the
+screen, clear of the edge-swipe back. The web view is still made 3.6 s in: on
+Android 7 to 9 Flutter waits for the main thread's vsync, so making it, the
+first time Chromium loads, can still hold the welcome for a moment there.
 
 ## Required device verification
 
@@ -379,6 +531,18 @@ step back.
 - After boarding: the push token registers on sign-in without a second
   prompt, the status bar follows the portal again, an incoming adviser call
   shows over the onboarding.
+- Android, on a mid-range phone (and a 90 or 120 Hz one): the takeoff and every
+  scene and change keep pace, with Profile GPU rendering or a systrace if in
+  doubt; nothing flashes as the welcome appears.
+- Android, the first session after install, whose web view is a texture: the
+  hand-off lands and fades onto a drawn sign-in; typing in it, a password
+  pasted and one filled by a password manager; a long press in a field (the
+  plugin's own copy and paste bar, under the finger, each action working);
+  selecting and copying text; the keyboard in the chat; scrolling; a file
+  picked; TalkBack on the sign-in; leaving the app and coming back (the page
+  still drawn). Then close the app and reopen it: the same, as before, in the
+  window, with Android's own bar.
+- Android 7 to 9: the welcome as the web view is made (3.6 s in).
 
 ## Validation performed locally
 
@@ -422,6 +586,17 @@ step back.
   renderer, with mock-ups of iOS's prompts and its notification banner for
   the recording only, and mixed the sounds in at the frames they were played,
   normalised to -16 LUFS.
+
+- What each frame costs (`test/onboarding_android_cost_test.dart`): the web
+  view's composition (a texture only while the onboarding covers it, and left
+  out of the frames until it fades), the covering signal from the first frame
+  to the fade, the loader neither drawn nor ticking under it and still let go
+  of, no offscreen layer at rest or as an object changes, the blurs Android
+  draws from pictures and the frames' pixels the same with and without, each
+  picture made once (a scene's demonstration played again makes none) and
+  what they hold together, the render objects repainted per frame in every
+  scene, a 120 Hz flight the same as a 60 Hz one, the icon's decode size, and
+  no Impeller opt-out.
 
 These do not replace a run on real phones: the prompts, the haptics, the
 audio session and the WebView loading underneath are native.

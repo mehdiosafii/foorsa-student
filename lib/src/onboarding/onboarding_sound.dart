@@ -57,8 +57,14 @@ const onboardingCues = <String>[
   'board',
 ];
 
-/// The short ones, where Android starts a sound soonest.
-const _quick = {'shutter', 'flap', 'tear'};
+/// The short cues timed to the picture, played where Android starts a sound
+/// soonest (its SoundPool, decoded ahead into memory): the arrow's air as it
+/// flies and its note as it docks, a yes, the flaps, the shutter, the tear.
+/// Through Android's media player a cue starts a tenth of a second or more
+/// after it is asked for, and the dock's note came after the arrow had
+/// docked. iOS has one way to play and ignores it. The intro (which a late
+/// start seeks into) and the arrival (six seconds) keep the media player.
+const lowLatencyCues = {'swoop', 'dock', 'granted', 'shutter', 'flap', 'tear'};
 
 /// The longest cue, so the last one is never cut off when the onboarding
 /// lets go of its players.
@@ -114,7 +120,7 @@ class OnboardingSounds extends BoardingSounds with WidgetsBindingObserver {
       for (final cue in onboardingCues) {
         if (_released) break;
         final player = AudioPlayer(playerId: 'onboarding-$cue');
-        await player.setPlayerMode(_quick.contains(cue)
+        await player.setPlayerMode(lowLatencyCues.contains(cue)
             ? PlayerMode.lowLatency
             : PlayerMode.mediaPlayer);
         await player.setReleaseMode(ReleaseMode.stop);

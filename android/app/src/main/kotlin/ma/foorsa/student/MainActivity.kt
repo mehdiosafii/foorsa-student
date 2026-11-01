@@ -99,6 +99,11 @@ class MainActivity : FlutterFragmentActivity() {
         val liveText = LiveTextReader()
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/live_text")
             .setMethodCallHandler { call, result -> liveText.handle(call, result) }
+        // The guided scanner's photo, made upright and bounded for the portal
+        // (scan_photo.dart).
+        val scanPhoto = ScanPhoto()
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/scan_photo")
+            .setMethodCallHandler { call, result -> scanPhoto.handle(call, result) }
         // The portal's textures, by name (shell_haptics.dart). Answers false
         // when the phone cannot play one, so Dart falls back to system impacts.
         val haptics = ShellHaptics(applicationContext)

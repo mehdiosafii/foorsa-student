@@ -258,16 +258,20 @@ class _LaunchArrowState extends State<LaunchArrow>
         onVerticalDragUpdate: _move,
         onVerticalDragEnd: _end,
         onTap: _tap,
-        child: CustomPaint(
-          painter: _LaunchPainter(
-            drag: _drag,
-            clock: _clock,
-            // It answers the guide's touch: drawn up a little as the touch
-            // swipes (scene_hint.dart).
-            nudge: SceneGuide.responseOf(context),
-            launched: _launched,
-            still: widget.still,
-            armed: widget.armed,
+        // Its own layer: it floats every frame, the board and the words
+        // around it do not.
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: _LaunchPainter(
+              drag: _drag,
+              clock: _clock,
+              // It answers the guide's touch: drawn up a little as the touch
+              // swipes (scene_hint.dart).
+              nudge: SceneGuide.responseOf(context),
+              launched: _launched,
+              still: widget.still,
+              armed: widget.armed,
+            ),
           ),
         ),
       ),

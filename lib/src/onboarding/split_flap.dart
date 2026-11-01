@@ -181,16 +181,20 @@ class _SplitFlapLineState extends State<SplitFlapLine>
       child: SizedBox(
         width: width,
         height: widget.cellHeight,
-        child: CustomPaint(
-          painter: _FlapPainter(
-            flaps: _flaps,
-            now: _now,
-            cellWidth: widget.cellWidth,
-            cellHeight: widget.cellHeight,
-            gap: widget.gap,
-            top: widget.tileTop,
-            bottom: widget.tileBottom,
-            glyphs: _Glyphs.of(style, Directionality.of(context)),
+        // Its own layer: the flaps redraw every frame they flip, the case
+        // round them does not.
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: _FlapPainter(
+              flaps: _flaps,
+              now: _now,
+              cellWidth: widget.cellWidth,
+              cellHeight: widget.cellHeight,
+              gap: widget.gap,
+              top: widget.tileTop,
+              bottom: widget.tileBottom,
+              glyphs: _Glyphs.of(style, Directionality.of(context)),
+            ),
           ),
         ),
       ),

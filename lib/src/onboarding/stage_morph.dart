@@ -188,8 +188,15 @@ class StageMorphPainter extends CustomPainter {
     // The outline gives way to the new object once it is there.
     final fade = toArrow ? 1.0 : 1 - _smooth((m - 0.93) / 0.07);
 
-    canvas.saveLayer(Rect.fromCircle(center: Offset.zero, radius: 600),
-        Paint()..color = Color.fromRGBO(255, 255, 255, fade));
+    // Faded as one piece for its last moment only: an offscreen layer the
+    // size of the stage, every frame, cost more than everything in it, and at
+    // full opacity it draws exactly what drawing straight onto the stage does.
+    if (fade < 1) {
+      canvas.saveLayer(Rect.fromCircle(center: Offset.zero, radius: 600),
+          Paint()..color = Color.fromRGBO(255, 255, 255, fade));
+    } else {
+      canvas.save();
+    }
     paintArrowGlow(canvas, 92 * stageArrowHeight / 100, glow);
     final shape = _pieces(main, plan, steps);
     // Mid-change it glows and softens, as if made of light for a moment.

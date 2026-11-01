@@ -30,12 +30,18 @@ class LiveTextCrop {
   /// preview, cropped to the viewport as camera_luma.dart crops it), widened
   /// by [ScanTextGeometry.cropExpansion] about its middle, in sensor pixels.
   /// Null when the crop would be too small to read.
+  ///
+  /// [sensorOrientation] is how the camera's buffer sits against the upright
+  /// preview, as camera_luma.dart reads it: 90 for nearly every back camera
+  /// (the buffer is the upright image turned a quarter counterclockwise), 270
+  /// for the few mounted the other way round.
   static LiveTextCrop? forPage(
     Rect bounds, {
     required int sensorWidth,
     required int sensorHeight,
     double? viewportAspect,
     ScanTextTurnPolicy turns = const ScanTextTurnPolicy.fixed(0),
+    int sensorOrientation = 90,
   }) {
     if (sensorWidth < 32 || sensorHeight < 32 || bounds.width <= 0 || bounds.height <= 0) return null;
     final landscape = sensorWidth > sensorHeight;
@@ -61,9 +67,16 @@ class LiveTextCrop {
     final upLeft = clamp(centerX - (right - left) / 2 * grow), upRight = clamp(centerX + (right - left) / 2 * grow);
     final upTop = clamp(centerY - (bottom - top) / 2 * grow), upBottom = clamp(centerY + (bottom - top) / 2 * grow);
     // In sensor pixels: a landscape buffer is the upright image turned a
-    // quarter counterclockwise (camera_luma.dart reads it the same way).
+    // quarter counterclockwise (camera_luma.dart reads it the same way), or
+    // clockwise on a camera mounted the other way round.
+    final turnedBack = landscape && sensorOrientation == 270;
     final double sx0, sx1, sy0, sy1;
-    if (landscape) {
+    if (turnedBack) {
+      sx0 = (1 - upBottom) * sensorWidth;
+      sx1 = (1 - upTop) * sensorWidth;
+      sy0 = upLeft * sensorHeight;
+      sy1 = upRight * sensorHeight;
+    } else if (landscape) {
       sx0 = upTop * sensorWidth;
       sx1 = upBottom * sensorWidth;
       sy0 = (1 - upRight) * sensorHeight;
@@ -82,7 +95,12 @@ class LiveTextCrop {
     if (width < 32 || height < 32) return null;
     // The crop actually taken, back in upright normalized terms.
     final double cropUpLeft, cropUpRight, cropUpTop, cropUpBottom;
-    if (landscape) {
+    if (turnedBack) {
+      cropUpLeft = y0 / sensorHeight;
+      cropUpRight = y1 / sensorHeight;
+      cropUpTop = 1 - x1 / sensorWidth;
+      cropUpBottom = 1 - x0 / sensorWidth;
+    } else if (landscape) {
       cropUpLeft = 1 - y1 / sensorHeight;
       cropUpRight = 1 - y0 / sensorHeight;
       cropUpTop = x0 / sensorWidth;
@@ -101,7 +119,7 @@ class LiveTextCrop {
     final quarterTurns = turns.quarterTurns(uprightWidth.toDouble(), uprightHeight.toDouble());
     // ML Kit turns the crop clockwise to read it: upright first, then the
     // reading's own counterclockwise quarter turns.
-    final base = landscape ? 90 : 0;
+    final base = turnedBack ? 270 : landscape ? 90 : 0;
     final rotation = (base + 360 - 90 * quarterTurns) % 360;
     return LiveTextCrop._(
       x0: x0,

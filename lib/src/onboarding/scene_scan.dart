@@ -334,16 +334,19 @@ class _ScanSceneState extends State<ScanScene> with TickerProviderStateMixin {
                 onPanCancel: () {
                   if (_held != null && !_captured) _back();
                 },
-                child: CustomPaint(
-                  painter: _ScanPainter(
-                    Listenable.merge([_clock, _moved]),
-                    _clock,
-                    still: widget.still,
-                    page: w,
-                    offset: () => _offset,
-                    near: _near,
-                    capturedAt: _capturedAt,
-                    readFrom: _readFrom,
+                // Its own layer: the corners breathe every frame.
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: _ScanPainter(
+                      Listenable.merge([_clock, _moved]),
+                      _clock,
+                      still: widget.still,
+                      page: w,
+                      offset: () => _offset,
+                      near: _near,
+                      capturedAt: _capturedAt,
+                      readFrom: _readFrom,
+                    ),
                   ),
                 ),
               ),
@@ -381,6 +384,9 @@ class _ScanPainter extends CustomPainter {
     'P<MARSTUDENT<<FOORSA'.padRight(44, '<'),
     '${'FS20260011MAR0601012<3601017'.padRight(42, '<')}02',
   ];
+
+  /// The zone's two lines, laid out, by the page's width.
+  static final Map<double, List<TextPainter>> _mrzLines = {};
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -546,17 +552,23 @@ class _ScanPainter extends CustomPainter {
           mid);
     }
 
-    // The machine-readable zone.
-    final style = Boarding.monoStyle(7.05 * u,
-        color: const Color(0xFF8C877D), weight: FontWeight.w500, spacing: 0);
-    for (var i = 0; i < _mrz.length; i++) {
-      final painter = TextPainter(
-        text: TextSpan(text: _mrz[i], style: style),
-        textDirection: TextDirection.ltr,
-        maxLines: 1,
-      )..layout(maxWidth: w - 24 * u);
-      painter.paint(canvas, Offset(14 * u, h - (30 - i * 11) * u));
-      painter.dispose();
+    // The machine-readable zone, laid out once for the page's width: two
+    // monospaced lines made and laid out again every frame were the page's
+    // dearest part.
+    final lines = _mrzLines.putIfAbsent(w, () {
+      final style = Boarding.monoStyle(7.05 * u,
+          color: const Color(0xFF8C877D), weight: FontWeight.w500, spacing: 0);
+      return [
+        for (final line in _mrz)
+          TextPainter(
+            text: TextSpan(text: line, style: style),
+            textDirection: TextDirection.ltr,
+            maxLines: 1,
+          )..layout(maxWidth: w - 24 * u),
+      ];
+    });
+    for (var i = 0; i < lines.length; i++) {
+      lines[i].paint(canvas, Offset(14 * u, h - (30 - i * 11) * u));
     }
 
     // Read: light runs across it once.

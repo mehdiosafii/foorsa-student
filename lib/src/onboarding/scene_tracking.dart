@@ -76,8 +76,11 @@ class _TrackingSceneState extends State<TrackingScene>
             top: middle - 110,
             width: 220,
             height: 220,
-            child:
-                CustomPaint(painter: _RingsPainter(clock, still: widget.still)),
+            // Its own layer: the rings move every frame, the shield does not.
+            child: RepaintBoundary(
+              child: CustomPaint(
+                  painter: _RingsPainter(clock, still: widget.still)),
+            ),
           ),
           Positioned(
             left: box.maxWidth / 2 - shieldSide / 2,

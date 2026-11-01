@@ -119,8 +119,11 @@ class _VoiceSceneState extends State<VoiceScene>
             top: middle - 100,
             width: 320,
             height: 200,
-            child: CustomPaint(
-                painter: _VoicePainter(clock, _held, still: widget.still)),
+            // Its own layer: the voice moves every frame, the mic does not.
+            child: RepaintBoundary(
+              child: CustomPaint(
+                  painter: _VoicePainter(clock, _held, still: widget.still)),
+            ),
           ),
           Positioned(
             left: box.maxWidth / 2 - micSide / 2,

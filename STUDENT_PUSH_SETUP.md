@@ -14,6 +14,10 @@ Use the existing Foorsa Firebase project (the project named by `FIREBASE_SERVICE
 
 ## Behavior and verification
 
+How a phone registers, every reason it may not and where each is reported, the
+iPhone's notification delegate and the TestFlight check of the push
+entitlement: `docs/student-push.md` (1 Nov 2026, after no phone had registered).
+
 A committed outbound app-channel message queues one event for the current student recipient. Inbound messages, notes, failed sends, parents and other organizations do not qualify. The sender attempts delivery after its response; the persisted cron queue retries failures with backoff. Already read/deleted messages and changed recipient links are discarded before retry. Events expire after one day and at most 12 claims. Claims use leases and `SKIP LOCKED`; device/event records prevent ordinary retries from notifying twice. A provider acceptance followed by a database failure can still duplicate delivery; APNs collapse IDs and Android tags reduce visible duplicates. This is at-least-once delivery, not an exactly-once promise.
 
 The phone asks permission after student authentication. Token rotation and app foreground refresh update registration. Sign-out unregisters the device and deletes its FCM token. Tapping an alert opens only `/contact/chat`. Foreground chat suppresses the extra banner. Lock-screen text is generic and contains no student details or message content.

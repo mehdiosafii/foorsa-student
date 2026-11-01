@@ -142,7 +142,7 @@ void paintPearlPlane(Canvas canvas,
     }
   }
 
-  paintGlassBody(canvas, _hull, glass);
+  paintGlassBody(canvas, _hull, glass, bake: _hull);
   paintGlassRim(canvas, _hull, glass);
 
   if (detail > 0.001) {

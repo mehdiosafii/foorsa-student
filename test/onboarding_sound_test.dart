@@ -17,4 +17,19 @@ void main() {
         .toSet();
     expect(shipped, {...onboardingCues, 'bed'});
   });
+
+  test('the cues timed to the picture start soonest on Android', () {
+    // The media player starts a cue a tenth of a second or more late: the
+    // dock's note came after the arrow had docked. The intro is sought into
+    // when it loads late, which the low-latency player cannot do.
+    expect(lowLatencyCues, containsAll(['swoop', 'dock', 'granted', 'tear']));
+    expect(lowLatencyCues, isNot(contains('intro')));
+    expect(lowLatencyCues, isNot(contains('board')));
+    expect(onboardingCues, containsAll(lowLatencyCues));
+    // Held decoded in memory: each a second or two, under 40 KB compressed.
+    for (final cue in lowLatencyCues) {
+      final bytes = File('assets/sounds/onboarding/$cue.m4a').lengthSync();
+      expect(bytes, lessThan(40 * 1024), reason: cue);
+    }
+  });
 }

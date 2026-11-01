@@ -1254,6 +1254,19 @@ class ScanTextCopy {
 
   /// Shown instead of the detail when space is short.
   final String compact;
+
+  /// Two copies with the same words are the same line, however they were
+  /// made: the live guidance compares what each frame asks for with what is
+  /// on screen (scan_coach.dart).
+  @override
+  bool operator ==(Object other) =>
+      other is ScanTextCopy && other.title == title && other.detail == detail && other.compact == compact;
+
+  @override
+  int get hashCode => Object.hash(title, detail, compact);
+
+  @override
+  String toString() => 'ScanTextCopy($title · $detail)';
 }
 
 enum ScanTextGuidance {
@@ -1297,8 +1310,8 @@ enum ScanTextGuidance {
                 ? 'Move closer — the lines on the card are too small.'
                 : 'Move closer — the bottom lines are too small.',
             'Move closer.'),
-        ScanTextGuidance.glareOnMachineLines => const ScanTextCopy('Glare on the bottom lines',
-            'Tilt the page slightly to move the reflection.', 'Tilt slightly.'),
+        ScanTextGuidance.glareOnMachineLines =>
+          const ScanTextCopy('Glare on the bottom lines', 'Tilt the phone slightly.', 'Tilt slightly.'),
         ScanTextGuidance.showWholeMachineLines => kind == ScanPaperKind.idCard
             ? const ScanTextCopy('Show the three bottom lines',
                 'Keep the three lines on the back of the card fully in view.', 'All three lines.')
@@ -1319,13 +1332,13 @@ enum ScanTextGuidance {
         ScanTextGuidance.showCardDetails =>
           const ScanTextCopy('Show the card', 'Keep the card’s printed details in view.', 'Card details.'),
         ScanTextGuidance.glareOnText =>
-          const ScanTextCopy('Glare on the card', 'Tilt the card slightly to move the reflection.', 'Tilt slightly.'),
+          const ScanTextCopy('Glare on the card', 'Tilt the phone slightly.', 'Tilt slightly.'),
         ScanTextGuidance.moveCloserText =>
           const ScanTextCopy('Move closer', 'Move closer so the text is readable.', 'Move closer.'),
         ScanTextGuidance.showPrintedText =>
           const ScanTextCopy('Show the printed side', 'Show the side of the page with the text.', 'Printed side.'),
         ScanTextGuidance.textRunsPastEdge => const ScanTextCopy(
-            'Show the whole page', 'Some text runs past the edge. Fit all of it in view.', 'Whole page.'),
+            'Show all four corners', 'Some text runs past the edge of the view.', 'All four corners.'),
       };
 }
 
