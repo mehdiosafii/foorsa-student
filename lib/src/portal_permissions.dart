@@ -12,6 +12,13 @@ import 'package:permission_handler/permission_handler.dart' show Permission;
 final Map<PermissionResourceType, List<Permission>> _granted = {
   PermissionResourceType.CAMERA: const [Permission.camera],
   PermissionResourceType.MICROPHONE: const [Permission.microphone],
+  // Both at once, as WKWebView names a page asking for them together
+  // (getUserMedia with audio and video: the introduction video's studio
+  // films with sound). Android names each.
+  PermissionResourceType.CAMERA_AND_MICROPHONE: const [
+    Permission.camera,
+    Permission.microphone,
+  ],
   // How the phone is held, which iOS asks the app about when the page calls
   // DeviceOrientationEvent.requestPermission() inside a tap: the admission
   // reveal leans with the phone, and the introduction video's studio checks

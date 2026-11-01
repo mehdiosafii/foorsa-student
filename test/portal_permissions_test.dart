@@ -19,6 +19,7 @@ void main() {
       [PermissionResourceType.CAMERA],
       [PermissionResourceType.MICROPHONE],
       [PermissionResourceType.CAMERA, PermissionResourceType.MICROPHONE],
+      [PermissionResourceType.CAMERA_AND_MICROPHONE],
       [PermissionResourceType.DEVICE_ORIENTATION_AND_MOTION],
     ]) {
       expect(portalMayUse(resources), isTrue, reason: '$resources');
@@ -29,6 +30,7 @@ void main() {
     final allowed = [
       PermissionResourceType.CAMERA,
       PermissionResourceType.MICROPHONE,
+      PermissionResourceType.CAMERA_AND_MICROPHONE,
       PermissionResourceType.DEVICE_ORIENTATION_AND_MOTION,
     ];
     final others = PermissionResourceType.values.where((r) => !allowed.contains(r));
@@ -47,6 +49,8 @@ void main() {
         phonePermissionsFor(
             [PermissionResourceType.CAMERA, PermissionResourceType.MICROPHONE]),
         [Permission.camera, Permission.microphone]);
+    expect(phonePermissionsFor([PermissionResourceType.CAMERA_AND_MICROPHONE]),
+        [Permission.camera, Permission.microphone]);
     expect(phonePermissionsFor([PermissionResourceType.DEVICE_ORIENTATION_AND_MOTION]),
         isEmpty);
   });
@@ -63,6 +67,20 @@ void main() {
     expect(isTrustedPortalOrigin(request.origin, 'https://student.foorsa.ma'), isTrue);
     expect(portalMayUse(request.resources), isTrue);
     expect(phonePermissionsFor(request.resources), isEmpty);
+  });
+
+  test('an iPhone asks for camera and microphone together as one resource', () {
+    // WebKit names getUserMedia with audio and video
+    // WKMediaCaptureTypeCameraAndMicrophone, which the plugin sends as 2: the
+    // introduction video's studio films this way.
+    final request = PermissionRequest.fromMap({
+      'origin': 'https://student.foorsa.ma',
+      'resources': [2],
+    })!;
+    expect(request.resources, [PermissionResourceType.CAMERA_AND_MICROPHONE]);
+    expect(portalMayUse(request.resources), isTrue);
+    expect(phonePermissionsFor(request.resources),
+        [Permission.camera, Permission.microphone]);
   });
 
   test('the iPhone app may read how it is held: its motion purpose string is declared', () {
