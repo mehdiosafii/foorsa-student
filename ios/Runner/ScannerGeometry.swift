@@ -857,6 +857,23 @@ enum ScannerLiveFramingPolicy {
   }
 }
 
+/// A passport is scanned open at its photo page, both pages in one photo (the owner, 1 Nov 2026:
+/// "scan both first pages the one with the infos and the empty one, both in one shot"): the page
+/// facing the photo page carries the passport number. The booklet-aware cascade still finds the
+/// photo page; a still keeps the document model's outline of the open booklet instead only when
+/// that outline holds the photo page and is about two of it, the facing page beside it. Anything
+/// else (a hand, the table, a cover folded back) keeps the photo page alone, as before.
+enum ScannerPassportBooklet {
+  static let minimumAreaRatio: CGFloat = 1.6
+  static let maximumAreaRatio: CGFloat = 2.6
+
+  static func accepts(booklet: ScannerQuadrilateral, page: ScannerQuadrilateral) -> Bool {
+    guard page.area > 0, booklet.encloses(page, margin: 0.02) else { return false }
+    let ratio = booklet.area / page.area
+    return ratio >= minimumAreaRatio && ratio <= maximumAreaRatio
+  }
+}
+
 struct ScannerGuidanceCopy: Equatable {
   let title: String
   let detail: String
@@ -900,8 +917,10 @@ enum ScannerLiveGuidance {
         compact: "Move closer.")
     case .wrongShape:
       return layout == .passport
-        ? .init(title: "Show only the photo page", detail: "Keep the passport open on the page with your photo.",
-          compact: "Photo page only.")
+        // The passport is scanned open at its photo page, both pages in one photo (the owner,
+        // 1 Nov 2026): the page facing it carries the passport number.
+        ? .init(title: "Open the passport flat", detail: "Show the photo page and the page facing it.",
+          compact: "Both pages.")
         : .init(title: "Show all four corners", detail: "Fit the whole page in view.",
           compact: "All four corners.")
     case .blurry:
@@ -1331,9 +1350,9 @@ enum ScannerWords {
     "Move closer": ("Rapprochez-vous", "اقترب أكثر"),
     "Let the page fill more of the view.": ("La page doit remplir davantage le cadre.", "اجعل الصفحة تملأ مساحة أكبر من الإطار."),
     "Move closer.": ("Rapprochez-vous.", "اقترب أكثر."),
-    "Show only the photo page": ("Montrez seulement la page de la photo", "أظهر صفحة الصورة فقط"),
-    "Keep the passport open on the page with your photo.": ("Gardez le passeport ouvert à la page de votre photo.", "أبقِ جواز السفر مفتوحًا على الصفحة التي تحمل صورتك."),
-    "Photo page only.": ("Page photo seule.", "صفحة الصورة فقط."),
+    "Open the passport flat": ("Ouvrez le passeport à plat", "افتح جواز السفر بشكل مسطح"),
+    "Show the photo page and the page facing it.": ("Montrez la page de la photo et la page en face.", "أظهر صفحة الصورة والصفحة المقابلة لها."),
+    "Both pages.": ("Les deux pages.", "الصفحتان معًا."),
     "Show all four corners": ("Montrez les quatre coins", "أظهر الزوايا الأربع"),
     "All four corners.": ("Les quatre coins.", "الزوايا الأربع."),
     "Hold still": ("Ne bougez plus", "ثبّت الهاتف"),

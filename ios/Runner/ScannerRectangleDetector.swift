@@ -1317,6 +1317,20 @@ extension ScannerRectangleDetector {
     return model.expanded(by: 0.01)
   }
 
+  /// The open passport round the photo page the booklet-aware cascade found, for a still: the
+  /// document model's outline of the whole booklet when it is complete and passes
+  /// `ScannerPassportBooklet` (the photo page and the page facing it). Nil keeps the photo page.
+  static func openPassportBooklet(in image: CIImage, around page: ScannerQuadrilateral,
+                                  profile: FoorsaScannerProfile,
+                                  cache: ScannerVisionFrameCache = ScannerVisionFrameCache()) -> ScannerQuadrilateral? {
+    guard profile.layout == .passport,
+          let model = documentModelQuadrilateral(in: image, cache: cache, purpose: .still),
+          ScannerLiveFramingPolicy.classify(model, imageSize: image.extent.size,
+            profile: profile, isClear: true) == .ready,
+          ScannerPassportBooklet.accepts(booklet: model, page: page) else { return nil }
+    return model.expanded(by: 0.01)
+  }
+
   /// Light on the page itself, from a 160-pixel corrected rendering.
   static func pageLighting(in image: CIImage, quadrilateral: ScannerQuadrilateral) -> ScannerLiveLighting {
     let e = image.extent
