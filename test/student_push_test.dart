@@ -45,7 +45,9 @@ void main() {
     final adHoc = workflow.indexOf('bash scripts/sign_archive_entitlements.sh "\$entitled" "\$set"');
     expect(adHoc, greaterThan(0));
     expect(adHoc, lessThan(workflow.indexOf('export_ipa "\$unsigned"')));
-    expect(workflow, contains('[[ "\$(exported_push)" == production ]]'));
+    // The first export whose aps-environment is production is the build.
+    expect(workflow, contains('if [[ "\$(exported_push)" != production ]]; then'));
+    expect(workflow, contains('signed_from="\$2"'));
     // The development-signed fallback's settings live in an xcconfig: on
     // xcodebuild's command line a [sdk=iphoneos*] condition becomes part of
     // the value ("provisioning profile iphoneos*]= has been manually specified").
