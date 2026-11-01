@@ -61,8 +61,10 @@ ScanTextCopy scanLiveGuidance({
       return const ScanTextCopy('Move closer', 'Let the page fill more of the view.', 'Move closer.');
     case ScanFraming.wrongShape:
       return layout == GuidedScanLayout.passport
-          ? const ScanTextCopy('Show only the photo page',
-              'Keep the passport open on the page with your photo.', 'Photo page only.')
+          // The passport is scanned open at its photo page, both pages in one photo (the owner,
+          // 1 Nov 2026): the page facing it carries the passport number.
+          ? const ScanTextCopy('Open the passport flat',
+              'Show the photo page and the page facing it.', 'Both pages.')
           : const ScanTextCopy('Show all four corners', 'Fit the whole page in view.', 'All four corners.');
     case ScanFraming.blurry:
       return const ScanTextCopy('Hold still', 'Keep the phone steady.', 'Hold still.');

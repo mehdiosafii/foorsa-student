@@ -315,6 +315,16 @@ struct ScannerLiveFramingTests {
     let page00 = q([(0.214, 0.719), (0.793, 0.754), (0.867, 0.136), (0.275, 0.101)])
     precondition(refined(model00, [q([(0.132, 0.477), (0.304, 0.488), (0.317, 0.362), (0.147, 0.316)]), page00]) == page00)
 
-    print("PASS: live framing states, plausibility, guidance copy, outline smoothing, lighting probe, miss-tolerant hold, imagegen one-hold capture policy, outline refinement")
+    // An open passport keeps both pages: the photo page below the fold, the page facing it above.
+    let photoPage = q([(0.12, 0.62), (0.88, 0.62), (0.88, 0.35), (0.12, 0.35)])
+    let booklet = q([(0.12, 0.89), (0.88, 0.89), (0.88, 0.35), (0.12, 0.35)])
+    precondition(ScannerPassportBooklet.accepts(booklet: booklet, page: photoPage), "the open booklet is kept")
+    // The photo page alone, a booklet not round the page, or the page and the table are not.
+    precondition(!ScannerPassportBooklet.accepts(booklet: photoPage, page: photoPage))
+    precondition(!ScannerPassportBooklet.accepts(booklet: q([(0.12, 0.30), (0.88, 0.30), (0.88, 0.05), (0.12, 0.05)]), page: photoPage))
+    precondition(!ScannerPassportBooklet.accepts(booklet: q([(0.02, 0.98), (0.98, 0.98), (0.98, 0.02), (0.02, 0.02)]), page: photoPage))
+    precondition(ScannerLiveGuidance.copy(framing: .wrongShape, lighting: .good, layout: .passport).title == "Open the passport flat")
+
+    print("PASS: live framing states, plausibility, guidance copy, outline smoothing, lighting probe, miss-tolerant hold, imagegen one-hold capture policy, outline refinement, open passport booklet")
   }
 }

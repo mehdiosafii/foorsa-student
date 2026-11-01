@@ -26,7 +26,7 @@
   let startedHere = null;
 
   // The student stays signed in when the app closes (the owner, 1 Nov 2026: "once you log to the
-  // app, even if the app closes let's make sure you stay signed in"). Until 1.2.36 the session
+  // app, even if the app closes let's make sure you stay signed in"). Until 1.2.37 the session
   // lived in this tab only while quick sign-in was on, and every launch opened on the sign-in
   // screen. Its marker, and a tab copy a reload kept, go back to ordinary lasting storage; the
   // saved login behind Face ID or the fingerprint stays, for signing back in after a sign-out.
@@ -167,7 +167,7 @@
       flush();
     },
     matches(token) { return token === localStorage.getItem(tokenKey) && !blocked; },
-    // Builds before 1.2.36 moved the session into the tab here, so the next
+    // Builds before 1.2.37 moved the session into the tab here, so the next
     // launch opened on the sign-in screen. The session now stays where it is:
     // the saved login is for after a sign-out. True while the token is still
     // the page's session, which the shell checks before keeping the login.

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:foorsa_student/src/student_biometrics.dart';
@@ -19,12 +20,20 @@ String token({int owner = 42, String role = 'applicant', int? expiry}) =>
                       1000,
             }))).replaceAll('=', '')}.signature';
 
+/// flutter_secure_storage 10.3.4's words for a new biometric store's first opening.
+const newStoreRefusal = 'Key mismatch after algorithm change (Algorithm changed detected). '
+    'Enable migrateOnAlgorithmChange=true to preserve data, or resetOnError=true to delete.';
+
 class FakeVault extends FlutterSecureStorage {
   final values = <String, String>{};
   bool failWrite = false;
   bool failDelete = false;
   bool cancelRead = false;
   bool dropWrite = false;
+  int writes = 0;
+  /// How many writes the Android plugin refuses as a new store's first opening.
+  int refuseNewStore = 0;
+  PlatformException? writeError;
   Completer<void>? pauseWrite;
   Completer<void>? writeStarted;
   @override
@@ -37,7 +46,17 @@ class FakeVault extends FlutterSecureStorage {
       WebOptions? webOptions,
       AppleOptions? mOptions,
       WindowsOptions? wOptions}) async {
+    writes += 1;
     if (failWrite) throw StateError('storage unavailable');
+    if (refuseNewStore > 0) {
+      refuseNewStore -= 1;
+      throw PlatformException(code: 'Exception encountered', message: newStoreRefusal);
+    }
+    final error = writeError;
+    if (error != null) {
+      writeError = null;
+      throw error;
+    }
     if (value != null && !dropWrite) values[key] = value;
     writeStarted?.complete();
     await pauseWrite?.future;
@@ -146,6 +165,33 @@ void main() {
     vault.cancelRead = true;
     await expectLater(store.unlock(), throwsStateError);
     expect(store.enabled, true);
+  });
+
+  test('a new Android store\'s first refusal is passed, so the prompt comes up',
+      () async {
+    final session = StudentSession.parse(token())!;
+    final store = service();
+    vault.refuseNewStore = 1;
+    expect(await store.save(session), true);
+    expect(vault.writes, 2);
+    expect(store.enabled, true);
+    expect((await store.unlock())!.token, session.token);
+    expect(isNewAndroidStoreRefusal(PlatformException(code: 'x', message: newStoreRefusal)), true);
+  });
+
+  test('only that refusal is tried again, and only once', () async {
+    final store = service();
+    vault.writeError = PlatformException(
+        code: 'Exception encountered', message: 'Biometric authentication error [10]: Cancelled');
+    await expectLater(store.save(StudentSession.parse(token())!), throwsA(isA<PlatformException>()));
+    expect(vault.writes, 1);
+    expect(store.enabled, false);
+    vault.refuseNewStore = 2;
+    await expectLater(store.save(StudentSession.parse(token())!), throwsA(isA<PlatformException>()));
+    expect(vault.writes, 3);
+    expect(store.enabled, false);
+    expect(vault.values, isEmpty);
+    expect(isNewAndroidStoreRefusal(StateError(newStoreRefusal)), false);
   });
 
   test('failed secure write never advertises a saved login', () async {

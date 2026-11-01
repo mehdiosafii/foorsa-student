@@ -219,7 +219,12 @@ final class ScannerImageProcessor {
           allowUnanchored: allowFullFrame, cache: vision) : nil
       // Only a photo taken by hand without any outline keeps the whole frame.
       let wholeFrame = allowFullFrame ? ScannerQuadrilateral.fullFrame : nil
-      guard let quad = detected ?? model ?? projected ?? wholeFrame else {
+      // A passport photographed open keeps both pages: the photo page the cascade found and the
+      // page facing it, which carries the passport number (ScannerPassportBooklet).
+      let booklet = profile.layout == .passport ? detected.flatMap {
+        ScannerRectangleDetector.openPassportBooklet(in: upright, around: $0, profile: profile, cache: vision)
+      } : nil
+      guard let quad = booklet ?? detected ?? model ?? projected ?? wholeFrame else {
         return .failure(.documentBoundaryNotFound)
       }
       func vector(_ point: CGPoint) -> CIVector {

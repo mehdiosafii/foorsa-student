@@ -53,6 +53,12 @@ class StudentSession {
   }
 }
 
+/// The Android plugin's refusal of a new biometric store's first opening
+/// (StudentBiometrics._write). Its own words, from FlutterSecureStorage.java.
+bool isNewAndroidStoreRefusal(Object error) =>
+    error is PlatformException &&
+    (error.message ?? '').startsWith('Key mismatch after algorithm change');
+
 enum SessionValidity { valid, expired, unavailable }
 
 /// The durable copy is device-bound and biometric-gated by the OS, not just
@@ -255,7 +261,7 @@ class StudentBiometrics {
         'origin': origin,
       });
       try {
-        await _vault.write(key: _key, value: record, aOptions: _androidOptions);
+        await _write(record);
         // iOS insertion alone does not authenticate. Read back through the
         // biometric ACL before marking enabled; this also proves persistence.
         // Android authenticated the write and reuses that unlocked key here.
@@ -278,6 +284,27 @@ class StudentBiometrics {
       }
       return true;
     });
+  }
+
+  /// Writes the record, past the one refusal every new Android store meets.
+  ///
+  /// flutter_secure_storage (10.3.4, and 11.x alike) reads a store with no
+  /// cipher markers yet as data written under its old default ciphers, so it
+  /// takes the first opening of a new biometric store for an algorithm change.
+  /// With migration and reset off, as here (nothing is rewritten or wiped
+  /// behind the student's back), it refuses that opening before Android draws
+  /// its prompt, and save() opens a new store every time: no Android phone
+  /// ever saw the fingerprint or face prompt (1 Nov 2026: "it asks you for
+  /// biometrics but it doesn't link it with your face or fingerprint"). The
+  /// refusal has recorded the store's ciphers by then, so the second opening
+  /// goes straight to the prompt. Any other error is the caller's.
+  Future<void> _write(String record) async {
+    try {
+      await _vault.write(key: _key, value: record, aOptions: _androidOptions);
+    } on PlatformException catch (error) {
+      if (!isNewAndroidStoreRefusal(error)) rethrow;
+      await _vault.write(key: _key, value: record, aOptions: _androidOptions);
+    }
   }
 
   Future<StudentSession?> unlock() async {
