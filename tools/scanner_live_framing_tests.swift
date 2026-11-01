@@ -167,8 +167,8 @@ struct ScannerLiveFramingTests {
     // The outline averages jitter, follows a real move at once, and survives
     // two missed frames before disappearing.
     var smoother = ScannerOutlineSmoother()
-    let first = smoother.update(quad(0.2, 0.2, 0.8, 0.8))!
-    precondition(first == quad(0.2, 0.2, 0.8, 0.8))
+    let firstOutline = smoother.update(quad(0.2, 0.2, 0.8, 0.8))!
+    precondition(firstOutline == quad(0.2, 0.2, 0.8, 0.8))
     let jittered = smoother.update(quad(0.21, 0.2, 0.81, 0.8))!
     precondition(jittered.topLeft.x > 0.2 && jittered.topLeft.x < 0.21)
     let moved = smoother.update(quad(0.4, 0.3, 0.95, 0.9))!
