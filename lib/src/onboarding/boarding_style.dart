@@ -170,6 +170,23 @@ class _PressableState extends State<Pressable>
   }
 }
 
+/// A part of a scene rebuilt every frame it moves, kept from laying out and
+/// drawing everything around it again.
+///
+/// Anything built inside a LayoutBuilder is rebuilt within that builder's
+/// layout: one rebuilt under a scene's own LayoutBuilder laid the whole scene
+/// out again, and drew it again, every frame it moved. Under its own builder,
+/// in its own layer, it lays out and draws only itself.
+class OwnFrame extends StatelessWidget {
+  const OwnFrame({super.key, required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => RepaintBoundary(
+        child: LayoutBuilder(builder: (context, _) => child),
+      );
+}
+
 /// Seconds since the first frame, for scenes that draw from a clock.
 mixin SceneClock<T extends StatefulWidget> on State<T>, TickerProvider {
   final ValueNotifier<double> clock = ValueNotifier<double>(0);

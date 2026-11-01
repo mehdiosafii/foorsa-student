@@ -291,6 +291,13 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
         isIOS: widget.isIOS, asksToTrack: widget.asksToTrack);
     if (!mounted) return;
     setState(() => _plan = plan);
+    // The cards' icon, decoded while the plane flies rather than as the
+    // first card lands.
+    if (plan.steps.contains(BoardingStep.notifications)) {
+      unawaited(precacheImage(
+          notificationIcon(MediaQuery.devicePixelRatioOf(context)), context,
+          onError: (_, __) {}));
+    }
   }
 
   void _introTick() {
@@ -740,14 +747,18 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
                 ),
               ),
             ),
-            // The arrow while it flies, over everything.
+            // The arrow while it flies, over everything, in a layer of its
+            // own: it is redrawn every frame it flies, the picture under it
+            // only as it changes.
             Positioned.fill(
               child: IgnorePointer(
-                child: AnimatedBuilder(
-                  key: _overlayKey,
-                  animation: Listenable.merge([_flight, _exit]),
-                  builder: (context, _) => CustomPaint(
-                    painter: _PilotPainter(_pilot()),
+                child: RepaintBoundary(
+                  child: AnimatedBuilder(
+                    key: _overlayKey,
+                    animation: Listenable.merge([_flight, _exit]),
+                    builder: (context, _) => CustomPaint(
+                      painter: _PilotPainter(_pilot()),
+                    ),
                   ),
                 ),
               ),
@@ -981,12 +992,14 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     if (previous != null && !_still) {
       layers.add(Positioned.fill(
         key: const ValueKey('morph'),
-        child: CustomPaint(
-          painter: StageMorphPainter(
-            from: formOf(previous, stage),
-            to: formOf(_step, stage),
-            progress: _shift,
-            ghost: _ghost,
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: StageMorphPainter(
+              from: formOf(previous, stage),
+              to: formOf(_step, stage),
+              progress: _shift,
+              ghost: _ghost,
+            ),
           ),
         ),
       ));

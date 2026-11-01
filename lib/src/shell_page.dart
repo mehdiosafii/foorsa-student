@@ -47,6 +47,7 @@ import 'student_calls.dart';
 import 'student_biometrics.dart';
 import 'chat_viewport.dart';
 import 'crash_reports.dart';
+import 'web_view_composition.dart';
 import 'web_view_recovery.dart';
 
 class ShellPage extends StatefulWidget {
@@ -149,6 +150,7 @@ class _ShellPageState extends State<ShellPage> {
     setState(() {
       _biometricWasEnabled = _biometrics.enabled;
       _bootWebView = true;
+      _decideComposition();
     });
   }
 
@@ -463,6 +465,7 @@ class _ShellPageState extends State<ShellPage> {
       _controller = null;
       PortalHandover.instance.controller = null;
       _webViewGeneration++;
+      _decideComposition();
     });
   }
 
@@ -999,9 +1002,24 @@ class _ShellPageState extends State<ShellPage> {
 
   bool _onboardingShown = false;
 
+  /// The onboarding hides the shell from edge to edge (onboarding_gate.dart):
+  /// what is drawn under it nobody sees.
+  bool _covered = false;
+
+  /// How the web view now being made is put on the screen, decided as it is
+  /// made (web_view_composition.dart): on Android, in a texture while the
+  /// first-launch onboarding is over it, else in the window as before.
+  bool _webViewHybrid = true;
+
+  void _decideComposition() {
+    _webViewHybrid = webViewUsesHybridComposition(
+        android: Platform.isAndroid, underOnboarding: _onboardingShown);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _covered = OnboardingScope.coveringOf(context);
     final onboarding = OnboardingScope.activeOf(context);
     // The onboarding has just gone: the portal's colour takes the bar back.
     if (_onboardingShown && !onboarding && _chromeReported) _applyStatusBar();
@@ -1145,7 +1163,15 @@ class _ShellPageState extends State<ShellPage> {
               bottom: false,
               child: !_bootWebView
                   ? const SizedBox.expand()
-                  : InAppWebView(
+                  // Not drawn while the onboarding hides it, when it is in a
+                  // texture: it keeps loading and drawing into it, and the
+                  // onboarding's frames no longer carry it.
+                  : CoveredByOnboarding(
+                      covered: webViewHiddenUnderOnboarding(
+                          android: Platform.isAndroid,
+                          hybridComposition: _webViewHybrid,
+                          covered: _covered),
+                      child: InAppWebView(
                 // A new one after Android's render process is gone (_webViewDied).
                 key: ValueKey<int>(_webViewGeneration),
                 // The page takes every touch at once: held in Flutter's
@@ -1178,7 +1204,10 @@ class _ShellPageState extends State<ShellPage> {
                   // full rate (60/90/120Hz) instead of falling back to
                   // software rasterisation.
                   hardwareAcceleration: true,
-                  useHybridComposition: true,
+                  // Android: in the window, as always, except while the
+                  // first-launch onboarding is drawn over it
+                  // (web_view_composition.dart).
+                  useHybridComposition: _webViewHybrid,
                   // Rasterise slightly beyond the viewport so fast scrolling
                   // and large moving surfaces don't reveal unpainted tiles.
                   offscreenPreRaster: true,
@@ -1429,22 +1458,18 @@ class _ShellPageState extends State<ShellPage> {
                   return NavigationActionPolicy.CANCEL;
                 },
               ),
+                  ),
             ),
             if (!_loaderRemoved)
-              IgnorePointer(
-                ignoring: !_loader.showing,
-                child: AnimatedOpacity(
-                  opacity: _loader.showing ? 1 : 0,
-                  // The portal's own loader fades in the same 220 ms.
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  onEnd: () {
-                    if (!_loader.showing && mounted) {
-                      setState(() => _loaderRemoved = true);
-                    }
-                  },
-                  child: ShellLoadingScreen(dark: _isDark(context)),
-                ),
+              // Neither drawn nor animated while the first-launch onboarding
+              // hides it (shell_screens.dart).
+              ShellLoadingLayer(
+                showing: _loader.showing,
+                covered: _covered,
+                dark: _isDark(context),
+                onGone: () {
+                  if (mounted) setState(() => _loaderRemoved = true);
+                },
               ),
             if (_loadFailed)
               ShellOfflineScreen(onRetry: _retry, dark: _isDark(context)),
