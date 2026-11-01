@@ -23,6 +23,18 @@ void main() {
     }
   });
 
+  // The owner, 1 Nov 2026: "the loading screen shows logo stairs, it should
+  // logo airplane than stairs". For a day the loader was a 6.8 s story whose
+  // second form was stairs, so a load of a second or two showed the logo
+  // turning into stairs. It is the arrow turning into the plane again, on the
+  // portal's and the CRM's timing (foorsa-reward src/portal/flightLoaderModel.ts:
+  // LOOP_SECONDS 3.2, CALM_SECONDS 4.4), so the hand-over to the web shows one
+  // sign. Change these with that file.
+  test('plays the portal\'s loop: the arrow becomes the plane, 3.2 s a loop', () {
+    expect(flightLoaderSeconds, 3.2);
+    expect(flightLoaderCalmSeconds, 4.4);
+  });
+
   testWidgets('is named for a screen reader', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: Center(child: FlightLoader())));
     expect(find.bySemanticsLabel('Loading'), findsOneWidget);
