@@ -252,6 +252,27 @@ void main() {
   });
 
   test(
+      'a session kept from an earlier launch keeps the saved login; another account or a new sign-in replaces it',
+      () async {
+    final saved = StudentSession.parse(token())!;
+    final store = service();
+    expect(store.replacedBy(saved, fresh: true), false, reason: 'nothing saved yet');
+    await store.save(saved);
+    expect(store.replacedBy(saved, fresh: true), false);
+    // The next launch: the app does not know the saved token until Face ID reads it.
+    final relaunch = service();
+    await relaunch.initialize();
+    final kept = StudentSession.parse(token(
+        expiry: DateTime.now().add(const Duration(days: 30)).millisecondsSinceEpoch ~/ 1000))!;
+    expect(relaunch.replacedBy(saved, fresh: false), false);
+    expect(relaunch.replacedBy(kept, fresh: false), false, reason: 'a renewal of the same sign-in');
+    expect(relaunch.replacedBy(kept, fresh: true), true, reason: 'the password typed again');
+    final stranger = StudentSession.parse(token(owner: 7))!;
+    expect(relaunch.replacedBy(stranger, fresh: false), true);
+    expect(relaunch.replacedBy(stranger, fresh: true), true);
+  });
+
+  test(
       'missing installation metadata cannot restore a surviving iOS Keychain item',
       () async {
     final store = service();

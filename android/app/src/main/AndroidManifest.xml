@@ -54,6 +54,11 @@
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- The adhan lands on its minute (student_adhan.dart). Denied by default from Android 14:
+         the student allows "Alarms and reminders" from Prayer times, and until then the calls
+         are scheduled inexact. Not USE_EXACT_ALARM, which Google Play keeps for alarm clocks
+         and calendars. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"

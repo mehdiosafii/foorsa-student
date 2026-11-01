@@ -40,6 +40,13 @@ Map<String, Object> shellCapabilities({required bool isIOS, String? appVersion, 
       // before answer nothing: an iPhone was granted the camera and the
       // microphone only one at a time, and never the tilt.
       'pagePermissions': 2,
+      // The adhan at prayer times, with the app closed (student_adhan.dart): FoorsaBridge
+      // adhanStatus, adhanEnable, adhanSync, adhanClear and adhanExactAlarms, from 1.2.34 (65).
+      'adhan': 1,
+      // The session stays signed in across launches, quick sign-in or not, and a renewed session
+      // (the portal's /me, a day on) is kept without being taken for a new sign-in, from 1.2.34
+      // (65). Builds before cleared the session at each launch while quick sign-in was on.
+      'session': 2,
       // Which build a student runs, for Admin Portal › Student App (the board
       // read it from here, and no build said it until this one).
       if (appVersion != null && RegExp(r'^[0-9A-Za-z.+_-]{1,40}$').hasMatch(appVersion)) 'appVersion': appVersion,

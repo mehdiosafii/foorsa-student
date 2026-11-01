@@ -125,6 +125,17 @@ class StudentBiometrics {
   bool get enabled => owner != null;
   bool hasSavedSession(StudentSession session) =>
       owner == session.owner && _savedToken == session.token;
+
+  /// Whether the saved sign-in must go before [session] is offered: always for
+  /// another account; for the same student only after a new sign-in on the
+  /// page ([fresh]: the password typed although Face ID was saved), which is
+  /// then offered in its place. A session the app kept from an earlier launch,
+  /// or the portal's renewal of one, is the saved sign-in's own. The app knows
+  /// the saved token only once Face ID has read it, so judged by the token
+  /// alone it read as a stranger's at every launch and was deleted.
+  bool replacedBy(StudentSession session, {required bool fresh}) =>
+      enabled &&
+      (owner != session.owner || (fresh && _savedToken != session.token));
   String get _key => 'session:$origin';
   Future<void> _mutations = Future.value();
   int _revision = 0;
