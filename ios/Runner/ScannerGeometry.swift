@@ -1282,3 +1282,163 @@ enum ScannerOutlineRefinement {
       bottomRight: corner(2), bottomLeft: corner(3))
   }
 }
+
+// MARK: - The scanner's words in the student's language
+
+/// What the scanner says, in the student's language (the owner, 1 Nov 2026: the student picks
+/// English, French or Arabic on the app's first screen). The guidance tables above and in
+/// ScannerTextReading.swift stay in English: test/scan_coach_test.dart holds them word for word
+/// to Android's, and the coach compares lines by those words. A line is said in French or Arabic
+/// only as it is shown (`ScannerWords.say`), never where the scanner compares lines. The app
+/// sends the language with each scan (DocumentScanner.swift). test/scanner_words_test.dart holds
+/// this table to Android's (scan_copy_language.dart) and to every line the scanner can show.
+enum ScannerWords {
+  /// "en", "fr" or "ar", set by DocumentScanner for each scan; anything else reads as English.
+  static private(set) var language = "en"
+
+  static func use(_ code: Any?) {
+    let code = (code as? String)?.lowercased() ?? "en"
+    language = code == "fr" || code == "ar" ? code : "en"
+  }
+
+  /// One of the scanner's English lines, in the student's language; English when this table does
+  /// not know it (a title the portal already sent in the student's language passes as it is).
+  static func say(_ english: String) -> String {
+    guard language != "en", let words = lines[english] else { return english }
+    return language == "fr" ? words.fr : words.ar
+  }
+
+  private static let lines: [String: (fr: String, ar: String)] = [
+    // The guidance tables, as Android says them (scan_copy_language.dart).
+    "Show the photo page": ("Montrez la page de la photo", "أظهر صفحة الصورة"),
+    "Show the photo page with the two lines at the bottom.": ("Montrez la page de la photo, avec les deux lignes du bas.", "أظهر صفحة الصورة مع السطرين في الأسفل."),
+    "Two bottom lines.": ("Deux lignes du bas.", "السطران في الأسفل."),
+    "Front side": ("Le recto", "الوجه الأمامي"),
+    "Show the side with the photo.": ("Montrez le côté avec la photo.", "أظهر الوجه الذي يحمل الصورة."),
+    "The photo side.": ("Le côté photo.", "وجه الصورة."),
+    "Now the back": ("Maintenant le verso", "والآن الوجه الخلفي"),
+    "Turn the card over.": ("Retournez la carte.", "اقلب البطاقة."),
+    "Turn it over.": ("Retournez-la.", "اقلبها."),
+    "Find the card": ("Cadrez la carte", "ضع البطاقة في الإطار"),
+    "Fit the whole card in view.": ("Faites entrer toute la carte dans le cadre.", "اجعل البطاقة كاملة داخل الإطار."),
+    "Whole card in view.": ("Toute la carte.", "البطاقة كاملة."),
+    "Find the page": ("Cadrez la page", "ضع الصفحة في الإطار"),
+    "Fit the whole page in view.": ("Faites entrer toute la page dans le cadre.", "اجعل الصفحة كاملة داخل الإطار."),
+    "Whole page in view.": ("Toute la page.", "الصفحة كاملة."),
+    "Move back a little": ("Reculez un peu", "ابتعد قليلًا"),
+    "Keep all four corners in view.": ("Gardez les quatre coins dans le cadre.", "أبقِ الزوايا الأربع داخل الإطار."),
+    "Show all corners.": ("Tous les coins.", "كل الزوايا."),
+    "Move closer": ("Rapprochez-vous", "اقترب أكثر"),
+    "Let the page fill more of the view.": ("La page doit remplir davantage le cadre.", "اجعل الصفحة تملأ مساحة أكبر من الإطار."),
+    "Move closer.": ("Rapprochez-vous.", "اقترب أكثر."),
+    "Show only the photo page": ("Montrez seulement la page de la photo", "أظهر صفحة الصورة فقط"),
+    "Keep the passport open on the page with your photo.": ("Gardez le passeport ouvert à la page de votre photo.", "أبقِ جواز السفر مفتوحًا على الصفحة التي تحمل صورتك."),
+    "Photo page only.": ("Page photo seule.", "صفحة الصورة فقط."),
+    "Show all four corners": ("Montrez les quatre coins", "أظهر الزوايا الأربع"),
+    "All four corners.": ("Les quatre coins.", "الزوايا الأربع."),
+    "Hold still": ("Ne bougez plus", "ثبّت الهاتف"),
+    "Keep the phone steady.": ("Gardez le téléphone immobile.", "أبقِ الهاتف ثابتًا."),
+    "Hold still.": ("Ne bougez plus.", "ثبّت الهاتف."),
+    "Hold the phone flat": ("Tenez le téléphone à plat", "أمسك الهاتف بشكل مستوٍ"),
+    "Keep it level above the page.": ("Gardez-le bien parallèle au-dessus de la page.", "أبقِه موازيًا فوق الصفحة."),
+    "Hold it flat.": ("À plat.", "بشكل مستوٍ."),
+    "Too dark": ("Trop sombre", "الإضاءة ضعيفة جدًا"),
+    "Move to a brighter place.": ("Allez dans un endroit plus lumineux.", "انتقل إلى مكان أكثر إضاءة."),
+    "More light.": ("Plus de lumière.", "إضاءة أكثر."),
+    "Glare on the page": ("Reflet sur la page", "انعكاس على الصفحة"),
+    "Tilt the phone slightly.": ("Inclinez légèrement le téléphone.", "أمِل الهاتف قليلًا."),
+    "Tilt slightly.": ("Inclinez légèrement.", "أمِله قليلًا."),
+    "Shadow on the page": ("Ombre sur la page", "ظل على الصفحة"),
+    "Move your hand or the phone.": ("Déplacez votre main ou le téléphone.", "حرّك يدك أو الهاتف."),
+    "Avoid the shadow.": ("Évitez l’ombre.", "تجنّب الظل."),
+    "Taking the photo.": ("Prise de la photo.", "جارٍ التقاط الصورة."),
+    "Got it": ("C’est bon", "تم"),
+    "Preparing your page.": ("Préparation de votre page.", "جارٍ تجهيز صفحتك."),
+    "Got it.": ("C’est bon.", "تم."),
+    "Reading the two lines at the bottom…": ("Lecture des deux lignes du bas…", "جارٍ قراءة السطرين في الأسفل…"),
+    "Reading the card…": ("Lecture de la carte…", "جارٍ قراءة البطاقة…"),
+    "Reading the page…": ("Lecture de la page…", "جارٍ قراءة الصفحة…"),
+    "Show the back of the card": ("Montrez le verso de la carte", "أظهر ظهر البطاقة"),
+    "Show the back with the three lines at the bottom.": ("Montrez le verso, avec les trois lignes du bas.", "أظهر ظهر البطاقة مع الأسطر الثلاثة في الأسفل."),
+    "Three bottom lines.": ("Trois lignes du bas.", "الأسطر الثلاثة في الأسفل."),
+    "Move closer — the lines on the card are too small.": ("Rapprochez-vous, les lignes de la carte sont trop petites.", "اقترب أكثر، فأسطر البطاقة صغيرة جدًا."),
+    "Move closer — the bottom lines are too small.": ("Rapprochez-vous, les lignes du bas sont trop petites.", "اقترب أكثر، فالأسطر في الأسفل صغيرة جدًا."),
+    "Glare on the bottom lines": ("Reflet sur les lignes du bas", "انعكاس على الأسطر في الأسفل"),
+    "Show the three bottom lines": ("Montrez les trois lignes du bas", "أظهر الأسطر الثلاثة في الأسفل"),
+    "Keep the three lines on the back of the card fully in view.": ("Gardez entièrement visibles les trois lignes au verso de la carte.", "اجعل الأسطر الثلاثة على ظهر البطاقة ظاهرة كاملة."),
+    "All three lines.": ("Les trois lignes.", "الأسطر الثلاثة كاملة."),
+    "Show both bottom lines": ("Montrez les deux lignes du bas", "أظهر السطرين في الأسفل"),
+    "Keep the two lines at the bottom of the photo page fully in view.": ("Gardez entièrement visibles les deux lignes en bas de la page de la photo.", "اجعل السطرين أسفل صفحة الصورة ظاهرين كاملين."),
+    "Both bottom lines.": ("Les deux lignes.", "السطران كاملان."),
+    "Show your passport’s photo page.": ("Montrez la page de votre passeport avec la photo.", "أظهر صفحة الصورة في جواز سفرك."),
+    "Show the ID card.": ("Montrez la carte d’identité.", "أظهر بطاقة التعريف."),
+    "Show the paper this step asks for.": ("Montrez le document demandé à cette étape.", "أظهر الوثيقة المطلوبة في هذه الخطوة."),
+    "This looks like a different paper": ("Ce document semble différent", "يبدو أنها وثيقة أخرى"),
+    "Different paper.": ("Autre document.", "وثيقة أخرى."),
+    "Turn the card over": ("Retournez la carte", "اقلب البطاقة"),
+    "Show the front of the card, with the photo.": ("Montrez le recto de la carte, avec la photo.", "أظهر وجه البطاقة الذي فيه الصورة."),
+    "Show the front.": ("Montrez le recto.", "أظهر الوجه."),
+    "Show the back of the card, with the lines at the bottom.": ("Montrez le verso de la carte, avec les lignes du bas.", "أظهر ظهر البطاقة مع الأسطر في الأسفل."),
+    "Show the back.": ("Montrez le verso.", "أظهر الظهر."),
+    "Show the card": ("Montrez la carte", "أظهر البطاقة"),
+    "Keep the card’s printed details in view.": ("Gardez visibles les informations imprimées de la carte.", "اجعل البيانات المطبوعة على البطاقة ظاهرة."),
+    "Card details.": ("Infos de la carte.", "بيانات البطاقة."),
+    "Glare on the card": ("Reflet sur la carte", "انعكاس على البطاقة"),
+    "Move closer so the text is readable.": ("Rapprochez-vous pour que le texte soit lisible.", "اقترب أكثر ليصبح النص مقروءًا."),
+    "Show the printed side": ("Montrez la face imprimée", "أظهر الوجه المطبوع"),
+    "Show the side of the page with the text.": ("Montrez le côté de la page où se trouve le texte.", "أظهر وجه الصفحة الذي فيه النص."),
+    "Printed side.": ("Face imprimée.", "الوجه المطبوع."),
+    "Some text runs past the edge of the view.": ("Une partie du texte dépasse du cadre.", "جزء من النص يتجاوز حافة الإطار."),
+    // The iPhone scanner's own lines.
+    "Scan document": ("Scanner le document", "مسح الوثيقة ضوئيًا"),
+    "Keep every corner and all printed details visible.": ("Gardez tous les coins et tous les détails imprimés visibles.", "أبقِ كل الزوايا وكل التفاصيل المطبوعة ظاهرة."),
+    "Could not get a sharp, complete page. Keep every corner visible, hold still, and try again.": ("Impossible d’obtenir une page nette et complète. Gardez tous les coins visibles, ne bougez plus et réessayez.", "تعذّر الحصول على صفحة واضحة وكاملة. أبقِ كل الزوايا ظاهرة، وثبّت الهاتف، وأعد المحاولة."),
+    "Reframe the page": ("Recadrez la page", "أعد تأطير الصفحة"),
+    "Reframe the page, keep all four corners visible, and hold still.": ("Recadrez la page, gardez les quatre coins visibles et ne bougez plus.", "أعد تأطير الصفحة، وأبقِ الزوايا الأربع ظاهرة، وثبّت الهاتف."),
+    "Cancel": ("Annuler", "إلغاء"),
+    "Closes the scanner without capturing the document": ("Ferme le scanner sans prendre le document", "يغلق الماسح دون التقاط الوثيقة"),
+    "Turn torch on": ("Allumer la lampe", "تشغيل الضوء"),
+    "Turn torch off": ("Éteindre la lampe", "إطفاء الضوء"),
+    "On": ("Allumée", "مشغّل"),
+    "Off": ("Éteinte", "مطفأ"),
+    "Take the photo": ("Prendre la photo", "التقاط الصورة"),
+    "Takes the photo now if automatic capture has not started": ("Prend la photo maintenant si la prise automatique n’a pas commencé", "يلتقط الصورة الآن إن لم يبدأ الالتقاط التلقائي"),
+    "Resume scanning": ("Reprendre le scan", "استئناف المسح"),
+    "The back camera is unavailable.": ("L’appareil photo arrière est indisponible.", "الكاميرا الخلفية غير متاحة."),
+    "The camera could not start document capture.": ("L’appareil photo n’a pas pu commencer la capture du document.", "تعذّر على الكاميرا بدء التقاط الوثيقة."),
+    "Camera paused": ("Appareil photo en pause", "الكاميرا متوقفة مؤقتًا"),
+    "Resume when you’re ready.": ("Reprenez quand vous le souhaitez.", "تابع متى شئت."),
+    "Camera unavailable": ("Appareil photo indisponible", "الكاميرا غير متاحة"),
+    "Tap Resume scanning.": ("Touchez Reprendre le scan.", "اضغط على استئناف المسح."),
+    "Try again": ("Réessayez", "أعد المحاولة"),
+    "Try again.": ("Réessayez.", "أعد المحاولة."),
+    "The camera took too long. Keep the page in view and hold still.": ("L’appareil photo a mis trop de temps. Gardez la page dans le cadre et ne bougez plus.", "استغرقت الكاميرا وقتًا طويلًا. أبقِ الصفحة داخل الإطار وثبّت الهاتف."),
+    "The page edges weren’t clear. Fit the whole page in view and hold still.": ("Les bords de la page n’étaient pas nets. Faites entrer toute la page dans le cadre et ne bougez plus.", "لم تكن حواف الصفحة واضحة. اجعل الصفحة كاملة داخل الإطار وثبّت الهاتف."),
+    "The photos weren’t sharp. Hold the phone steady with the whole page in view.": ("Les photos n’étaient pas nettes. Tenez le téléphone immobile, toute la page dans le cadre.", "لم تكن الصور واضحة. أبقِ الهاتف ثابتًا والصفحة كاملة داخل الإطار."),
+    "Hold still a moment longer for one more clear photo.": ("Ne bougez plus encore un instant pour une dernière photo nette.", "ثبّت الهاتف لحظة أخرى لالتقاط صورة واضحة أخرى."),
+    "Tilt the phone slightly": ("Inclinez légèrement le téléphone", "أمِل الهاتف قليلًا"),
+    "Move the reflection off the page, then hold still.": ("Éloignez le reflet de la page, puis ne bougez plus.", "أبعِد الانعكاس عن الصفحة، ثم ثبّت الهاتف."),
+    "Move the shadow off the page, then hold still.": ("Éloignez l’ombre de la page, puis ne bougez plus.", "أبعِد الظل عن الصفحة، ثم ثبّت الهاتف."),
+    "Tilt the phone slightly, then hold still.": ("Inclinez légèrement le téléphone, puis ne bougez plus.", "أمِل الهاتف قليلًا، ثم ثبّته."),
+    "The camera is still focusing. Keep this position.": ("L’appareil photo fait encore la mise au point. Gardez cette position.", "ما زالت الكاميرا تضبط التركيز. حافظ على هذه الوضعية."),
+    "Keep the whole page in view and hold the phone steady.": ("Gardez toute la page dans le cadre et tenez le téléphone immobile.", "أبقِ الصفحة كاملة داخل الإطار وثبّت الهاتف."),
+    "The torch is unavailable right now.": ("La lampe est indisponible pour le moment.", "الضوء غير متاح حاليًا."),
+    "Keep the phone in this orientation and reframe the document.": ("Gardez le téléphone dans cette orientation et recadrez le document.", "أبقِ الهاتف في هذا الاتجاه وأعد تأطير الوثيقة."),
+    "Point at the page": ("Visez la page", "وجّه الكاميرا نحو الصفحة"),
+    "Tilt slightly": ("Inclinez légèrement", "أمِله قليلًا"),
+    "Checking the detail": ("Vérification des détails", "جارٍ التحقق من التفاصيل"),
+    "Fit the whole page": ("Cadrez toute la page", "اجعل الصفحة كاملة في الإطار"),
+    "Fit page": ("Cadrez la page", "ضع الصفحة في الإطار"),
+    "Keep corners clear.": ("Dégagez les coins.", "أبقِ الزوايا ظاهرة."),
+    "Keep corners visible.": ("Gardez les coins visibles.", "أبقِ الزوايا مرئية."),
+    "Keep the page flat and in view.": ("Gardez la page à plat et dans le cadre.", "أبقِ الصفحة مستوية وداخل الإطار."),
+    "Capturing automatically.": ("Prise automatique.", "التقاط تلقائي."),
+    "Please wait.": ("Veuillez patienter.", "يرجى الانتظار."),
+    "Torch unavailable.": ("Lampe indisponible.", "الضوء غير متاح."),
+    "Useful photos are captured automatically. You can cancel at any time.": ("Les photos utiles sont prises automatiquement. Vous pouvez annuler à tout moment.", "تُلتقط الصور المفيدة تلقائيًا. يمكنك الإلغاء في أي وقت."),
+    "A scan is already open. Finish or cancel it first.": ("Un scan est déjà ouvert. Terminez-le ou annulez-le d’abord.", "هناك مسح ضوئي مفتوح بالفعل. يرجى إنهاؤه أو إلغاؤه أولًا."),
+    "Allow camera access for Foorsa Student in Settings, then try again.": ("Autorisez l’accès à l’appareil photo pour Foorsa Student dans les Réglages, puis réessayez.", "اسمح لتطبيق Foorsa Student بالوصول إلى الكاميرا من الإعدادات، ثم أعد المحاولة."),
+    "The camera permission could not be checked. Please try again.": ("L’autorisation de l’appareil photo n’a pas pu être vérifiée. Veuillez réessayer.", "تعذّر التحقق من إذن الكاميرا. يرجى إعادة المحاولة."),
+    "The camera could not open. Return to your document and try again.": ("L’appareil photo n’a pas pu s’ouvrir. Revenez à votre document et réessayez.", "تعذّر فتح الكاميرا. عُد إلى وثيقتك وأعد المحاولة."),
+  ]
+}
