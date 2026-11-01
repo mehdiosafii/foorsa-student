@@ -94,6 +94,28 @@ class MainActivity : FlutterFragmentActivity() {
                     result.error("save_failed", e.message, null)
                 }
             }
+        // What the crash board needs to tell phones apart (crash_reports.dart):
+        // the Android release and the WebView the page runs in. Never names
+        // the student or the phone.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "foorsa/system")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "describe") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val webView = try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        android.webkit.WebView.getCurrentWebViewPackage()?.versionName
+                    } else null
+                } catch (_: Throwable) {
+                    null
+                }
+                result.success(mapOf(
+                    "release" to Build.VERSION.RELEASE,
+                    "sdk" to Build.VERSION.SDK_INT,
+                    "webView" to webView,
+                ))
+            }
         // The guided scanner's live reading (live_text_reader.dart): ML Kit's
         // bundled Latin model, on the phone, offline.
         val liveText = LiveTextReader()

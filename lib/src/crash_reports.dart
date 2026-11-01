@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'config.dart';
@@ -19,16 +20,54 @@ class CrashReports {
   CrashReports({http.Client? client, String? baseUrl, String? os})
       : _client = client,
         _baseUrl = baseUrl ?? AppConfig.baseUrl,
-        _os = os ?? systemVersion();
+        os = os ?? systemVersion();
 
   static final CrashReports instance = CrashReports();
 
   final http.Client? _client;
   final String _baseUrl;
-  final String? _os;
+
+  /// "iOS 18.7" or "Android 16"; Android's comes from the phone once the app
+  /// asks it ([describeAndroid]), since Dart only knows the kernel there.
+  String? os;
 
   /// "1.2.30+61", set once the package info is read.
   String? build;
+
+  /// "WebView 142.0.7444.171": which Android System WebView the page runs in,
+  /// sent where a report names no place of its own. The 1 Nov 2026 reports
+  /// of a web view that could not be created (a settings call the installed
+  /// WebView refused) said neither the system nor the WebView.
+  String? webView;
+
+  static const _system = MethodChannel('foorsa/system');
+
+  /// Asks the phone for its Android release and WebView version; quiet on
+  /// iOS, on a build without the channel, and when the phone cannot say.
+  Future<void> describeAndroid() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final reply = await _system.invokeMapMethod<String, Object?>('describe')
+          .timeout(const Duration(seconds: 3));
+      final described = androidDescription(reply);
+      os = described.os ?? os;
+      webView = described.webView ?? webView;
+    } catch (_) {
+      // The reports still go, without the system.
+    }
+  }
+
+  /// The Android release and WebView version as the server accepts them.
+  @visibleForTesting
+  static ({String? os, String? webView}) androidDescription(Map<String, Object?>? reply) {
+    final release = reply?['release'];
+    final version = reply?['webView'];
+    final os = release is String && RegExp(r'^[0-9][0-9.]{0,10}$').hasMatch(release.trim())
+        ? 'Android ${release.trim()}' : null;
+    final webView = version is String && RegExp(r'^[0-9][0-9.]{0,30}$').hasMatch(version.trim())
+        ? 'WebView ${version.trim()}' : null;
+    return (os: os, webView: webView);
+  }
 
   /// The same report is sent at most once in this long: a web view that keeps
   /// dying must not spend the endpoint's per-device budget on one line.
@@ -44,7 +83,7 @@ class CrashReports {
     final last = _sent[key];
     if (last != null && at.difference(last) < repeatAfter) return false;
     _sent[key] = at;
-    final body = reportBody(text, screen: screen, where: where, build: build, os: _os);
+    final body = reportBody(text, screen: screen, where: where ?? webView, build: build, os: os);
     final client = _client ?? http.Client();
     try {
       final response = await client

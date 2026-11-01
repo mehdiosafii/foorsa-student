@@ -1,1 +1,1 @@
-Écran de chargement : la flèche Foorsa se transforme à nouveau en avion, comme sur le site. Corrections.
+Écran de chargement : la flèche Foorsa se transforme à nouveau en avion, comme sur le site. L'application ne reste plus bloquée sur l'écran de chargement sur certains téléphones Android. Scanner : photos plus nettes, prises en mode qualité de l'appareil photo, l'application garde la plus nette de plusieurs prises. Corrections.

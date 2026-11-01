@@ -104,9 +104,13 @@ Offset guidedScanFocusPoint(Rect? page, {required int sensorWidth, required int 
 }
 
 class GuidedScanPage extends StatefulWidget {
-  const GuidedScanPage({super.key, required this.profile});
+  const GuidedScanPage({super.key, required this.profile, @visibleForTesting this.android});
 
   final GuidedDocumentProfile profile;
+
+  /// Whether this is the Android camera: the phone's own platform, unless a
+  /// test runs the Android screen on another (guided_scan_page_test.dart).
+  final bool? android;
 
   @override
   State<GuidedScanPage> createState() => _GuidedScanPageState();
@@ -119,8 +123,9 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   Future<void>? _pendingStart;
   // Only the Android app carries a text model; an iPhone that falls back to
   // this camera captures on steadiness alone, as before.
+  bool get _android => widget.android ?? Platform.isAndroid;
   late final GuidedFrameLoop _loop =
-      GuidedFrameLoop(widget.profile, canReadText: Platform.isAndroid);
+      GuidedFrameLoop(widget.profile, canReadText: _android);
   final _textChannel = LiveTextChannel();
   final _photos = ScanPhotoChannel();
   // One instruction at a time, held long enough to be read.
@@ -131,6 +136,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   bool _workerStarting = false;
 
   int _cameraGeneration = 0;
+  bool _disposed = false;
+  static const _previewLeaveWait = Duration(milliseconds: 150);
   int _sensorOrientation = 90;
   bool _initializing = false;
   bool _appActive = true;
@@ -180,7 +187,22 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     }));
   }
 
-  Future<void> _disposeCamera(CameraController camera) async {
+  /// Disposes [camera] once its preview has left the screen. The preview
+  /// rebuilds whenever the controller's value changes (a photo taken), and a
+  /// frame drawn after the controller is disposed asks it for its preview and
+  /// throws ("buildPreview() was called on a disposed CameraController": the
+  /// guided_scan_page_test.dart run showed it right after the photo). So the
+  /// page is drawn once without it first, for at most [_previewLeaveWait]; in
+  /// the background no frame is drawn, and none waits.
+  Future<void> _disposeCamera(CameraController camera, {bool redraw = true}) async {
+    if (redraw && mounted && !_disposed) {
+      setState(() {});
+      try {
+        await WidgetsBinding.instance.endOfFrame.timeout(_previewLeaveWait);
+      } catch (_) {
+        // No frame came (the app is in the background): nothing is drawn.
+      }
+    }
     try {
       await camera.dispose().timeout(const Duration(seconds: 3));
     } catch (_) {
@@ -257,13 +279,13 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       // The still photo is taken at the resolution the camera opens at, so
       // the sensor's full 4:3 frame first. CameraX bounds the preview and
       // the image stream to the screen's size or below meanwhile.
-      for (final preset in Platform.isIOS ? guidedScanIosResolutions : guidedScanResolutions) {
+      for (final preset in _android ? guidedScanResolutions : guidedScanIosResolutions) {
         opened = CameraController(
           description, preset,
           enableAudio: false,
-          imageFormatGroup: Platform.isIOS
-              ? ImageFormatGroup.bgra8888
-              : ImageFormatGroup.yuv420,
+          imageFormatGroup: _android
+              ? ImageFormatGroup.yuv420
+              : ImageFormatGroup.bgra8888,
         );
         try {
           await opened.initialize();
@@ -386,7 +408,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   }
 
   Future<void> _workOn(ScanLumaPlane plane, DateTime at, int generation) async {
-    final readDue = Platform.isAndroid && _loop.textReadDue(at);
+    final readDue = _android && _loop.textReadDue(at);
     final job = ScanFrameJob(
       plane: plane,
       profile: widget.profile,
@@ -483,13 +505,25 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       await _focusOnPage(camera);
       if (!mounted || _closing || _camera != camera) return;
       capture = camera.takePicture();
-      final photo = await capture.timeout(
+      var photo = await capture.timeout(
         const Duration(seconds: 15),
       );
       capturedPhoto = photo;
       if (!mounted || _closing) {
+        if (identical(_camera, camera)) _camera = null;
         await _disposeCamera(camera);
         return;
+      }
+      // Android: a second still while the page is still held, a third when
+      // neither is sharp, and the sharpest is the one sent (scan_photo.dart).
+      if (_android) {
+        photo = await _sharpestStill(camera, photo);
+        capturedPhoto = photo;
+        if (!mounted || _closing) {
+          if (identical(_camera, camera)) _camera = null;
+          await _disposeCamera(camera);
+          return;
+        }
       }
       // One light touch as the shot is in (never during the exposure, where
       // the motor would shake the picture), and a calm word.
@@ -498,7 +532,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       _closing = true;
       _camera = null;
       _cameraGeneration++;
-      final liveReading = Platform.isAndroid
+      final liveReading = _android
           ? _loop.liveReading(automatic: automatic, referenceYear: DateTime.now().year)
           : null;
       await _disposeCamera(camera);
@@ -506,7 +540,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       // Made upright and bounded on the phone; the camera's own file when
       // that cannot be done.
       setState(() => _preparing = true);
-      final ready = Platform.isAndroid ? await _photos.prepare(photo.path) : null;
+      final ready = _android ? await _photos.prepare(photo.path) : null;
       if (!mounted) return;
       Navigator.of(context).pop(GuidedScanResult.captured(photo,
           liveReading: liveReading, bytes: ready?.bytes));
@@ -544,6 +578,37 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         }
       }
     }
+  }
+
+  /// The sharpest of up to [scanStillsAtMost] stills of the page, the first
+  /// among them [first]: a hand that moved as the shutter went, the press of
+  /// the shutter itself, or focus that settled a moment late each blur one
+  /// still, rarely two in a row. The others are deleted. A phone that cannot
+  /// measure a still, or whose camera fails on the next, keeps what it has.
+  Future<XFile> _sharpestStill(CameraController camera, XFile first) async {
+    final stills = <XFile>[first];
+    final scores = <double?>[await _photos.sharpness(first.path)];
+    while (wantsAnotherStill(scores) && mounted && !_closing && _camera == camera &&
+        camera.value.isInitialized) {
+      XFile next;
+      try {
+        next = await camera.takePicture().timeout(const Duration(seconds: 8));
+      } catch (_) {
+        break;
+      }
+      stills.add(next);
+      scores.add(await _photos.sharpness(next.path));
+    }
+    final keep = bestStill(scores).clamp(0, stills.length - 1);
+    for (var i = 0; i < stills.length; i++) {
+      if (i == keep) continue;
+      try {
+        await File(stills[i].path).delete();
+      } catch (_) {
+        // The camera's cache directory is cleared with the app's.
+      }
+    }
+    return stills[keep];
   }
 
   Future<void> _useOtherCamera() async {
@@ -609,13 +674,14 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
   @override
   void dispose() {
+    _disposed = true;
     _closing = true;
     _cameraGeneration++;
     _nextFrame?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     final camera = _camera;
     _camera = null;
-    if (camera != null) unawaited(_disposeCamera(camera));
+    if (camera != null) unawaited(_disposeCamera(camera, redraw: false));
     _worker?.close();
     unawaited(_textChannel.close());
     super.dispose();

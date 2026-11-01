@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -16,8 +17,10 @@ import 'src/shell_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // The app's own failures reach the crash board (crash_reports.dart).
+  // The app's own failures reach the crash board (crash_reports.dart), with
+  // the Android release and WebView version once the phone has said them.
   reportUncaughtErrors();
+  unawaited(CrashReports.instance.describeAndroid());
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,

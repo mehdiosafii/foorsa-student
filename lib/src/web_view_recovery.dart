@@ -65,3 +65,9 @@ bool isLoadFailure({required int? code, required String description, required bo
   if (isIOS) return code != -999 && code != 102 && code != 204;
   return !description.contains('ERR_ABORTED');
 }
+
+/// How long a web view put on the screen has to say it was created before the
+/// offline screen and its retry take over (shell_page.dart). Creating one
+/// takes well under a second; on 1 Nov 2026 some phones' WebView refused a
+/// settings call while it was being made, and the student sat on the loader.
+const webViewStartLimit = Duration(seconds: 15);
