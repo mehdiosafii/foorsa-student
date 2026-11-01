@@ -1,5 +1,131 @@
 # Custom iPhone document scanner
 
+## The Android camera, silence and live guidance (31 Oct to 1 Nov 2026)
+
+The owner, on an Android phone (31 Oct 2026): "the image is very very very bad,
+with enhancements and bad outcome, and you still need to click the capture
+button ... supposed to work on all kind of devices cheap or expensive"; then
+(1 Nov): "in some docs i still hear shutters of capturing while scanning", and
+"let's guide the student to take the perfect picture while taking the picture
+so the work is easier for ai".
+
+**The picture.** `camera_android_camerax` uses one resolution for the preview,
+the image stream and the still, and the camera opened at `veryHigh` for its
+stream: every Android scan was a 1920 × 1080 frame, cover-cropped on screen,
+taken without focusing, of which a page kept about 700 pixels across. Now
+(`guided_scan_page.dart`):
+
+- The camera opens at `ResolutionPreset.max` (the sensor's full 4:3 frame, 12 MP
+  on most phones; CameraX keeps the preview and the stream at screen size beside
+  it), then `veryHigh`, then `high`. An iPhone never opens this camera (below).
+- The preview shows the whole photo, letterboxed, so what the guide frames is
+  what is taken (`visiblePreviewRegion`).
+- The camera focuses on the middle of the page found before the shot
+  (`guidedScanFocusPoint`, waiting at most 1.5 s).
+- The photo is turned upright from its EXIF and bounded to 3264 px (8 MP) on the
+  phone, JPEG 92, metadata dropped (`ScanPhoto.kt` on `foorsa/scan_photo`,
+  `scan_photo.dart`); without the channel the camera's own file goes.
+- The portal crops the page at 2400 px from a source of at most 2600 px (1600 and
+  2000 before), with the browser's best filter and the iPhone scanner's JPEG
+  ladder, and no longer washes out a photo, a logo or a dark band as if it were
+  paper in shadow (foorsa-reward, `shared/scanPaperLight.ts`,
+  `src/portal/scanAutoCrop.ts`).
+
+foorsa-reward's `scripts/scanner/android-photo-quality.ts` replays the chain on
+a synthetic transcript. In daylight the page leaving the phone went from
+705 × 997 to 1696 × 2400 pixels, text SSIM 0.69 to 0.95, 8 pt text 0.55 to
+0.91, stroke sharpness 0.19 to 0.74, and the portrait's tone from 0.67 back to
+0.39 (the document's is 0.38); under a lamp, in a dim room on a cheap sensor and
+under a hand's shadow the text SSIM went 0.58 to 0.85, 0.37 to 0.65 and 0.68 to
+0.93.
+
+**Automatic capture.** The page used to be found only as four straight borders
+near where the guide asks for them: a page turned by more than a few degrees,
+larger than the guide, or white on a white desk was never found, and the grid
+read one pixel per cell, so sensor noise and a hand's tremor read as movement.
+Now each grid cell is the mean of its pixels (`camera_luma.dart`), the page is
+found wherever it is held as the bright region the background surrounds
+(`scan_page_segment.dart`), or by its text read whole without an outline
+(`scan_frame_loop.dart`), movement is measured on 2 × 2 blocks, and the shutter
+is the iPhone's (`ScanAutoShutter`: steady and read, a clear page after a short
+grace, any page in view after 2.5 s, or 3.5 s for a passport or a card).
+`test/guided_capture_simulation_test.dart` replays synthetic camera frames
+(tilted, oversized, white on white, held in the hand, shaking, noisy).
+
+**Cheap phones.** Frames are asked for one at a time, four a second (the stream
+otherwise copies 30 a second across the platform channel), their pixels are
+worked on a worker isolate (`scan_frame_processor.dart`; inline if it fails or
+takes over 2 s), a frame arriving while one is worked on is dropped, and ML Kit
+reads at most every 0.3 s, backing off to 1.5 times its last read.
+
+**Silence, on every capture path.** A document scan never sounds a shutter:
+
+- iPhone: only the native scanner takes photos (`FoorsaScannerViewController`),
+  silenced from iOS 18 (`isShutterSoundSuppressionEnabled`) and before it by
+  releasing sound 1108 as the photo is taken, except in Japan and Korea. The
+  Flutter camera's still cannot be silenced on an iPhone, so it is never opened
+  there: a phone the native scanner cannot serve (no back camera) is told
+  "This device has no back camera to scan with. Choose a photo or a file
+  instead." A silent video-frame still for iOS 15 to 17 was not built: it could
+  not be compiled or tried on a phone here, and 1108 is what ships today.
+- Android: CameraX's `ImageCapture` plays no sound, and nothing in the capture
+  code does.
+- The phone's own camera app, which sounds its shutter, opens only from the
+  guided camera's "Camera app" button, which is there only when the guided
+  camera cannot open; the portal's bridge never opens it in place of an answer
+  the scanner gave (foorsa-reward, `guidedScanBridge.ts`), and the visa's papers
+  and a university's requests go through the app's chooser, not a page's file
+  input.
+- `test/silent_capture_test.dart` fails if any capture source calls a sounding
+  API, if an iPhone photo is taken anywhere but the silenced one, or if the
+  camera app can open by itself.
+
+Still opening the phone's camera app from a page's own file input (not document
+scans): the flight ticket, the timetable photo, the live chat, the community and
+anything else that asks the WebView for an image with a camera option.
+
+**Live guidance, one instruction at a time.** Both cameras say one thing, in the
+same words (`scan_coach.dart`, `ScannerLiveGuidance` in `ScannerGeometry.swift`;
+`test/scan_coach_test.dart` holds each string of one to the other, case by case),
+in the order the student fixes things:
+
+1. the page: "Find the page" (a passport: "Show the photo page", with the two
+   lines at the bottom; a card: "Front side" or "Now the back" when the step
+   names a side), "Move back a little", "Move closer", "Show all four corners",
+   "Hold still" while it shakes;
+2. the phone: "Hold the phone flat" when the page's far edge is short or its
+   corners leave 72 to 108 degrees (`scanPageHeldFlat`, `isHeldFlat`);
+3. the light: "Too dark", "Glare on the page", "Shadow on the page"
+   (Android's shadow: a connected part of the page, 15 to 85% of it, whose paper
+   is under 62% of the brightest, never the desk round a slanted page nor print
+   darker than a quarter of it: `ScanFrameAnalyzer.shadowOn`);
+4. what the reading still needs (the photo page's lines, the other side, another
+   paper);
+5. "Hold still · Taking the photo.", with the hold's progress, then "Got it ·
+   Preparing your page." and one light touch once the photo is in (never during
+   the exposure).
+
+A line stays at least a second and gives way only to one asked for 0.35 s
+without a break (`ScanGuidanceCoach`, `ScannerGuidanceCoach`), so a page at the
+edge of two states does not make the words flicker; "Taking the photo" and "Got
+it" show at once. A new instruction is said once to a screen reader: VoiceOver
+by an announcement, TalkBack by the panel's polite live region (Android
+deprecates announcements). The outline's state is in its pattern and an icon, not
+its colour alone: dashed while the page is looked for or has something to fix,
+solid and thicker while it is held, a check once the photo is in
+(`scan_guidance_view.dart`; `test/goldens/scan_guidance_states.png`). A slanted
+phone, like shadow, glare or dim light, gets 1.5 s to be fixed before a steady
+page is taken anyway. Before the camera opens, the portal's chooser shows every
+paper that can be scanned and has no guide of its own the same advice ("For a
+clear scan", foorsa-reward `UploadGuide.tsx`).
+
+**What only a phone can confirm.** The still's resolution and focus on real
+Android phones (cheap and expensive), how far a real page's shadow, glare and
+slant are told in real light, how long a frame's work takes on the cheapest
+phone, that the hold and the words feel calm in the hand, TalkBack and VoiceOver
+reading each instruction once, and the absence of any shutter sound (an iPhone
+on iOS 15 to 17 in particular).
+
 ## Live text reading and the right-document gate (custom-live-v12)
 
 The owner asked (30 Oct 2026) for the scan to capture by itself, with no tap,
@@ -170,7 +296,7 @@ and the time from a steady page to the capture.
 
 ## Adaptive capture under validation (custom-live-v8)
 
-The AVFoundation camera has no shutter, thumbnail tray, accuracy percentage, fixed directions, or native review wizard. It is also silent (the owner, 30 Oct 2026: "when scanning you hear shutter multiple times it needs to stay silent"): from iOS 18 every photo asks the system for silence (`isShutterSoundSuppressionEnabled`, which iOS refuses where the law requires the sound); before iOS 18, which has no such setting, the shutter's system sound (1108) is released in `willCapturePhotoFor`, except when the phone's region is Japan or Korea (`ScannerShutterSound`). The light tap when capture starts is the only signal. One instruction below the camera explains what is needed now: frame the page, hold still, tilt slightly, or reframe. Lighting guidance is used when the processing result calls for another lighting view. A thin outline follows the detected document. The scanner captures automatically and retains useful views until a verified combination is available.
+The AVFoundation camera has no shutter, thumbnail tray, accuracy percentage, fixed directions, or native review wizard. It is also silent (the owner, 30 Oct 2026: "when scanning you hear shutter multiple times it needs to stay silent"): from iOS 18 every photo asks the system for silence (`isShutterSoundSuppressionEnabled`, which iOS refuses where the law requires the sound); before iOS 18, which has no such setting, the shutter's system sound (1108) is released in `willCapturePhotoFor`, except when the phone's region is Japan or Korea (`ScannerShutterSound`). The light tap when capture starts is the only signal. One instruction below the camera explains what is needed now, in the order and words of "Live guidance, one instruction at a time" above. Lighting guidance is used when the processing result calls for another lighting view. A thin outline follows the detected document. The scanner captures automatically and retains useful views until a verified combination is available.
 
 Focus and exposure must remain settled for 0.25 seconds while fresh detections confirm the page remains in position. The settling wait is bounded to two seconds. On devices with a shorter-focusing autofocus ultra-wide lens, a dual-wide camera can switch to close focus while retaining the ordinary wide field of view. Other devices use their wide camera. A lens switch revokes the current settling hold. Still photos use quality priority.
 

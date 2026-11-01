@@ -593,6 +593,9 @@ class _ShellPageState extends State<ShellPage> {
 
 
   // ── Guided document capture (new shells; old shells keep the picker) ──
+  static const guidedScanNoBackCamera =
+      'This device has no back camera to scan with. Choose a photo or a file instead.';
+
   Future<Map<String, dynamic>> _guidedScanForWeb(
       Object? request, Object? callingNonce) async {
     if (!mounted || (!Platform.isIOS && !Platform.isAndroid)) {
@@ -627,9 +630,13 @@ class _ShellPageState extends State<ShellPage> {
         if (!mounted || !_isTrustedPortal(destination) || callingNonce != _scannerNonce) {
           return {'cancelled': true};
         }
-        // Only unsupported hardware uses the framed Flutter camera. Errors
-        // and cancellation never silently switch to an ordinary photo picker.
+        // Errors and cancellation never silently switch to an ordinary photo
+        // picker. The native scanner answers "unsupported" only for a device
+        // with no back camera, and the Flutter camera would find none either
+        // (on an iPhone it would also sound its shutter: the camera plugin
+        // cannot silence a still), so the student is told instead.
         if (native['unsupported'] != true) return native;
+        return {'error': guidedScanNoBackCamera};
       }
       final result = await Navigator.of(context).push<GuidedScanResult>(
         MaterialPageRoute<GuidedScanResult>(
@@ -650,7 +657,9 @@ class _ShellPageState extends State<ShellPage> {
       }
       final picture = result.file;
       if (picture == null) return {'cancelled': true};
-      final bytes = await picture.readAsBytes();
+      // The photo made ready on the phone (upright, bounded, no metadata),
+      // else the camera's own file.
+      final bytes = result.bytes ?? await picture.readAsBytes();
       // Recheck the trusted origin after the modal closes: a WebView
       // navigation during camera use must not receive official-document
       // pixels, even if the original request was from the correct host.

@@ -109,6 +109,61 @@ struct ScannerLiveFramingTests {
     precondition(ScannerLiveGuidance.copy(framing: .ready, lighting: .shadow, layout: .adaptive).title == "Shadow on the page")
     precondition(ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: .adaptive).title == "Hold still")
 
+    // One instruction at a time, in the order the student fixes things (the owner, 1 Nov 2026):
+    // the page, the phone held flat, the light, then the hold. The same words as Android's
+    // (test/scan_coach_test.dart in the Flutter app holds the two tables to each other).
+    precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .adaptive).title == "Find the page")
+    precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .passport).detail
+      == "Show the photo page with the two lines at the bottom.")
+    precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .card, side: "front").title == "Front side")
+    precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .card, side: "back").title == "Now the back")
+    precondition(ScannerLiveGuidance.copy(framing: .ready, lighting: .dim, layout: .adaptive, flat: false).title
+      == "Hold the phone flat")
+    precondition(ScannerLiveGuidance.copy(framing: .ready, lighting: .dim, layout: .adaptive).title == "Too dark")
+    precondition(ScannerLiveGuidance.copy(framing: .ready, lighting: .glare, layout: .adaptive).detail == "Tilt the phone slightly.")
+    precondition(ScannerLiveGuidance.copy(framing: .clipped, lighting: .good, layout: .adaptive, flat: false).title
+      == "Move back a little")
+    for layout in [FoorsaScannerProfile.Layout.passport, .card, .portrait, .adaptive] {
+      for side in [nil, "front", "back"] as [String?] {
+        for flat in [true, false] {
+          let copy = ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: layout, side: side, flat: flat)
+          precondition(copy.title.count <= 26 && copy.detail.count <= 64 && copy.compact.count <= 22, copy.title)
+        }
+      }
+    }
+
+    // A phone held flat over a page, the page turned on the desk or not; a slanted phone makes
+    // the far edge short.
+    precondition(quad(0.2, 0.2, 0.8, 0.8).isHeldFlat(in: portraitImage))
+    let turned = ScannerQuadrilateral(topLeft: CGPoint(x: 0.30, y: 0.80), topRight: CGPoint(x: 0.80, y: 0.70),
+      bottomRight: CGPoint(x: 0.70, y: 0.25), bottomLeft: CGPoint(x: 0.20, y: 0.35))
+    precondition(turned.isHeldFlat(in: CGSize(width: 1000, height: 1000)))
+    let tilted = ScannerQuadrilateral(topLeft: CGPoint(x: 0.30, y: 0.85), topRight: CGPoint(x: 0.70, y: 0.85),
+      bottomRight: CGPoint(x: 0.90, y: 0.15), bottomLeft: CGPoint(x: 0.10, y: 0.15))
+    precondition(!tilted.isHeldFlat(in: portraitImage))
+
+    // A line stays at least a second, and is replaced only by one asked for 0.35 s without a
+    // break; a page at the edge of two states does not make the words flicker.
+    let find = ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .adaptive)
+    let closer = ScannerLiveGuidance.copy(framing: .tooSmall, lighting: .good, layout: .adaptive)
+    var coach = ScannerGuidanceCoach()
+    let first = coach.update(find, at: 0)
+    precondition(first.line == find && first.changed)
+    precondition(coach.update(closer, at: 0.3).line == find)
+    precondition(coach.update(closer, at: 0.9).line == find)
+    let next = coach.update(closer, at: 1.0)
+    precondition(next.line == closer && next.changed)
+    var flicker = ScannerGuidanceCoach()
+    _ = flicker.update(find, at: 0)
+    for step in 1...20 {
+      precondition(flicker.update(step % 2 == 0 ? find : closer, at: Double(step) * 0.25).line == find)
+    }
+    precondition(coach.update(ScannerLiveGuidance.gotIt, at: 1.1).line == ScannerLiveGuidance.gotIt)
+    let taking = ScannerLiveGuidance.copy(framing: .ready, lighting: .good, layout: .adaptive)
+    precondition(coach.update(taking, at: 1.2, immediate: true).line == taking)
+    coach.reset()
+    precondition(coach.shown == nil)
+
     // The outline averages jitter, follows a real move at once, and survives
     // two missed frames before disappearing.
     var smoother = ScannerOutlineSmoother()

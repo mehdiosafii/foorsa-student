@@ -1,8 +1,16 @@
 /// Deterministic, offline live-scanner analysis on a tiny greyscale preview.
 ///
 /// No OCR, raw camera uploads, or heavy ML calls happen here. The automatic
-/// shutter requires four document-border signals, visible image detail and a
-/// steady frame; if it cannot prove readiness, the manual shutter remains.
+/// shutter requires the page's outline, visible image detail and a steady
+/// frame; if it cannot prove readiness, the manual shutter remains.
+///
+/// The outline is found two ways. The guide's own four borders first: straight
+/// edges near where the guide asks for them, which is exact for a page held
+/// square to the phone. When they are not there, the page is taken as the
+/// bright region the background surrounds (scan_page_segment.dart), which
+/// finds a page turned, held at a slant, larger or smaller than the guide, or
+/// off its centre: on Android, before 31 Oct 2026, a page turned by 8°, or
+/// filling the screen, was never found, so the camera never took it alone.
 library;
 
 import 'dart:math' as math;
@@ -10,6 +18,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'scan_document_profile.dart';
+import 'scan_page_segment.dart';
 
 enum GuidedDocumentKind { passport, idCard, page }
 
@@ -97,15 +106,30 @@ class ScanFrameAnalysis {
     required this.brightness,
     required this.sharpness,
     required this.contrast,
+    this.corners,
+    this.shadow = false,
   });
 
   final ScanHint hint;
+
+  /// The page's outline as an upright rectangle in the visible preview's
+  /// normalized coordinates (the box round [corners] for a page held at a
+  /// slant).
   final Rect? bounds;
+
+  /// The page's four corners, top-left first and clockwise, in the same
+  /// coordinates, when the page was found.
+  final List<Offset>? corners;
   final double edgeSupport;
   final double motion;
   final double brightness;
   final double sharpness;
   final int contrast;
+
+  /// A sizeable part of the page lies in shadow (a hand, the phone): only a
+  /// hint for the student, never a reason to keep a page from being taken for
+  /// long ([ScanFrameAnalyzer.shadowOn]).
+  final bool shadow;
 
   bool get autoReady => hint == ScanHint.ready && bounds != null;
 }
@@ -131,13 +155,121 @@ class _ScanCandidate {
 class ScanFrameAnalyzer {
   const ScanFrameAnalyzer();
 
+  /// Paper this much darker than the brightest paper on the page lies in
+  /// shadow, as on the iPhone (ScannerLiveLightingAssessment).
+  static const shadowRatio = 0.62;
+
+  /// Below this share of the brightest paper, a block is print (a photo, a
+  /// navy band), not paper in shadow: the camera reads luminance alone, so
+  /// what the iPhone tells by colour is told here by how dark it is.
+  static const printRatio = 0.25;
+
+  /// Whether a sizeable, connected part of the page's paper (between 15% and
+  /// 85% of it) is in shadow: the page inside its outline ([corners], in grid
+  /// cells, drawn in by 7% so its edge is left out) is cut into blocks, the
+  /// bright end of each (its 90th percentile) is the paper there, and a block
+  /// whose paper is far darker than the page's brightest paper is shaded.
+  /// Scattered dark blocks (artwork, a photo) are not a shadow, and neither is
+  /// the desk round a page held at a slant: only cells inside the outline count.
+  static bool shadowOn(ScanLumaGrid g, List<Offset> corners) {
+    if (corners.length != 4) return false;
+    final centre = corners.fold(Offset.zero, (sum, c) => sum + c) / 4;
+    final inner = [for (final c in corners) centre + (c - centre) * 0.86];
+    var minX = g.width.toDouble(), minY = g.height.toDouble(), maxX = 0.0, maxY = 0.0;
+    for (final c in inner) {
+      minX = math.min(minX, c.dx);
+      minY = math.min(minY, c.dy);
+      maxX = math.max(maxX, c.dx);
+      maxY = math.max(maxY, c.dy);
+    }
+    final x0 = math.max(0, minX.floor()), y0 = math.max(0, minY.floor());
+    final x1 = math.min(g.width - 1, maxX.ceil()), y1 = math.min(g.height - 1, maxY.ceil());
+    final width = x1 - x0 + 1, height = y1 - y0 + 1;
+    if (width < 18 || height < 18) return false;
+    // The outline's winding, so "inside" is one side of every edge.
+    var area = 0.0;
+    for (var i = 0; i < 4; i++) {
+      final a = inner[i], b = inner[(i + 1) % 4];
+      area += a.dx * b.dy - b.dx * a.dy;
+    }
+    final sign = area >= 0 ? 1.0 : -1.0;
+    bool inside(double x, double y) {
+      for (var i = 0; i < 4; i++) {
+        final a = inner[i], b = inner[(i + 1) % 4];
+        if (((b.dx - a.dx) * (y - a.dy) - (b.dy - a.dy) * (x - a.dx)) * sign < 0) return false;
+      }
+      return true;
+    }
+    final columns = width >= height ? 8 : 6, rows = width >= height ? 6 : 8;
+    final levels = List<double>.filled(columns * rows, double.nan);
+    final values = <int>[];
+    for (var row = 0; row < rows; row++) {
+      final top = y0 + row * height ~/ rows, bottom = y0 + (row + 1) * height ~/ rows;
+      for (var column = 0; column < columns; column++) {
+        final left = x0 + column * width ~/ columns, right = x0 + (column + 1) * width ~/ columns;
+        values.clear();
+        var cells = 0;
+        for (var y = top; y < bottom; y++) {
+          for (var x = left; x < right; x++) {
+            cells++;
+            if (inside(x + 0.5, y + 0.5)) values.add(g.value(x, y));
+          }
+        }
+        // A block mostly outside the page is left out.
+        if (cells == 0 || values.length < cells * 0.6) continue;
+        values.sort();
+        levels[row * columns + column] = values[((values.length - 1) * 0.9).floor()].toDouble();
+      }
+    }
+    final known = [for (final level in levels) if (!level.isNaN) level]..sort();
+    if (known.length < 12) return false;
+    final bright = known[((known.length - 1) * 0.9).floor()];
+    if (bright < 60) return false;
+    final shaded = [
+      for (final level in levels) !level.isNaN && level < bright * shadowRatio && level >= bright * printRatio,
+    ];
+    final total = shaded.where((s) => s).length;
+    if (total < known.length * 0.15 || total > known.length * 0.85) return false;
+    // The largest connected group of shaded blocks: a shadow is one region.
+    final seen = List<bool>.filled(levels.length, false);
+    var largest = 0;
+    for (var start = 0; start < levels.length; start++) {
+      if (!shaded[start] || seen[start]) continue;
+      var size = 0;
+      final stack = [start];
+      seen[start] = true;
+      while (stack.isNotEmpty) {
+        final at = stack.removeLast();
+        size++;
+        final column = at % columns, row = at ~/ columns;
+        for (final next in [
+          if (column > 0) at - 1, if (column < columns - 1) at + 1,
+          if (row > 0) at - columns, if (row < rows - 1) at + columns,
+        ]) {
+          if (shaded[next] && !seen[next]) {
+            seen[next] = true;
+            stack.add(next);
+          }
+        }
+      }
+      if (size > largest) largest = size;
+    }
+    return largest >= known.length * 0.15;
+  }
+
+  /// A page's left (`inward` 1) or right (`inward` -1) edge: a column
+  /// along which the paper is brighter than what lies outside it. The
+  /// polarity keeps out the edges of a block of print, which is darker than
+  /// the margin round it: on a white desk, the old any-polarity search took
+  /// a page's text block for the page and lost it again a frame later.
   _Line? _vertical(
     ScanLumaGrid g,
     int target,
     int band,
     int top,
-    int bottom,
-  ) {
+    int bottom, {
+    required int inward,
+  }) {
     _Line? best;
     double bestScore = -1;
     final minX = math.max(2, target - band);
@@ -147,7 +279,7 @@ class ScanFrameAnalyzer {
       var energy = 0.0;
       var total = 0;
       for (var y = top; y <= bottom; y += 2) {
-        final contrast = (g.value(x + 2, y) - g.value(x - 2, y)).abs();
+        final contrast = math.max(0, (g.value(x + 2 * inward, y) - g.value(x - 2 * inward, y)));
         if (contrast >= 23) hits++;
         energy += contrast;
         total++;
@@ -166,13 +298,15 @@ class ScanFrameAnalyzer {
         : null;
   }
 
+  /// A page's top (`inward` 1) or bottom (`inward` -1) edge, as [_vertical].
   _Line? _horizontal(
     ScanLumaGrid g,
     int target,
     int band,
     int left,
-    int right,
-  ) {
+    int right, {
+    required int inward,
+  }) {
     _Line? best;
     double bestScore = -1;
     final minY = math.max(2, target - band);
@@ -182,7 +316,7 @@ class ScanFrameAnalyzer {
       var energy = 0.0;
       var total = 0;
       for (var x = left; x <= right; x += 2) {
-        final contrast = (g.value(x, y + 2) - g.value(x, y - 2)).abs();
+        final contrast = math.max(0, (g.value(x, y + 2 * inward) - g.value(x, y - 2 * inward)));
         if (contrast >= 23) hits++;
         energy += contrast;
         total++;
@@ -201,15 +335,20 @@ class ScanFrameAnalyzer {
         : null;
   }
 
+  /// How much the view changed since the last frame: the mean difference of
+  /// 2×2 blocks of the grid. A block rather than a cell, so a hand's tremor of
+  /// a pixel or two over fine print is not read as the page moving.
   double _motion(ScanLumaGrid a, ScanLumaGrid? b) {
     if (b == null || !b.valid || b.width != a.width || b.height != a.height) {
       return double.infinity; // one frame alone cannot prove stability
     }
     var diff = 0.0;
     var samples = 0;
-    for (var y = 4; y < a.height - 4; y += 4) {
-      for (var x = 4; x < a.width - 4; x += 4) {
-        diff += (a.value(x, y) - b.value(x, y)).abs();
+    for (var y = 4; y < a.height - 5; y += 4) {
+      for (var x = 4; x < a.width - 5; x += 4) {
+        final blockA = a.value(x, y) + a.value(x + 1, y) + a.value(x, y + 1) + a.value(x + 1, y + 1);
+        final blockB = b.value(x, y) + b.value(x + 1, y) + b.value(x, y + 1) + b.value(x + 1, y + 1);
+        diff += (blockA - blockB).abs() / 4;
         samples++;
       }
     }
@@ -238,7 +377,6 @@ class ScanFrameAnalyzer {
     _ScanCandidate? best;
     var sawSmall = false;
     var sawClipped = false;
-    var sawWrongShape = false;
 
     // Follow detected borders within a generous band around the initial
     // document hint. Portrait and landscape are both attempted for variable
@@ -258,10 +396,10 @@ class ScanFrameAnalyzer {
       final midRight = (r - (r - l) * 0.04).round();
       final bandX = math.max(4, (w * (profile == null ? 0.1 : 0.16)).round());
       final bandY = math.max(5, (h * (profile == null ? 0.075 : 0.14)).round());
-      final left = _vertical(current, l, bandX, midTop, midBottom);
-      final right = _vertical(current, r, bandX, midTop, midBottom);
-      final top = _horizontal(current, t, bandY, midLeft, midRight);
-      final bottom = _horizontal(current, b, bandY, midLeft, midRight);
+      final left = _vertical(current, l, bandX, midTop, midBottom, inward: 1);
+      final right = _vertical(current, r, bandX, midTop, midBottom, inward: -1);
+      final top = _horizontal(current, t, bandY, midLeft, midRight, inward: 1);
+      final bottom = _horizontal(current, b, bandY, midLeft, midRight, inward: -1);
       if (left == null || right == null || top == null || bottom == null) continue;
       final x0 = left.position;
       final x1 = right.position;
@@ -283,10 +421,7 @@ class ScanFrameAnalyzer {
       // have any aspect. Convert detected pixel dimensions to normalized
       // viewport proportions BEFORE evaluating physical paper aspect.
       final ratio = (width / w) / (height / h) * aspect;
-      if (profile != null && !profile.supportsRatio(ratio)) {
-        sawWrongShape = true;
-        continue;
-      }
+      if (profile != null && !profile.supportsRatio(ratio)) continue;
       final support = math.min(
         math.min(left.support, right.support),
         math.min(top.support, bottom.support),
@@ -303,14 +438,29 @@ class ScanFrameAnalyzer {
       if (best == null || candidate.score > best.score) best = candidate;
     }
 
+    List<Offset>? corners;
     if (best == null) {
-      final hint = sawClipped ? ScanHint.moveBack
-        : sawSmall ? ScanHint.moveCloser
-        : sawWrongShape ? ScanHint.position : ScanHint.position;
-      return ScanFrameAnalysis(
-        hint: hint, bounds: null, edgeSupport: 0,
-        motion: motion, brightness: 0, sharpness: 0, contrast: 0,
-      );
+      // No straight border where the guide asks for it: the page as the
+      // bright region the background surrounds, wherever it is held.
+      final segment = ScanPageSegmenter.find(current,
+          aspect: aspect, profile: profile, guides: guides);
+      if (segment.page != null) {
+        final page = segment.page!;
+        final box = page.bounds;
+        best = _ScanCandidate(
+          (box.left * w).round(), (box.right * w).round(),
+          (box.top * h).round(), (box.bottom * h).round(), page.fill, 0,
+        );
+        corners = page.corners;
+      } else {
+        final hint = sawClipped || segment.clipped ? ScanHint.moveBack
+          : sawSmall || segment.small ? ScanHint.moveCloser
+          : ScanHint.position;
+        return ScanFrameAnalysis(
+          hint: hint, bounds: null, edgeSupport: 0,
+          motion: motion, brightness: 0, sharpness: 0, contrast: 0,
+        );
+      }
     }
     final x0 = best.l;
     final x1 = best.r;
@@ -318,6 +468,7 @@ class ScanFrameAnalyzer {
     final y1 = best.b;
     final support = best.support;
     final bounds = Rect.fromLTRB(x0 / w, y0 / h, x1 / w, y1 / h);
+    corners ??= [bounds.topLeft, bounds.topRight, bounds.bottomRight, bounds.bottomLeft];
     final innerX0 = math.max(2, x0 + ((x1 - x0) * 0.07).round());
     final innerX1 = math.min(w - 3, x1 - ((x1 - x0) * 0.07).round());
     final innerY0 = math.max(2, y0 + ((y1 - y0) * 0.07).round());
@@ -360,6 +511,7 @@ class ScanFrameAnalyzer {
       return ScanFrameAnalysis(
         hint: ScanHint.position, bounds: bounds, edgeSupport: support,
         motion: motion, brightness: 0, sharpness: 0, contrast: 0,
+        corners: corners,
       );
     }
 
@@ -393,6 +545,9 @@ class ScanFrameAnalyzer {
     return ScanFrameAnalysis(
       hint: hint, bounds: bounds, edgeSupport: support, motion: motion,
       brightness: brightness, sharpness: sharpness, contrast: contrast,
+      corners: corners,
+      shadow: hint != ScanHint.brighten &&
+          shadowOn(current, [for (final c in corners) Offset(c.dx * w, c.dy * h)]),
     );
   }
 }

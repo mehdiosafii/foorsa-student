@@ -170,9 +170,14 @@ class GuidedDocumentProfile {
       ? viewportAspect : 0.5;
     var width = ratio > 1 ? 0.83 : 0.75;
     var height = width * safeAspect / ratio;
-    if (height > 0.57) {
-      width *= 0.57 / height;
-      height = 0.57;
+    // A tall viewport (a preview covering the whole screen) keeps the guide
+    // to 57% of its height. A wider one (the 3:4 photo shown whole on
+    // Android, since 31 Oct 2026) lets a portrait page take its full width,
+    // so it lands on as many of the camera's pixels as it can.
+    final maximumHeight = (0.57 + (safeAspect - 0.5) * 1.1).clamp(0.57, 0.84);
+    if (height > maximumHeight) {
+      width *= maximumHeight / height;
+      height = maximumHeight;
     }
     return Rect.fromCenter(
       center: const Offset(0.5, 0.47),
