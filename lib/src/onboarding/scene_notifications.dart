@@ -32,6 +32,23 @@ class _Note {
 
   /// Gone up to the top of the screen, as the phone's own banner.
   bool gone = false;
+
+  /// Its card, made again only when it moves to the front or away from it:
+  /// made every frame the stack moved, its words were laid out again every
+  /// frame (BalancedText measures them to break them evenly).
+  Widget card(AppLanguage language) {
+    final front = slot == 0 || gone;
+    if (front != _front || language != _language || _card == null) {
+      _front = front;
+      _language = language;
+      _card = _Card(body: body.of(language), front: front, language: language);
+    }
+    return _card!;
+  }
+
+  Widget? _card;
+  bool? _front;
+  AppLanguage? _language;
 }
 
 /// The three the app sends (student_push.dart), in each language.
@@ -117,7 +134,6 @@ class _NotificationsSceneState extends State<NotificationsScene>
     _add(notificationBodies[0]);
     _notes.forEach(_snap);
     _next = 1;
-    _ticker.start();
     _timer = Timer(const Duration(milliseconds: 1900), () {
       _arrive();
       _timer =
@@ -148,6 +164,14 @@ class _NotificationsSceneState extends State<NotificationsScene>
     if (_notes.length > 4) _notes.removeLast();
     if (widget.still) _notes.forEach(_snap);
     _frame.value++;
+    _wake();
+  }
+
+  /// The springs have somewhere to go: the clock runs until they are there.
+  void _wake() {
+    if (widget.still || _ticker.isActive || !mounted) return;
+    _last = Duration.zero;
+    _ticker.start();
   }
 
   void _answered() {
@@ -169,6 +193,7 @@ class _NotificationsSceneState extends State<NotificationsScene>
       _notes.forEach(_snap);
     }
     _frame.value++;
+    _wake();
   }
 
   /// Front card, then two plates peeking under it, then gone.
@@ -186,8 +211,11 @@ class _NotificationsSceneState extends State<NotificationsScene>
     final (y, s, a) = _target(note);
     note
       ..y = y
+      ..vy = 0
       ..scale = s
-      ..alpha = a;
+      ..vs = 0
+      ..alpha = a
+      ..va = 0;
   }
 
   void _tick(Duration elapsed) {
@@ -210,7 +238,25 @@ class _NotificationsSceneState extends State<NotificationsScene>
       }
     }
     _notes.removeWhere((note) => note.gone && note.y < -240);
+    // At rest, the stack is put exactly where it was going and left alone:
+    // redrawn every frame, its cards were laid out again every frame too.
+    if (_notes.every(_atRest)) {
+      _notes.forEach(_snap);
+      _ticker.stop();
+    }
     _frame.value++;
+  }
+
+  /// Within a hundredth of a point and still: nothing on the screen moves.
+  bool _atRest(_Note note) {
+    final (y, s, a) = _target(note);
+    return !note.gone &&
+        (note.y - y).abs() < 0.01 &&
+        note.vy.abs() < 0.01 &&
+        (note.scale - s).abs() < 1e-4 &&
+        note.vs.abs() < 1e-4 &&
+        (note.alpha - a).abs() < 1e-4 &&
+        note.va.abs() < 1e-4;
   }
 
   @override
@@ -248,32 +294,31 @@ class _NotificationsSceneState extends State<NotificationsScene>
               feel: widget.feel,
               scale: 0.97,
               onTap: () => widget.onAct(),
-              child: ValueListenableBuilder<int>(
-                valueListenable: _frame,
-                builder: (context, _, __) => Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // Back to front, so the newest is drawn last.
-                    for (final note in _notes.reversed)
-                      if (note.alpha > 0.01)
-                        Positioned(
-                          key: ValueKey(note.id),
-                          left: 0,
-                          right: 0,
-                          top: (_stackHeight - cardHeight) / 2 + note.y,
-                          child: Opacity(
-                            opacity: note.alpha.clamp(0.0, 1.0),
-                            child: Transform.scale(
-                              scale: note.scale,
-                              alignment: Alignment.bottomCenter,
-                              child: _Card(
-                                  body: note.body.of(language),
-                                  language: language,
-                                  front: note.slot == 0 || note.gone),
+              child: OwnFrame(
+                child: ValueListenableBuilder<int>(
+                  valueListenable: _frame,
+                  builder: (context, _, __) => Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      // Back to front, so the newest is drawn last.
+                      for (final note in _notes.reversed)
+                        if (note.alpha > 0.01)
+                          Positioned(
+                            key: ValueKey(note.id),
+                            left: 0,
+                            right: 0,
+                            top: (_stackHeight - cardHeight) / 2 + note.y,
+                            child: Opacity(
+                              opacity: note.alpha.clamp(0.0, 1.0),
+                              child: Transform.scale(
+                                scale: note.scale,
+                                alignment: Alignment.bottomCenter,
+                                child: note.card(language),
+                              ),
                             ),
                           ),
-                        ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -286,6 +331,17 @@ class _NotificationsSceneState extends State<NotificationsScene>
 
 /// The stack's box: the front card and the two plates peeking under it.
 const _stackHeight = 120.0;
+
+const _iconSide = 38.0;
+
+/// The app's icon on the cards, decoded at the size it is shown: the file is
+/// 1024 px square, and decoded whole it was a 4 MB texture, uploaded as the
+/// first card arrived, for a 38 pt icon. The onboarding asks for it ahead
+/// (onboarding_page.dart), so the first card has it.
+ImageProvider notificationIcon(double devicePixelRatio) =>
+    ResizeImage(const AssetImage('assets/icons/app_icon_ios.png'),
+        width: (_iconSide * devicePixelRatio).round(),
+        height: (_iconSide * devicePixelRatio).round());
 
 class _Card extends StatelessWidget {
   const _Card(
@@ -307,7 +363,7 @@ class _Card extends StatelessWidget {
             // The icon's side is the start: the right in Arabic, as the
             // phone draws its own notifications.
             padding: const EdgeInsetsDirectional.fromSTEB(14, 0, 16, 0),
-            child: _content(),
+            child: _content(context),
           ),
         ),
       ),
@@ -328,12 +384,15 @@ class _Card extends StatelessWidget {
     ],
   );
 
-  Widget _content() {
+  Widget _content(BuildContext context) {
     return Row(children: [
       ClipRRect(
         borderRadius: BorderRadius.circular(9),
-        child: Image.asset('assets/icons/app_icon_ios.png',
-            width: 38, height: 38, filterQuality: FilterQuality.medium),
+        child: Image(
+            image: notificationIcon(MediaQuery.devicePixelRatioOf(context)),
+            width: _iconSide,
+            height: _iconSide,
+            filterQuality: FilterQuality.medium),
       ),
       const SizedBox(width: 12),
       Expanded(

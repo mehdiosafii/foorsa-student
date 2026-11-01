@@ -4,7 +4,7 @@ library;
 
 import 'shell_haptics.dart';
 
-Map<String, Object> shellCapabilities({required bool isIOS}) => {
+Map<String, Object> shellCapabilities({required bool isIOS, String? appVersion, String? appBuild}) => {
       // An iframe (a YouTube player) plays in the page instead of leaving
       // the app.
       'embeddedFrames': true,
@@ -29,4 +29,12 @@ Map<String, Object> shellCapabilities({required bool isIOS}) => {
       // portal says it with FoorsaShellLanguage, and the onboarding's first
       // step hands it to the portal (app_language.dart).
       'language': true,
+      // Push notifications (student_push.dart): 2 names why a phone could not
+      // register, and answers pushStatus and openNotificationSettings, so the
+      // portal's Settings shows On, Off or Not set up yet.
+      'push': 2,
+      // Which build a student runs, for Admin Portal › Student App (the board
+      // read it from here, and no build said it until this one).
+      if (appVersion != null && RegExp(r'^[0-9A-Za-z.+_-]{1,40}$').hasMatch(appVersion)) 'appVersion': appVersion,
+      if (appBuild != null && RegExp(r'^[0-9A-Za-z.+_-]{1,40}$').hasMatch(appBuild)) 'appBuild': appBuild,
     };

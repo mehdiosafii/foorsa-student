@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'app_language.dart';
 import 'config.dart';
 import 'onboarding/flight_loader.dart';
+import 'web_view_composition.dart';
 
 /// Foorsa's arrow turning into the plane, on the theme's ground.
 class ShellLoadingScreen extends StatelessWidget {
@@ -33,6 +34,53 @@ class ShellLoadingScreen extends StatelessWidget {
             // #183250 ground) before Flutter's first frame: logo, then the
             // loader.
             child: FlightLoader(size: 64, dark: dark),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The loading screen over the web view, as the shell shows it: it fades out
+/// in 220 ms when the portal is ready ([showing] false), and says so
+/// ([onGone]) so the shell can take it away.
+///
+/// Under the first-launch onboarding ([covered]) it is out of sight for its
+/// first seconds, the takeoff included: it is neither drawn nor animated
+/// then. Its fade still runs, so a loader the portal let go of meanwhile is
+/// gone by the time the onboarding fades onto the sign-in; one still needed
+/// is drawn and animated again from that moment.
+class ShellLoadingLayer extends StatelessWidget {
+  const ShellLoadingLayer({
+    super.key,
+    required this.showing,
+    required this.covered,
+    required this.dark,
+    required this.onGone,
+  });
+
+  final bool showing;
+  final bool covered;
+  final bool dark;
+  final VoidCallback onGone;
+
+  @override
+  Widget build(BuildContext context) {
+    return CoveredByOnboarding(
+      covered: covered,
+      child: IgnorePointer(
+        ignoring: !showing,
+        child: AnimatedOpacity(
+          opacity: showing ? 1 : 0,
+          // The portal's own loader fades in the same 220 ms.
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          onEnd: () {
+            if (!showing) onGone();
+          },
+          child: TickerMode(
+            enabled: !covered,
+            child: ShellLoadingScreen(dark: dark),
           ),
         ),
       ),

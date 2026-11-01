@@ -42,7 +42,8 @@ void paintGlassArrow(Canvas canvas,
   canvas.save();
   canvas.scale(height / 100);
   paintArrowGlow(canvas, 92, glow * opacity);
-  paintGlassBody(canvas, _shape, glass, opacity: opacity, lift: lift);
+  paintGlassBody(canvas, _shape, glass,
+      opacity: opacity, lift: lift, bake: _shape);
   if (shine > 0 && shine < 1) _shine(canvas, shine, opacity * shineStrength);
   paintGlassRim(canvas, _shape, glass, opacity: opacity);
   canvas.restore();

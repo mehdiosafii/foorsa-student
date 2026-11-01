@@ -10,7 +10,11 @@ import 'package:timezone/timezone.dart' as tz;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
+
+import 'push_registration.dart';
 
 @pragma('vm:entry-point')
 Future<void> studentFirebaseBackground(RemoteMessage message) async {
@@ -39,6 +43,10 @@ const pushUpdateBody = Words(
     'An update is ready in your Foorsa app.',
     'Une mise à jour vous attend dans votre application Foorsa.',
     'تحديث جديد بانتظارك في تطبيق فرصة.');
+const pushTestBody = Words(
+    'This is a test notification from Foorsa.',
+    'Ceci est une notification de test de Foorsa.',
+    'هذا إشعار تجريبي من فرصة.');
 const pushCalendarBody = Words(
     'Your class or calendar event is coming up.',
     'Votre cours ou un événement de votre calendrier approche.',
@@ -61,20 +69,121 @@ String? studentUpdateRoute(Map<String, dynamic> data) {
   return '/notifications?event=$id';
 }
 
+/// The test the student sends themselves from the portal's Settings
+/// (`POST /api/portal/push/test`): a banner even with the app open.
+bool isStudentTestPush(Map<String, dynamic> data) => data['type'] == 'student_test';
+
+/// What the banner says for each kind of push shown while the app is open.
+String foregroundPushBody({required bool chat, required bool test, AppLanguage language = AppLanguage.en}) =>
+    (test ? pushTestBody : chat ? pushChatBody : pushUpdateBody).of(language);
+
+/// A banner the app shows itself, presented while the app is open: on iOS
+/// since 14 `presentAlert` alone shows nothing, a banner needs its own flag.
+const foregroundBannerDetails = DarwinNotificationDetails(
+    presentAlert: true, presentBanner: true, presentList: true, presentSound: true);
+
+/// The real phone: Firebase, APNs through the app delegate (AppDelegate.swift,
+/// channel `ma.foorsa.student/push`), PushKit through flutter_callkit_incoming.
+class FirebasePushPlatform implements PushPlatform {
+  static const _apns = MethodChannel('ma.foorsa.student/push');
+
+  @override
+  bool get isIOS => Platform.isIOS;
+
+  @override
+  Future<void> initialize() async {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(studentFirebaseBackground);
+    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+      alert: false,
+      badge: false,
+      sound: false,
+    );
+  }
+
+  static PushPermission _of(AuthorizationStatus status) => switch (status) {
+        AuthorizationStatus.authorized => PushPermission.granted,
+        AuthorizationStatus.provisional => PushPermission.provisional,
+        AuthorizationStatus.denied || AuthorizationStatus.deniedPermanently => PushPermission.denied,
+        AuthorizationStatus.notDetermined => PushPermission.notDetermined,
+      };
+
+  @override
+  Future<PushPermission> permission({required bool ask}) async {
+    final messaging = FirebaseMessaging.instance;
+    final settings = ask
+        ? await messaging.requestPermission(alert: true, badge: true, sound: true)
+        : await messaging.getNotificationSettings();
+    return _of(settings.authorizationStatus);
+  }
+
+  @override
+  Future<PushPermission> systemPermission() async {
+    final status = await ph.Permission.notification.status;
+    if (status.isGranted || status.isLimited) return PushPermission.granted;
+    if (status.isProvisional) return PushPermission.provisional;
+    if (status.isPermanentlyDenied || status.isRestricted) return PushPermission.denied;
+    // iOS reports a permission never asked as denied: permanentlyDenied is the refusal.
+    return Platform.isIOS ? PushPermission.notDetermined : PushPermission.denied;
+  }
+
+  @override
+  Future<void> enableAutoInit() => FirebaseMessaging.instance.setAutoInitEnabled(true);
+
+  @override
+  Future<String?> apnsToken() => FirebaseMessaging.instance.getAPNSToken();
+
+  // Our HTTP v1 sender requires FCM tokens; FIDs are not valid message.token values.
+  @override
+  // ignore: deprecated_member_use
+  Future<String?> fcmToken() => FirebaseMessaging.instance.getToken();
+
+  @override
+  Future<String?> voipToken() async {
+    if (!Platform.isIOS) return null;
+    final value = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
+    return value is String && value.isNotEmpty ? value : null;
+  }
+
+  @override
+  Future<String?> apnsError() async {
+    if (!Platform.isIOS) return null;
+    try {
+      final state = await _apns.invokeMapMethod<String, Object?>('apnsState');
+      final error = state?['error'];
+      return error is String && error.trim().isNotEmpty ? error.trim() : null;
+    } catch (_) {
+      // An older build has no such channel.
+      return null;
+    }
+  }
+}
+
 List<DateTime> validCalendarTimes(List<dynamic> reminders, DateTime now) => reminders
     .whereType<Map>().map((r) => DateTime.tryParse('${r['at']}'))
     .whereType<DateTime>().where((at) => at.isAfter(now) && at.isBefore(now.add(const Duration(days: 366))))
     .toList()..sort();
 
 class StudentPush {
-  StudentPush({required this.openChat, required this.chatIsVisible, required this.openUpdate, required this.openCalendar});
+  StudentPush({
+    required this.openChat,
+    required this.chatIsVisible,
+    required this.openUpdate,
+    required this.openCalendar,
+    PushPlatform? platform,
+    PushProblems? problems,
+  }) : _problems = problems ?? PushProblems() {
+    _registration = PushRegistration(platform ?? FirebasePushPlatform(), _problems);
+  }
   final Future<void> Function(String route) openUpdate;
   final Future<void> Function() openCalendar;
   final Future<void> Function() openChat;
   final Future<bool> Function() chatIsVisible;
+  final PushProblems _problems;
+  late final PushRegistration _registration;
   final _local = FlutterLocalNotificationsPlugin();
   final List<StreamSubscription<dynamic>> _subscriptions = [];
-  bool _ready = false;
+  bool _listening = false;
   bool _localReady = false;
   Map<String, dynamic>? _calendarState;
   bool _disposed = false;
@@ -91,11 +200,18 @@ class StudentPush {
   /// The student's language, for what the app says itself.
   AppLanguage get _language => ShellLanguage.instance.current;
 
+  /// Local notifications and Firebase, each on its own: a local notifications
+  /// plugin that fails no longer keeps Firebase from starting, and a Firebase
+  /// that fails is tried again by the next registration (push_registration.dart).
   Future<void> start() => _starting ??= _start();
   Future<void> _start() async {
+    if (_disposed) return;
+    await _startLocal();
+    await _ensureMessaging();
+  }
+
+  Future<void> _startLocal() async {
     try {
-      // FlutterFire's native app configuration must be supplied for each platform.
-      if (_disposed) return;
       await _local.initialize(
         settings: const InitializationSettings(
           android: AndroidInitializationSettings('ic_stat_message'),
@@ -125,17 +241,28 @@ class StudentPush {
       _localReady = true;
       tzdata.initializeTimeZones();
       final localLaunch = await _local.getNotificationAppLaunchDetails();
-      if (localLaunch?.didNotificationLaunchApp == true) await _openLocal(localLaunch?.notificationResponse?.payload);
-      await Firebase.initializeApp();
-      FirebaseMessaging.onBackgroundMessage(studentFirebaseBackground);
+      if (localLaunch?.didNotificationLaunchApp == true) unawaited(_openLocal(localLaunch?.notificationResponse?.payload));
+    } catch (error) {
+      unawaited(_problems.report('push: local notifications unavailable: ${describePushError(error)}'));
+    }
+  }
+
+  /// Firebase, and once it runs, the handlers for what it delivers.
+  Future<String?> _ensureMessaging() async {
+    final error = await _registration.ensureReady();
+    if (error == null && !_listening && !_disposed) {
+      _listening = true;
+      _listen();
+      // Never awaited: on some launches the plugin is slow to say whether a
+      // notification opened the app, and a registration must not wait on it.
+      unawaited(_openInitialMessage());
+    }
+    return error;
+  }
+
+  void _listen() {
+    try {
       StudentCalls.instance.onTokenChanged = () => onTokenChanged?.call();
-      await FirebaseMessaging.instance
-          .setForegroundNotificationPresentationOptions(
-        alert: false,
-        badge: false,
-        sound: false,
-      );
-      if (_disposed) return;
       _subscriptions.add(FirebaseMessaging.onMessage.listen((message) async {
         if (message.data['type'] == 'student_call_end') {
           if (StudentCalls.instance.invite?['callId'] ==
@@ -150,8 +277,9 @@ class StudentPush {
           return;
         }
         final chat = isStudentChatPush(message.data);
+        final test = isStudentTestPush(message.data);
         final update = studentUpdateRoute(message.data);
-        if ((!chat && update == null) || (chat && await chatIsVisible()) || _disposed) {
+        if ((!chat && !test && update == null) || (chat && await chatIsVisible()) || _disposed || !_localReady) {
           return;
         }
         final language = _language;
@@ -159,7 +287,7 @@ class StudentPush {
           id: (message.data['eventId'] ?? message.data['messageId'] ?? message.messageId ?? '').hashCode &
               0x3fffffff,
           title: pushTitle.of(language),
-          body: (chat ? pushChatBody : pushUpdateBody).of(language),
+          body: foregroundPushBody(chat: chat, test: test, language: language),
           notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
                 chat ? 'student_messages' : 'student_updates',
@@ -167,8 +295,7 @@ class StudentPush {
                 importance: Importance.high,
                 priority: Priority.high,
                 icon: 'ic_stat_message'),
-            iOS: const DarwinNotificationDetails(
-                presentAlert: true, presentSound: true),
+            iOS: foregroundBannerDetails,
           ),
           payload: chat ? '/contact/chat' : update,
         );
@@ -178,67 +305,71 @@ class StudentPush {
         final route = studentUpdateRoute(message.data);
         if (route != null) unawaited(openUpdate(route));
       }));
-      // Our HTTP v1 sender requires FCM tokens; FIDs are not valid message.token values.
+      // A new token is registered again by the portal (foorsa-push-token-changed).
       // ignore: deprecated_member_use
       _subscriptions.add(FirebaseMessaging.instance.onTokenRefresh
           .listen((_) => onTokenChanged?.call()));
-      _ready = true;
-      final initial = await FirebaseMessaging.instance.getInitialMessage();
-      if (initial != null) {
-        if (isStudentChatPush(initial.data)) await openChat();
-        final route = studentUpdateRoute(initial.data);
-        if (route != null) await openUpdate(route);
-      }
-    } catch (_) {
-      // An unconfigured development build must still open the portal.
-      _ready = false;
+    } catch (error) {
+      unawaited(_problems.report('push: listeners not started: ${describePushError(error)}'));
     }
   }
 
+  Future<void> _openInitialMessage() async {
+    try {
+      final initial = await FirebaseMessaging.instance
+          .getInitialMessage()
+          .timeout(const Duration(seconds: 10));
+      if (initial == null || _disposed) return;
+      if (isStudentChatPush(initial.data)) await openChat();
+      final route = studentUpdateRoute(initial.data);
+      if (route != null) await openUpdate(route);
+    } catch (_) {
+      // No notification opened the app, or the plugin never said.
+    }
+  }
+
+  /// What the portal registers (`getPushToken`), or why there is nothing to
+  /// register (push_registration.dart names each reason).
   Future<Map<String, dynamic>> token({bool requestPermission = true}) =>
-      _serial(() => _token(requestPermission: requestPermission));
-  Future<Map<String, dynamic>> _token({required bool requestPermission}) async {
-    await start();
-    if (!_ready) return {'token': null, 'status': 'unconfigured'};
-    final messaging = FirebaseMessaging.instance;
-    final settings = requestPermission
-        ? await messaging.requestPermission(
-            alert: true, badge: true, sound: true)
-        : await messaging.getNotificationSettings();
-    if (settings.authorizationStatus != AuthorizationStatus.authorized &&
-        settings.authorizationStatus != AuthorizationStatus.provisional) {
-      return {'token': null, 'status': 'denied'};
+      _serial(() async {
+        await start();
+        await _ensureMessaging();
+        return _registration.token(requestPermission: requestPermission, callsEnabled: nativeAdviserCalls);
+      });
+
+  /// Where this phone stands, without asking anything (`pushStatus`).
+  Future<Map<String, dynamic>> status() => _serial(() async {
+        await start();
+        await _ensureMessaging();
+        return _registration.status();
+      });
+
+  /// The app's own notification settings (`openNotificationSettings`): on an
+  /// iPhone its Notifications page, else the app's page in Settings.
+  Future<bool> openSettings() async {
+    try {
+      if (await _local.openAppNotificationSettings() == true) return true;
+    } catch (_) {
+      // Fall back to the app's page.
     }
-    await messaging.setAutoInitEnabled(true);
-    // APNs registration may finish after the user answers the permission prompt.
-    if (Platform.isIOS) {
-      for (var i = 0; i < 10 && await messaging.getAPNSToken() == null; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      }
-      if (await messaging.getAPNSToken() == null) {
-        return {'token': null, 'status': 'pending'};
-      }
+    try {
+      return await ph.openAppSettings();
+    } catch (_) {
+      return false;
     }
-    // Keep the legacy FCM token until the server supports FID addressing.
-    return {
-      // ignore: deprecated_member_use
-      'token': await messaging.getToken(),
-      'platform': Platform.isIOS ? 'ios' : 'android',
-      'status': 'ready',
-      'notificationVersion': 2,
-      // The server rings only devices that say so (nativeAdviserCalls).
-      'callsEnabled': nativeAdviserCalls,
-      'voipToken': Platform.isIOS ? await FlutterCallkitIncoming.getDevicePushTokenVoIP() : null
-    };
   }
 
   Future<void> clear() => _serial(_clear);
   Future<void> _clear() async {
     await start();
-    if (_ready) {
-      await FirebaseMessaging.instance.setAutoInitEnabled(false);
-      // ignore: deprecated_member_use
-      await FirebaseMessaging.instance.deleteToken();
+    if (_registration.ready) {
+      try {
+        await FirebaseMessaging.instance.setAutoInitEnabled(false);
+        // ignore: deprecated_member_use
+        await FirebaseMessaging.instance.deleteToken();
+      } catch (_) {
+        // Signed out all the same; the server forgot the token already.
+      }
     }
     if (_localReady) await _local.cancelAll();
     await StudentCalls.instance.end();

@@ -10,7 +10,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/physics.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import '../app_language.dart';
@@ -18,6 +17,7 @@ import 'airliner.dart';
 import 'boarding_style.dart';
 import 'brand_marks.dart';
 import 'gesture_demo.dart';
+import 'glass.dart';
 import 'scene_hint.dart';
 import 'stage_forms.dart';
 
@@ -123,9 +123,6 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   Timer? _boarding;
   int _lastNotch = 0;
 
-  /// Seconds since the pass appeared, for the stub's tug.
-  late final Ticker _ticker;
-  final ValueNotifier<double> _clock = ValueNotifier<double>(0);
   bool _touched = false;
 
   /// How far the guide's touch is pulling the stub.
@@ -137,9 +134,6 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   void initState() {
     super.initState();
     _pull.addListener(_pullFeel);
-    _ticker =
-        createTicker((elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
-    if (!widget.still) _ticker.start();
   }
 
   void _pullFeel() {
@@ -153,8 +147,6 @@ class BoardingPassSceneState extends State<BoardingPassScene>
   @override
   void dispose() {
     _boarding?.cancel();
-    _ticker.dispose();
-    _clock.dispose();
     _pull.dispose();
     _fall.dispose();
     _nudge.dispose();
@@ -265,13 +257,18 @@ class BoardingPassSceneState extends State<BoardingPassScene>
                 child: SizedBox(
                   width: _passWidth,
                   height: _passHeight,
-                  // A paper object: it keeps its way round in Arabic.
+                  // A paper object: it keeps its way round in Arabic. Rebuilt
+                  // only as the stub moves: the pull, its fall and the guide's
+                  // tug, in a frame of its own. (A clock that nothing read
+                  // rebuilt the whole pass, and drew its two shadows again,
+                  // every frame.)
                   child: Directionality(
                     textDirection: TextDirection.ltr,
-                    child: AnimatedBuilder(
-                      animation:
-                          Listenable.merge([_pull, _fall, _clock, _nudge]),
-                      builder: (context, _) => _pass(),
+                    child: OwnFrame(
+                      child: AnimatedBuilder(
+                        animation: Listenable.merge([_pull, _fall, _nudge]),
+                        builder: (context, _) => _pass(),
+                      ),
                     ),
                   ),
                 ),
@@ -294,13 +291,15 @@ class BoardingPassSceneState extends State<BoardingPassScene>
     final tearAngle = (pull / _tearAt) * 0.1 + fall * 0.5;
     final stubDrop = pull * 0.32 + fall * fall * 420;
     return Stack(clipBehavior: Clip.none, children: [
-      // The upper piece's shadow lies under everything, the stub too.
+      // The upper piece's shadow lies under everything, the stub too. It and
+      // the upper piece have layers of their own: only the stub moves.
       const Positioned(
         left: 0,
         top: 0,
         width: _passWidth,
         height: _tearY,
-        child: CustomPaint(painter: _PieceShadowPainter(true)),
+        child: RepaintBoundary(
+            child: CustomPaint(painter: _PieceShadowPainter(true))),
       ),
       // The stub, its own piece below the perforation.
       Positioned(
@@ -342,7 +341,8 @@ class BoardingPassSceneState extends State<BoardingPassScene>
         top: 0,
         width: _passWidth,
         height: _tearY,
-        child: _Piece(top: true, shadow: false, child: _upper()),
+        child: RepaintBoundary(
+            child: _Piece(top: true, shadow: false, child: _upper())),
       ),
     ]);
   }
@@ -508,7 +508,14 @@ class _Piece extends StatelessWidget {
   }
 }
 
-Path _piecePath(Size size, bool top) {
+/// The pieces' outlines, made once for each size: a Path.combine every frame
+/// was most of what the pass cost to draw.
+final Map<(Size, bool), Path> _pieces = {};
+
+Path _piecePath(Size size, bool top) =>
+    _pieces.putIfAbsent((size, top), () => _makePiecePath(size, top));
+
+Path _makePiecePath(Size size, bool top) {
   const r = 20.0, notch = 10.0;
   final rect = Offset.zero & size;
   final shape = Path()
@@ -541,14 +548,25 @@ class _PieceShadowPainter extends CustomPainter {
   const _PieceShadowPainter(this.top);
   final bool top;
 
+  static final _shadow = Paint()
+    ..color = const Color(0x6B000000)
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 24);
+
   @override
   void paint(Canvas canvas, Size size) {
-    final path = _piecePath(size, top);
-    canvas.drawPath(
-        path.shift(const Offset(0, 18)),
-        Paint()
-          ..color = const Color(0x6B000000)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 24));
+    final path = _piecePath(size, top).shift(const Offset(0, 18));
+    void shadow(Canvas canvas) => canvas.drawPath(path, _shadow);
+    if (!GlassBake.enabled) {
+      shadow(canvas);
+      return;
+    }
+    // Android: the notched shape's blur is an offscreen pass every frame;
+    // drawn once, as the glass's are (glass.dart).
+    GlassBake.draw(canvas, ('pass shadow', top, size),
+        region: path.getBounds().inflate(24 * 3 + 1),
+        sigma: 24,
+        device: GlassBake.deviceScale(canvas),
+        paint: shadow);
   }
 
   @override

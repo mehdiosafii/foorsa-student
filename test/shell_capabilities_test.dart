@@ -11,6 +11,7 @@ void main() {
       'hapticTextures': 3,
       'bootHandoff': true,
       'language': true,
+      'push': 2,
     });
   });
 
@@ -21,7 +22,18 @@ void main() {
       'hapticTextures': 3,
       'bootHandoff': true,
       'language': true,
+      'push': 2,
     });
+  });
+
+  test('the build says which version it is, for the Student App board', () {
+    final caps = shellCapabilities(isIOS: true, appVersion: '1.2.30', appBuild: '61');
+    expect(caps['appVersion'], '1.2.30');
+    expect(caps['appBuild'], '61');
+    // Only the shape the server stores (student_app_sessions.app_version).
+    final odd = shellCapabilities(isIOS: true, appVersion: '1.2 beta<script>', appBuild: '');
+    expect(odd.containsKey('appVersion'), isFalse);
+    expect(odd.containsKey('appBuild'), isFalse);
   });
 
   test('the iPhone app may film: its microphone permission is declared', () {

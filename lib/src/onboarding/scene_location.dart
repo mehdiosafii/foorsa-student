@@ -80,7 +80,7 @@ class LocationScene extends StatefulWidget {
 }
 
 class _LocationSceneState extends State<LocationScene>
-    with SingleTickerProviderStateMixin, SceneClock<LocationScene> {
+    with TickerProviderStateMixin, SceneClock<LocationScene> {
   final GlobalKey _button = GlobalKey();
 
   /// How hard the guide's touch presses the button: the arrow answers.
@@ -92,12 +92,29 @@ class _LocationSceneState extends State<LocationScene>
   double _pokedAt = -1;
   double _foundAt = -1;
 
+  /// The prayer chip floating in once the dot is found, in seconds. Its own
+  /// clock, not the scene's: built from the scene's every frame, the chip's
+  /// builder laid the whole scene out again every frame, found or not.
+  late final AnimationController _chipIn = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 950));
+
   @override
   void initState() {
     super.initState();
     widget.outcome.addListener(_answered);
     startClock(still: widget.still);
-    if (widget.outcome.value == true) _foundAt = 0;
+    if (widget.outcome.value == true) {
+      _foundAt = 0;
+      _showChip();
+    }
+  }
+
+  void _showChip() {
+    if (widget.still) {
+      _chipIn.value = 1;
+    } else {
+      _chipIn.forward(from: 0);
+    }
   }
 
   @override
@@ -113,12 +130,14 @@ class _LocationSceneState extends State<LocationScene>
   void dispose() {
     widget.outcome.removeListener(_answered);
     _nudge.dispose();
+    _chipIn.dispose();
     super.dispose();
   }
 
   void _answered() {
     if (widget.outcome.value != true || !mounted) return;
     setState(() => _foundAt = clock.value);
+    _showChip();
   }
 
   void _locate() {
@@ -158,9 +177,12 @@ class _LocationSceneState extends State<LocationScene>
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
                 onTap: _poke,
-                child: CustomPaint(
-                  painter: _MapPainter(clock,
-                      still: widget.still, radius: r, found: _foundAt),
+                // Its own layer: the map drifts every frame.
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: _MapPainter(clock,
+                        still: widget.still, radius: r, found: _foundAt),
+                  ),
                 ),
               ),
             ),
@@ -172,22 +194,22 @@ class _LocationSceneState extends State<LocationScene>
             right: 0,
             top: middle.dy - 64,
             child: Center(
-              child: ValueListenableBuilder<double>(
-                valueListenable: clock,
-                builder: (context, t, child) {
-                  final v = _foundAt < 0
-                      ? 0.0
-                      : widget.still
-                          ? 1.0
-                          : easeOut(t - _foundAt, 0.3, 0.95);
-                  if (v <= 0) return const SizedBox.shrink();
-                  return Transform.translate(
-                    offset: Offset(0, 8 * (1 - v)),
-                    child: Opacity(opacity: v, child: child),
-                  );
-                },
-                child: const _PrayerLabel(),
-              ),
+              child: _foundAt < 0
+                  ? const SizedBox.shrink()
+                  : AnimatedBuilder(
+                      animation: _chipIn,
+                      builder: (context, child) {
+                        final v = widget.still
+                            ? 1.0
+                            : easeOut(_chipIn.value * 0.95, 0.3, 0.95);
+                        if (v <= 0) return const SizedBox.shrink();
+                        return Transform.translate(
+                          offset: Offset(0, 8 * (1 - v)),
+                          child: Opacity(opacity: v, child: child),
+                        );
+                      },
+                      child: const _PrayerLabel(),
+                    ),
             ),
           ),
           Positioned(
@@ -217,12 +239,15 @@ class _LocationSceneState extends State<LocationScene>
                         valueListenable: widget.away,
                         builder: (context, away, _) => away
                             ? const SizedBox.expand()
-                            : CustomPaint(
-                                painter: _LocateArrowPainter(clock,
-                                    still: widget.still,
-                                    nudge: _nudge,
-                                    pressedAt: _pressedAt,
-                                    pokedAt: _pokedAt),
+                            // Its own layer, apart from the button's glass.
+                            : RepaintBoundary(
+                                child: CustomPaint(
+                                  painter: _LocateArrowPainter(clock,
+                                      still: widget.still,
+                                      nudge: _nudge,
+                                      pressedAt: _pressedAt,
+                                      pokedAt: _pokedAt),
+                                ),
                               ),
                       ),
                     ),
@@ -361,7 +386,14 @@ class _MapPainter extends CustomPainter {
     final circle = Rect.fromCircle(center: centre, radius: r);
     canvas.save();
     canvas.clipPath(Path()..addOval(circle));
-    canvas.saveLayer(circle, Paint()..color = Color.fromRGBO(0, 0, 0, appear));
+    // Faded in as one piece, then drawn straight on: once it is there, an
+    // offscreen layer every frame changes nothing but the cost.
+    if (appear < 1) {
+      canvas.saveLayer(
+          circle, Paint()..color = Color.fromRGBO(0, 0, 0, appear));
+    } else {
+      canvas.save();
+    }
     canvas.translate(centre.dx, centre.dy);
     // It drifts very slowly, as a map does in a walking hand.
     canvas.rotate(0.03 * math.sin(t * 0.35));
@@ -385,7 +417,8 @@ class _MapPainter extends CustomPainter {
     canvas.restore();
     final lens =
         GlassShape.rrect(RRect.fromRectAndRadius(circle, Radius.circular(r)));
-    paintGlassBody(canvas, lens, _lensFrame, opacity: appear);
+    paintGlassBody(canvas, lens, _lensFrame,
+        opacity: appear, bake: ('lens', r));
 
     if (found >= 0) _here(canvas, centre, t, still ? 99 : clock.value - found);
     paintGlassRim(canvas, lens, _lensFrame, opacity: appear);

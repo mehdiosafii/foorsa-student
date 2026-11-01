@@ -183,5 +183,9 @@ extend it or store passwords to work around expiry.
   change biometric enrollment, uninstall/reinstall, and install over the
   current store build. Exercise onboarding, camera/scanner, document upload,
   notifications, adviser calls, and keyboard/back navigation after the Android
-  activity change. Hardware prompts and store delivery cannot be proven by
-  unit tests alone.
+  activity change. The first session after a fresh install runs its web view
+  as a texture rather than in the window (`lib/src/web_view_composition.dart`,
+  docs/first-launch-onboarding.md, "Android"): sign in, paste (the web view
+  plugin's own copy and paste bar in that session), autofill and type in the
+  chat in that session too. Hardware prompts and store delivery
+  cannot be proven by unit tests alone.

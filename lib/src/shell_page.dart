@@ -48,6 +48,7 @@ import 'student_calls.dart';
 import 'student_biometrics.dart';
 import 'chat_viewport.dart';
 import 'crash_reports.dart';
+import 'web_view_composition.dart';
 import 'web_view_recovery.dart';
 
 /// What the shell itself says around the portal, in the student's language.
@@ -196,6 +197,7 @@ class _ShellPageState extends State<ShellPage> {
     setState(() {
       _biometricWasEnabled = _biometrics.enabled;
       _bootWebView = true;
+      _decideComposition();
     });
   }
 
@@ -468,6 +470,16 @@ class _ShellPageState extends State<ShellPage> {
     );
   }
 
+  Future<void> _republishScannerNonce() async {
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      await _publishScannerNonce(controller);
+    } catch (_) {
+      // The page is going; the next load publishes it.
+    }
+  }
+
   Future<void> _publishScannerNonce(InAppWebViewController controller) async {
     final current = await controller.getUrl();
     if (!_isTrustedPortal(current)) return;
@@ -481,7 +493,11 @@ class _ShellPageState extends State<ShellPage> {
       '{value: ${jsonEncode(nonce)}, configurable: true, enumerable: false});'
       // Quick sign-in talks to the shell with the same nonce. Until 1.2.21 it
       // was handed over only before a scan, so the sign-in offer never showed.
-      'window.__foorsaBiometrics?.ready(${jsonEncode(nonce)});}'
+      'window.__foorsaBiometrics?.ready(${jsonEncode(nonce)});'
+      // The push registration waits for it (studentPush.ts): the portal
+      // often asks before the page has finished loading, and was answered
+      // "pending" until it gave up.
+      'window.dispatchEvent(new Event("foorsa-shell-session"));}'
     );
   }
 
@@ -553,6 +569,7 @@ class _ShellPageState extends State<ShellPage> {
       _controller = null;
       PortalHandover.instance.controller = null;
       _webViewGeneration++;
+      _decideComposition();
     });
   }
 
@@ -683,6 +700,9 @@ class _ShellPageState extends State<ShellPage> {
 
 
   // ── Guided document capture (new shells; old shells keep the picker) ──
+  static const guidedScanNoBackCamera =
+      'This device has no back camera to scan with. Choose a photo or a file instead.';
+
   Future<Map<String, dynamic>> _guidedScanForWeb(
       Object? request, Object? callingNonce) async {
     if (!mounted || (!Platform.isIOS && !Platform.isAndroid)) {
@@ -719,9 +739,13 @@ class _ShellPageState extends State<ShellPage> {
         if (!mounted || !_isTrustedPortal(destination) || callingNonce != _scannerNonce) {
           return {'cancelled': true};
         }
-        // Only unsupported hardware uses the framed Flutter camera. Errors
-        // and cancellation never silently switch to an ordinary photo picker.
+        // Errors and cancellation never silently switch to an ordinary photo
+        // picker. The native scanner answers "unsupported" only for a device
+        // with no back camera, and the Flutter camera would find none either
+        // (on an iPhone it would also sound its shutter: the camera plugin
+        // cannot silence a still), so the student is told instead.
         if (native['unsupported'] != true) return native;
+        return {'error': guidedScanNoBackCamera};
       }
       final result = await Navigator.of(context).push<GuidedScanResult>(
         MaterialPageRoute<GuidedScanResult>(
@@ -742,7 +766,9 @@ class _ShellPageState extends State<ShellPage> {
       }
       final picture = result.file;
       if (picture == null) return {'cancelled': true};
-      final bytes = await picture.readAsBytes();
+      // The photo made ready on the phone (upright, bounded, no metadata),
+      // else the camera's own file.
+      final bytes = result.bytes ?? await picture.readAsBytes();
       // Recheck the trusted origin after the modal closes: a WebView
       // navigation during camera use must not receive official-document
       // pixels, even if the original request was from the correct host.
@@ -1083,9 +1109,24 @@ class _ShellPageState extends State<ShellPage> {
 
   bool _onboardingShown = false;
 
+  /// The onboarding hides the shell from edge to edge (onboarding_gate.dart):
+  /// what is drawn under it nobody sees.
+  bool _covered = false;
+
+  /// How the web view now being made is put on the screen, decided as it is
+  /// made (web_view_composition.dart): on Android, in a texture while the
+  /// first-launch onboarding is over it, else in the window as before.
+  bool _webViewHybrid = true;
+
+  void _decideComposition() {
+    _webViewHybrid = webViewUsesHybridComposition(
+        android: Platform.isAndroid, underOnboarding: _onboardingShown);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _covered = OnboardingScope.coveringOf(context);
     final onboarding = OnboardingScope.activeOf(context);
     // The onboarding has just gone: the portal's colour takes the bar back.
     if (_onboardingShown && !onboarding && _chromeReported) _applyStatusBar();
@@ -1105,8 +1146,25 @@ class _ShellPageState extends State<ShellPage> {
         await showStudentCall(invite);
         return {'ok': true};
       case 'getPushToken':
-        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'token': null, 'status': 'pending'};
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) {
+          // Asked before this page had the session (or with an old one): hand
+          // it over and say so, so the portal asks again at once.
+          unawaited(_republishScannerNonce());
+          return {'token': null, 'status': 'pending', 'reason': 'session'};
+        }
         return _push.token();
+      // Where this phone stands, without asking anything: the portal's
+      // Settings row (On, Off, Not set up yet).
+      case 'pushStatus':
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) {
+          unawaited(_republishScannerNonce());
+          return {'status': 'pending', 'reason': 'session'};
+        }
+        return _push.status();
+      // Off in the phone's settings: the button that takes the student there.
+      case 'openNotificationSettings':
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'ok': false};
+        return {'ok': await _push.openSettings()};
       case 'clearPushToken':
         if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'ok': false};
         await _push.clear();
@@ -1213,7 +1271,15 @@ class _ShellPageState extends State<ShellPage> {
               bottom: false,
               child: !_bootWebView
                   ? const SizedBox.expand()
-                  : InAppWebView(
+                  // Not drawn while the onboarding hides it, when it is in a
+                  // texture: it keeps loading and drawing into it, and the
+                  // onboarding's frames no longer carry it.
+                  : CoveredByOnboarding(
+                      covered: webViewHiddenUnderOnboarding(
+                          android: Platform.isAndroid,
+                          hybridComposition: _webViewHybrid,
+                          covered: _covered),
+                      child: InAppWebView(
                 // A new one after Android's render process is gone (_webViewDied).
                 key: ValueKey<int>(_webViewGeneration),
                 // The page takes every touch at once: held in Flutter's
@@ -1250,7 +1316,10 @@ class _ShellPageState extends State<ShellPage> {
                   // full rate (60/90/120Hz) instead of falling back to
                   // software rasterisation.
                   hardwareAcceleration: true,
-                  useHybridComposition: true,
+                  // Android: in the window, as always, except while the
+                  // first-launch onboarding is drawn over it
+                  // (web_view_composition.dart).
+                  useHybridComposition: _webViewHybrid,
                   // Rasterise slightly beyond the viewport so fast scrolling
                   // and large moving surfaces don't reveal unpainted tiles.
                   offscreenPreRaster: true,
@@ -1339,7 +1408,10 @@ class _ShellPageState extends State<ShellPage> {
                   // older builds (shell_capabilities.dart).
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaShellCapabilities',
-                    callback: (args) => shellCapabilities(isIOS: Platform.isIOS),
+                    callback: (args) async {
+                      final info = _packageInfo ?? await PackageInfo.fromPlatform().catchError((Object _) => PackageInfo(appName: '', packageName: '', version: '', buildNumber: ''));
+                      return shellCapabilities(isIOS: Platform.isIOS, appVersion: info.version, appBuild: info.buildNumber);
+                    },
                   );
                   // A texture by name (and the grain's level), or a number for
                   // an ordinary press: shell_haptics.dart.
@@ -1515,22 +1587,18 @@ class _ShellPageState extends State<ShellPage> {
                   return NavigationActionPolicy.CANCEL;
                 },
               ),
+                  ),
             ),
             if (!_loaderRemoved)
-              IgnorePointer(
-                ignoring: !_loader.showing,
-                child: AnimatedOpacity(
-                  opacity: _loader.showing ? 1 : 0,
-                  // The portal's own loader fades in the same 220 ms.
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  onEnd: () {
-                    if (!_loader.showing && mounted) {
-                      setState(() => _loaderRemoved = true);
-                    }
-                  },
-                  child: ShellLoadingScreen(dark: _isDark(context)),
-                ),
+              // Neither drawn nor animated while the first-launch onboarding
+              // hides it (shell_screens.dart).
+              ShellLoadingLayer(
+                showing: _loader.showing,
+                covered: _covered,
+                dark: _isDark(context),
+                onGone: () {
+                  if (mounted) setState(() => _loaderRemoved = true);
+                },
               ),
             if (_loadFailed)
               ShellOfflineScreen(onRetry: _retry, dark: _isDark(context)),

@@ -157,7 +157,14 @@ know one ignore it, so the portal sends them to every build.
 
 - `FoorsaShellCapabilities` answers what this build does (`shell_capabilities.dart`):
   `embeddedFrames`, `videoInput`, `hapticTextures` (3: the admission reveal's
-  textures and `error`), `bootHandoff` and `language`.
+  textures and `error`), `bootHandoff`, `language`, `push` (2: push registration names its
+  reasons and answers `pushStatus`) and the build's `appVersion` and `appBuild`.
+- `FoorsaBridge` with the page's session (`nonce`): `getPushToken` (a token, or
+  why there is none), `pushStatus` (the permission, without asking),
+  `openNotificationSettings`, `clearPushToken` (sign-out) and the calendar's
+  reminders. A call made before the page had the session gets
+  `{ status: 'pending', reason: 'session' }`, and the shell hands the session
+  over again with a `foorsa-shell-session` event. See `docs/student-push.md`.
 - `FoorsaShellLoading('hold' | 'ready')`: the portal draws the app's own loader
   until its first screen, so the app keeps its loader on top from `hold` to
   `ready` (at most 10 s), centred where the portal centres its one, and one

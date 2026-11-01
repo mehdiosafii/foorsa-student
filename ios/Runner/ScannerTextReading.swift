@@ -1218,8 +1218,8 @@ enum ScannerTextGuidance: String, Equatable {
         ? "Move closer — the lines on the card are too small."
         : "Move closer — the bottom lines are too small.", compact: "Move closer.")
     case .glareOnMachineLines:
-      return ScannerGuidanceCopy(title: "Glare on the bottom lines",
-        detail: "Tilt the page slightly to move the reflection.", compact: "Tilt slightly.")
+      return ScannerGuidanceCopy(title: "Glare on the bottom lines", detail: "Tilt the phone slightly.",
+        compact: "Tilt slightly.")
     case .showWholeMachineLines:
       return kind == .idCard
         ? ScannerGuidanceCopy(title: "Show the three bottom lines",
@@ -1244,7 +1244,7 @@ enum ScannerTextGuidance: String, Equatable {
       return ScannerGuidanceCopy(title: "Show the card", detail: "Keep the card’s printed details in view.",
         compact: "Card details.")
     case .glareOnText:
-      return ScannerGuidanceCopy(title: "Glare on the card", detail: "Tilt the card slightly to move the reflection.",
+      return ScannerGuidanceCopy(title: "Glare on the card", detail: "Tilt the phone slightly.",
         compact: "Tilt slightly.")
     case .moveCloserText:
       return ScannerGuidanceCopy(title: "Move closer", detail: "Move closer so the text is readable.",
@@ -1253,8 +1253,8 @@ enum ScannerTextGuidance: String, Equatable {
       return ScannerGuidanceCopy(title: "Show the printed side", detail: "Show the side of the page with the text.",
         compact: "Printed side.")
     case .textRunsPastEdge:
-      return ScannerGuidanceCopy(title: "Show the whole page", detail: "Some text runs past the edge. Fit all of it in view.",
-        compact: "Whole page.")
+      return ScannerGuidanceCopy(title: "Show all four corners", detail: "Some text runs past the edge of the view.",
+        compact: "All four corners.")
     }
   }
 }

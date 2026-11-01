@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -83,6 +85,9 @@ class FoorsaStudentApp extends StatelessWidget {
       home: FirstLaunchGate(
         show: firstLaunch,
         sounds: sounds,
+        // Android's GPUs draw the glass's blurs from pictures
+        // (onboarding/glass.dart).
+        bakeGlass: Platform.isAndroid,
         child: DeviceAccess(
           suppressed: firstLaunch,
           child: ShellPage(

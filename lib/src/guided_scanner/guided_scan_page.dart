@@ -1,10 +1,34 @@
 /// A banking-app-style guided document camera for the Flutter shell.
 ///
-/// The portal still owns cropping, enhancement, multi-page PDFs, upload, and
-/// asynchronous OCR. This route only chooses WHEN to take the photograph: once
-/// the page is steady AND the reading on the phone (ML Kit's bundled model,
+/// The portal still owns cropping, multi-page PDFs, upload, and asynchronous
+/// OCR. This route only chooses WHEN to take the photograph: once the page is
+/// steady AND the reading on the phone (ML Kit's bundled model,
 /// live_text_reader.dart) says it is the paper the step asked for. It never
 /// sends a preview frame or personal document to any server.
+///
+/// What changed on 31 Oct 2026 (the owner, on an Android phone: "the image is
+/// very very very bad ... and you still need to click the capture button"):
+///
+/// - The photo is the sensor's full 4:3 frame ([ResolutionPreset.max]; on
+///   most phones 12 MP), focused on the page just before it is taken, then
+///   made upright and bounded to 8 MP on the phone (scan_photo.dart). Before,
+///   the camera was opened at 1080p for its image stream, and the plugin uses
+///   that one resolution for the still photo too: a 1920×1080 frame, of which
+///   a page in the guide kept about 700 pixels across.
+/// - The preview shows the whole photo, so what the guide frames is what is
+///   taken, at full width, and the preview is drawn at its own resolution.
+/// - Frames are asked for one at a time, a few a second (the image stream
+///   otherwise copies every frame, 30 a second, across the platform channel),
+///   and their pixels are worked on a worker isolate (scan_frame_processor.dart).
+/// - The page is found wherever it is held (scan_page_segment.dart), or by
+///   its text when it has no visible outline (scan_frame_loop.dart).
+///
+/// And on 1 Nov 2026 (the owner: "guide the student to take the perfect
+/// picture while taking the picture so the work is easier for ai"), the
+/// screen says one thing at a time, in the iPhone's words and order
+/// (scan_coach.dart): find the page, the whole page, closer, the phone flat,
+/// the light, what the reading still needs, then hold still; the outline is
+/// dashed until the page is held and solid while it is (scan_guidance_view.dart).
 library;
 
 import 'dart:async';
@@ -18,23 +42,65 @@ import 'package:flutter/services.dart';
 import '../app_language.dart';
 import 'camera_luma.dart';
 import 'live_text_reader.dart';
-import 'scan_guidance.dart';
+import 'scan_coach.dart';
+import 'scan_copy_language.dart';
 import 'scan_document_profile.dart';
+import 'scan_frame_loop.dart';
+import 'scan_frame_processor.dart';
+import 'scan_guidance_view.dart';
+import 'scan_photo.dart';
 import 'scan_text_reading.dart';
 
 class GuidedScanResult {
-  const GuidedScanResult.captured(this.file, {this.liveReading})
+  const GuidedScanResult.captured(this.file, {this.liveReading, this.bytes})
       : useLegacyCamera = false;
   const GuidedScanResult.fallback()
-      : file = null, useLegacyCamera = true, liveReading = null;
+      : file = null, useLegacyCamera = true, liveReading = null, bytes = null;
 
   final XFile? file;
   final bool useLegacyCamera;
+
+  /// The photo made ready for the portal (upright, bounded, no metadata),
+  /// or null when the camera's own file is to be sent as it is.
+  final Uint8List? bytes;
 
   /// What was read on the phone while the page was in view, checked and
   /// bounded (scan_text_reading.dart), for this capture only. Null without a
   /// text reader.
   final Map<String, Object>? liveReading;
+}
+
+/// Resolutions tried in turn when the Android camera opens. The still photo
+/// is taken at the first that opens; CameraX keeps the preview and the image
+/// stream at the screen's size or below while the photo is at the sensor's
+/// maximum (a photo at its maximum is only guaranteed beside streams of
+/// preview size).
+const guidedScanResolutions = [
+  ResolutionPreset.max, ResolutionPreset.veryHigh, ResolutionPreset.high,
+];
+
+/// An iPhone too old for the native scanner keeps 1080p: there the image
+/// stream would follow the photo to the sensor's maximum.
+const guidedScanIosResolutions = [ResolutionPreset.veryHigh, ResolutionPreset.high];
+
+/// The longest a frame's work may take before it is done inline instead.
+const guidedScanWorkerTimeout = Duration(seconds: 2);
+
+/// How often a frame is asked for while the page is looked for.
+const guidedScanFrameInterval = Duration(milliseconds: 250);
+
+/// The longest the camera waits to focus on the page before the photo.
+const guidedScanFocusWait = Duration(milliseconds: 1500);
+
+/// The point to focus on, in the full camera image's upright normalized
+/// coordinates: the middle of the page found, else the middle of the view.
+Offset guidedScanFocusPoint(Rect? page, {required int sensorWidth, required int sensorHeight, double? viewportAspect}) {
+  final region = visiblePreviewRegion(sensorWidth, sensorHeight, viewportAspect);
+  final centre = page?.center ?? const Offset(0.5, 0.5);
+  return Offset(
+    (region.left + centre.dx.clamp(0.0, 1.0) * region.width).clamp(0.0, 1.0),
+    (region.top + centre.dy.clamp(0.0, 1.0) * region.height).clamp(0.0, 1.0),
+  );
 }
 
 class GuidedScanPage extends StatefulWidget {
@@ -51,56 +117,58 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   CameraController? _camera;
   Future<void>? _pendingDispose;
   Future<void>? _pendingStart;
-  final _analyzer = const ScanFrameAnalyzer();
-  final _gate = ScanAutoCaptureGate();
-  // When the page is taken with no tap: steady and read, steady for a moment,
-  // or in view long enough (ScanAutoShutter). A soft frame no longer starts
-  // the wait over.
-  final _shutter = ScanAutoShutter();
-  // The live reading: steady is not enough, the page must also read as the
-  // paper this step asked for before the camera takes it by itself, or have
-  // been clear for a moment while the reading still looks.
-  late final ScanTextReadingSession _reading =
-      ScanTextReadingSession.forProfile(widget.profile);
+  // Only the Android app carries a text model; an iPhone that falls back to
+  // this camera captures on steadiness alone, as before.
+  late final GuidedFrameLoop _loop =
+      GuidedFrameLoop(widget.profile, canReadText: Platform.isAndroid);
   final _textChannel = LiveTextChannel();
-  static const _textInterval = Duration(milliseconds: 300);
-  ScanTextGateStatus? _readingStatus;
-  bool _textBusy = false;
-  DateTime? _lastTextRead;
-  Duration _lastTextDuration = Duration.zero;
-  int _textEpoch = 0;
-  bool _captureMatched = false;
+  final _photos = ScanPhotoChannel();
+  // One instruction at a time, held long enough to be read.
+  final _coach = ScanGuidanceCoach();
+  ScanGuidance? _guidance;
+  final _inline = ScanFrameProcessor();
+  ScanFrameWorker? _worker;
+  bool _workerStarting = false;
 
-  ScanLumaGrid? _previous;
-  ScanFrameAnalysis? _analysis;
-  DateTime? _lastProcessed;
   int _cameraGeneration = 0;
+  int _sensorOrientation = 90;
   bool _initializing = false;
   bool _appActive = true;
   bool _closing = false;
   bool _busy = false;
+  bool _preparing = false;
   bool _cameraFailed = false;
   bool _streamSupported = false;
   bool _autoEnabled = true;
   bool _torch = false;
-  Words? _captureError;
-  double _progress = 0;
+  String? _captureError;
   double? _viewportAspect;
+
+  // One frame at a time: asked for, received, worked on, then the next.
+  bool _framePending = false;
+  bool _frameInFlight = false;
+  DateTime? _frameAskedAt;
+  Timer? _nextFrame;
+  Future<void>? _stopping;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Only the Android app carries a text model; an iPhone that falls back to
-    // this camera captures on steadiness alone, as before.
-    if (!Platform.isAndroid) _reading.markReaderUnavailable();
+    unawaited(_startWorker());
     _scheduleCameraStart();
   }
 
-  void _restartReading() {
-    _reading.reset();
-    _textEpoch++;
-    _lastTextRead = null;
+  Future<void> _startWorker() async {
+    if (_workerStarting || _worker != null) return;
+    _workerStarting = true;
+    final worker = await ScanFrameWorker.start();
+    _workerStarting = false;
+    if (!mounted || _closing) {
+      worker?.close();
+      return;
+    }
+    _worker = worker;
   }
 
   void _scheduleCameraStart() {
@@ -129,6 +197,21 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     }
   }
 
+  /// The steadiness hold, the reading and the instruction all start over.
+  void _resetGuidance() {
+    _loop.reset();
+    _coach.reset();
+    _guidance = null;
+  }
+
+  void _forgetFrames() {
+    _nextFrame?.cancel();
+    _nextFrame = null;
+    _framePending = false;
+    _worker?.forget();
+    _inline.forget();
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_closing) return;
@@ -142,11 +225,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       if (previous != null && !_busy) {
         _pendingDispose = _disposeCamera(previous);
       }
-      _gate.reset();
-      _shutter.reset();
-      _restartReading();
-      _previous = null;
-      _lastProcessed = null;
+      _resetGuidance();
+      _forgetFrames();
       if (mounted) setState(() => _streamSupported = false);
     } else {
       _appActive = true;
@@ -174,11 +254,10 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       final description = rearCameras.first;
       Object? lastError;
 
-      // 1080p is sufficient for the scan editor without forcing a 4K image
-      // stream on low-memory phones. 720p initialization is an OS fallback.
-      for (final preset in [
-        ResolutionPreset.veryHigh, ResolutionPreset.high,
-      ]) {
+      // The still photo is taken at the resolution the camera opens at, so
+      // the sensor's full 4:3 frame first. CameraX bounds the preview and
+      // the image stream to the screen's size or below meanwhile.
+      for (final preset in Platform.isIOS ? guidedScanIosResolutions : guidedScanResolutions) {
         opened = CameraController(
           description, preset,
           enableAudio: false,
@@ -206,24 +285,11 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         return;
       }
       _camera = opened;
+      _sensorOrientation = description.sensorOrientation == 270 ? 270 : 90;
       try {
         await opened.lockCaptureOrientation(DeviceOrientation.portraitUp);
       } catch (_) {
         // Rotation metadata still travels with the JPEG on older hardware.
-      }
-      if (_autoEnabled) {
-        try {
-          await opened.startImageStream(_checkFrame);
-          _streamSupported = true;
-        } catch (_) {
-          // A few camera implementations support still photos but no image
-          // stream. Keep the shutter usable; never fake "auto-ready".
-          _streamSupported = false;
-        }
-      } else {
-        // Auto-capture was disabled before a lifecycle restart. Do not resume
-        // the expensive stream until the student turns it back on.
-        _streamSupported = true;
       }
       if (!_appActive || generation != _cameraGeneration) {
         // An inactive event already owns disposal of this controller.
@@ -234,8 +300,14 @@ class _GuidedScanPageState extends State<GuidedScanPage>
           _cameraFailed = false;
           _captureError = null;
           _torch = false;
+          // Assumed until the first ask fails: a few camera implementations
+          // take still photos but stream no frames.
+          _streamSupported = true;
         });
       }
+      _resetGuidance();
+      _forgetFrames();
+      if (_autoEnabled) unawaited(_askForFrame());
     } catch (_) {
       if (opened != null && _camera != opened) {
         await _disposeCamera(opened);
@@ -257,113 +329,134 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     }
   }
 
-  void _checkFrame(CameraImage image) {
-    if (_busy || _closing || !mounted ||
-        !_autoEnabled || !_streamSupported) {
+  bool get _wantsFrames => mounted && !_closing && !_busy && _appActive &&
+      _autoEnabled && _streamSupported && _camera != null;
+
+  /// One frame: the stream is started for it and stopped as soon as it is in.
+  Future<void> _askForFrame() async {
+    _nextFrame = null;
+    await _stopping;
+    final camera = _camera;
+    if (!_wantsFrames || camera == null || !camera.value.isInitialized ||
+        camera.value.isStreamingImages || _frameInFlight || _framePending) {
       return;
     }
-    final now = DateTime.now();
-    if (_lastProcessed != null &&
-        now.difference(_lastProcessed!).inMilliseconds < 230) {
-      return;
-    }
-    _lastProcessed = now;
-    final grid = sampleCameraLuma(image, viewportAspect: _viewportAspect);
-    if (grid == null) {
-      // Unsupported preview formats must never auto-trigger.
-      if (_streamSupported && mounted) {
+    final generation = _cameraGeneration;
+    _framePending = true;
+    _frameAskedAt = DateTime.now();
+    try {
+      await camera.startImageStream(_onFrame);
+    } catch (_) {
+      _framePending = false;
+      // Still photos without an image stream: keep the shutter usable and
+      // never fake "auto-ready".
+      if (mounted && generation == _cameraGeneration && !_closing) {
         setState(() => _streamSupported = false);
-        final camera = _camera;
-        if (camera != null) unawaited(_stopImageStream(camera));
       }
-      return;
-    }
-    final kind = switch (widget.profile.layout) {
-      GuidedScanLayout.passport => GuidedDocumentKind.passport,
-      GuidedScanLayout.card => GuidedDocumentKind.idCard,
-      _ => GuidedDocumentKind.page,
-    };
-    final result = _analyzer.analyse(
-      grid, kind,
-      previous: _previous,
-      profile: widget.profile,
-      viewportAspect: _viewportAspect ?? 0.5,
-    );
-    _previous = grid;
-    // The reading belongs to one page: it starts over when the page has been
-    // gone a moment or another outline takes its place.
-    if (_reading.observePage(result.bounds, now)) _restartReading();
-    _readText(image, result, now);
-    final steady = _gate.observe(result, now);
-    final reading = _reading.status(glare: result.hint == ScanHint.reduceGlare);
-    if (mounted) {
-      setState(() {
-        _analysis = result;
-        _readingStatus = reading;
-        _progress = reading.allowsCapture
-            ? _gate.progress : math.min(_gate.progress, 0.85);
-      });
-    }
-    // Taken with no tap: steady and read, steady for a moment, or in view long
-    // enough; shadow, glare or dim light get a moment to be fixed first; the
-    // wrong paper, or the wrong side of a card, is never taken.
-    final page = steady ? ScanShutterPage.steady
-        : result.bounds != null ? ScanShutterPage.inView : ScanShutterPage.missing;
-    final lightingGood = result.hint != ScanHint.brighten && result.hint != ScanHint.reduceGlare;
-    if (!_busy && _shutter.observe(page, now, reading: reading, kind: _reading.kind, lightingGood: lightingGood)) {
-      _captureMatched = reading.passed;
-      unawaited(_takePhoto(automatic: true));
     }
   }
 
-  /// Hands the page to ML Kit a few times a second, one read at a time. The
-  /// frame callback never waits for it.
-  void _readText(CameraImage image, ScanFrameAnalysis analysis, DateTime now) {
-    final bounds = analysis.bounds;
-    if (bounds == null || _textBusy || _reading.readerUnavailable ||
-        image.format.group != ImageFormatGroup.yuv420 || image.planes.isEmpty) {
+  void _onFrame(CameraImage image) {
+    if (!_framePending || _frameInFlight) return;
+    _framePending = false;
+    final camera = _camera;
+    final generation = _cameraGeneration;
+    if (camera != null) _stopping = _stopImageStream(camera);
+    if (!_wantsFrames) return;
+    final plane = ScanLumaPlane.fromCameraImage(image);
+    if (plane == null) {
+      // Unsupported preview formats must never auto-trigger.
+      if (mounted) setState(() => _streamSupported = false);
       return;
     }
-    final last = _lastTextRead;
-    final backoff = _lastTextDuration * 1.5;
-    final interval = backoff > _textInterval ? backoff : _textInterval;
-    if (last != null && now.difference(last) < interval) return;
-    final crop = LiveTextCrop.forPage(bounds,
-        sensorWidth: image.width, sensorHeight: image.height,
-        viewportAspect: _viewportAspect, turns: _reading.turnPolicy);
-    final plane = image.planes.first;
-    final luma = crop?.extract(plane.bytes,
-        rowStride: plane.bytesPerRow, pixelStride: plane.bytesPerPixel ?? 1);
-    if (crop == null || luma == null) return;
-    _textBusy = true;
-    _lastTextRead = now;
-    final epoch = _textEpoch;
-    final started = DateTime.now();
-    unawaited(_textChannel.read(luma, crop).then((result) {
-      _textBusy = false;
-      _lastTextDuration = DateTime.now().difference(started);
-      if (!mounted || _closing || _busy || epoch != _textEpoch) return;
-      switch (result.status) {
-        case LiveTextReadStatus.read:
-          _reading.ingest(crop.frame(result.lines));
-        case LiveTextReadStatus.failed:
-          _reading.readFailed();
-        case LiveTextReadStatus.unavailable:
-          _reading.markReaderUnavailable();
-        case LiveTextReadStatus.busy:
-          break;
-      }
+    _frameInFlight = true;
+    final at = DateTime.now();
+    unawaited(_workOn(plane, at, generation).whenComplete(() {
+      _frameInFlight = false;
+      _askForNextFrame();
     }));
   }
 
-  /// What was read, for this capture. A photo taken by hand returns whatever
-  /// had been read by then.
-  Map<String, Object>? _liveReadingFor({required bool automatic}) {
-    if (!Platform.isAndroid) return null;
-    final matched = automatic
-        ? _captureMatched : _reading.status(glare: false).passed;
-    return sanitizeLiveReading(_reading.liveReading(engine: 'mlkit_latin',
-        matched: matched, referenceYear: DateTime.now().year));
+  void _askForNextFrame() {
+    if (!_wantsFrames) return;
+    final asked = _frameAskedAt ?? DateTime.now();
+    final wait = guidedScanFrameInterval - DateTime.now().difference(asked);
+    _nextFrame?.cancel();
+    _nextFrame = Timer(wait.isNegative ? Duration.zero : wait, () => unawaited(_askForFrame()));
+  }
+
+  Future<void> _workOn(ScanLumaPlane plane, DateTime at, int generation) async {
+    final readDue = Platform.isAndroid && _loop.textReadDue(at);
+    final job = ScanFrameJob(
+      plane: plane,
+      profile: widget.profile,
+      viewportAspect: _viewportAspect,
+      sensorOrientation: _sensorOrientation,
+      readText: readDue,
+      readWholeView: readDue,
+      turns: _loop.reading.turnPolicy,
+    );
+    ScanFrameWork? work;
+    final worker = _worker;
+    try {
+      work = worker != null
+          ? await worker.process(job).timeout(guidedScanWorkerTimeout)
+          : _inline.process(job);
+    } catch (_) {
+      // A worker that failed: this and later frames are worked inline.
+      if (identical(_worker, worker)) {
+        _worker = null;
+        worker?.close();
+      }
+      work = _inline.process(job);
+    }
+    if (!mounted || _closing || _busy || generation != _cameraGeneration || !_autoEnabled) return;
+    if (work == null) {
+      setState(() => _streamSupported = false);
+      return;
+    }
+    final now = DateTime.now();
+    final capture = _loop.observe(work.analysis, now, aspect: work.aspect);
+    final crop = work.textCrop, luma = work.textLuma;
+    if (crop != null && luma != null) _readText(crop, luma, wholeView: work.wholeView, now: now);
+    _guidance = _coach.update(
+      scanGuidanceFor(work.analysis, _loop.readingStatus,
+          profile: widget.profile, aspect: work.aspect,
+          textPage: work.analysis.bounds == null && _loop.textSeenWhole(now)),
+      now,
+    ).line;
+    setState(() {});
+    if (capture && !_busy) unawaited(_takePhoto(automatic: true));
+  }
+
+  /// Hands the page to ML Kit, one read at a time. The frames never wait
+  /// for it.
+  void _readText(LiveTextCrop crop, Uint8List luma, {required bool wholeView, required DateTime now}) {
+    _loop.textStarted(now, wholeView: wholeView);
+    final epoch = _loop.textEpoch;
+    final started = DateTime.now();
+    unawaited(_textChannel.read(luma, crop).then((result) {
+      if (!mounted || _closing) return;
+      _loop.textFinished(result, crop,
+          epoch: epoch, took: DateTime.now().difference(started),
+          wholeView: wholeView, now: DateTime.now(), capturing: _busy);
+    }));
+  }
+
+  /// The camera focuses on the page before the photo, for at most
+  /// [guidedScanFocusWait]. A camera that cannot focus on a point (a fixed
+  /// lens) takes the photo where it is.
+  Future<void> _focusOnPage(CameraController camera) async {
+    final frame = camera.value.previewSize;
+    if (frame == null) return;
+    final point = guidedScanFocusPoint(_loop.analysis?.bounds,
+        sensorWidth: frame.width.round(), sensorHeight: frame.height.round(),
+        viewportAspect: _viewportAspect);
+    try {
+      await camera.setFocusPoint(point).timeout(guidedScanFocusWait);
+    } catch (_) {
+      // Not every camera focuses on a point; the photo is taken anyway.
+    }
   }
 
   Future<void> _takePhoto({bool automatic = false}) async {
@@ -372,16 +465,23 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     Future<XFile>? capture;
     XFile? capturedPhoto;
     var delivered = false;
+    _nextFrame?.cancel();
+    _nextFrame = null;
     setState(() {
       _busy = true;
       _captureError = null;
+      _guidance = _coach.update(const ScanGuidance(scanTakingPhoto, ScanOutlineState.holding),
+          DateTime.now(), immediate: true).line;
     });
     try {
-      // CameraX/AVFoundation cannot consistently take still photographs
-      // concurrently with the preview stream. Stop it before takePicture.
+      // The photo is taken with no frames streaming.
       if (camera.value.isStreamingImages) {
         await camera.stopImageStream().timeout(const Duration(seconds: 3));
       }
+      await _stopping?.timeout(const Duration(seconds: 3), onTimeout: () {});
+      _framePending = false;
+      await _focusOnPage(camera);
+      if (!mounted || _closing || _camera != camera) return;
       capture = camera.takePicture();
       final photo = await capture.timeout(
         const Duration(seconds: 15),
@@ -391,14 +491,25 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         await _disposeCamera(camera);
         return;
       }
-      HapticFeedback.mediumImpact();
+      // One light touch as the shot is in (never during the exposure, where
+      // the motor would shake the picture), and a calm word.
+      HapticFeedback.lightImpact();
+      _guidance = _coach.update(scanGuidanceDone, DateTime.now()).line;
       _closing = true;
       _camera = null;
       _cameraGeneration++;
+      final liveReading = Platform.isAndroid
+          ? _loop.liveReading(automatic: automatic, referenceYear: DateTime.now().year)
+          : null;
       await _disposeCamera(camera);
       if (!mounted) return;
+      // Made upright and bounded on the phone; the camera's own file when
+      // that cannot be done.
+      setState(() => _preparing = true);
+      final ready = Platform.isAndroid ? await _photos.prepare(photo.path) : null;
+      if (!mounted) return;
       Navigator.of(context).pop(GuidedScanResult.captured(photo,
-          liveReading: _liveReadingFor(automatic: automatic)));
+          liveReading: liveReading, bytes: ready?.bytes));
       delivered = true;
     } catch (error) {
       final captureTimedOut = error is TimeoutException;
@@ -410,13 +521,11 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         _camera = null;
         _cameraGeneration++;
       }
-      _gate.reset();
-      _shutter.reset();
-      _previous = null;
+      _resetGuidance();
+      _forgetFrames();
       setState(() {
         _busy = false;
-        _progress = 0;
-        _captureError = _photoFailed;
+        _captureError = 'The photo was not taken. Hold still and try again.';
       });
       // A pause can detach the controller while takePicture is in flight.
       // If resume already happened, start a fresh controller now instead of
@@ -424,13 +533,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       if (captureTimedOut || _camera != camera || !_appActive) {
         await _disposeCamera(camera);
         if (_appActive && mounted && !_closing) _scheduleCameraStart();
-      } else if (camera.value.isInitialized && _autoEnabled &&
-          !camera.value.isStreamingImages && _streamSupported) {
-        try {
-          await camera.startImageStream(_checkFrame);
-        } catch (_) {
-          if (mounted) setState(() => _streamSupported = false);
-        }
+      } else if (camera.value.isInitialized && _autoEnabled && _streamSupported) {
+        unawaited(_askForFrame());
       }
     } finally {
       if (_camera != camera || _closing) await _disposeCamera(camera);
@@ -446,6 +550,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     if (_busy || _closing) return;
     _closing = true;
     _cameraGeneration++;
+    _forgetFrames();
     // A low-end device may still be opening the guided camera. Wait for that
     // attempt to observe _closing and release its controller before launching
     // the OS camera, otherwise the fallback can fail with "camera in use".
@@ -488,71 +593,69 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   }
 
   Future<void> _toggleAuto() async {
-    _gate.reset();
-    _shutter.reset();
-    _restartReading();
-    _previous = null;
-    _lastProcessed = null;
     final enabling = !_autoEnabled;
-    setState(() {
-      _autoEnabled = enabling;
-      _progress = 0;
-      _analysis = null;
-    });
+    _resetGuidance();
+    _forgetFrames();
+    setState(() => _autoEnabled = enabling);
     final camera = _camera;
     if (camera == null || !camera.value.isInitialized) return;
     if (!enabling) {
-      // Keeping a full camera image stream alive while auto-capture is off is
-      // expensive on budget phones even though Dart ignores the callbacks.
+      // No frames are asked for while auto-capture is off.
       await _stopImageStream(camera);
       return;
     }
-    if (!camera.value.isStreamingImages) {
-      try {
-        await camera.startImageStream(_checkFrame);
-      } catch (_) {
-        if (mounted && _camera == camera) {
-          setState(() => _streamSupported = false);
-        }
-      }
-    }
+    unawaited(_askForFrame());
   }
 
   @override
   void dispose() {
     _closing = true;
     _cameraGeneration++;
+    _nextFrame?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     final camera = _camera;
     _camera = null;
     if (camera != null) unawaited(_disposeCamera(camera));
+    _worker?.close();
     unawaited(_textChannel.close());
     super.dispose();
   }
 
-  Widget _cameraPreview(CameraController camera) {
+  /// The whole photo on screen, at its own aspect (letterboxed), with the
+  /// guide drawn over it: what the guide frames is what is taken.
+  Widget _cameraPreview(CameraController camera, ScanOutlineState state) {
     return LayoutBuilder(
       builder: (context, bounds) {
-        if (bounds.maxWidth > 0 && bounds.maxHeight > 0) {
-          _viewportAspect = bounds.maxWidth / bounds.maxHeight;
-        }
         final size = camera.value.previewSize;
-        if (size == null || size.width <= 0 || size.height <= 0) {
+        if (size == null || size.width <= 0 || size.height <= 0 ||
+            bounds.maxWidth <= 0 || bounds.maxHeight <= 0) {
           return const SizedBox.expand();
         }
-        // Camera buffer is landscape in portrait orientation. Cover, rather
-        // than stretching, and clip outside the screen to preserve geometry.
-        final width = size.height;
-        final height = size.width;
-        final scale = math.max(
-          bounds.maxWidth / width, bounds.maxHeight / height,
-        );
-        return ClipRect(
-          child: Center(
-            child: SizedBox(
-              width: width * scale,
-              height: height * scale,
-              child: CameraPreview(camera),
+        // The camera buffer is landscape in portrait orientation.
+        final width = math.min(size.width, size.height);
+        final height = math.max(size.width, size.height);
+        final scale = math.min(bounds.maxWidth / width, bounds.maxHeight / height);
+        _viewportAspect = width / height;
+        final analysis = _loop.analysis;
+        return Center(
+          child: SizedBox(
+            width: width * scale,
+            height: height * scale,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                CameraPreview(camera),
+                // Painted in the preview's normalized coordinates, the same
+                // ones the frame analysis uses.
+                CustomPaint(
+                  painter: ScanGuidePainter(
+                    guide: analysis?.bounds ?? widget.profile.guide(_viewportAspect ?? 0.75),
+                    state: state,
+                    zones: widget.profile.zones,
+                    corners: analysis?.bounds != null ? analysis?.corners : null,
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -561,19 +664,6 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   }
 
   // What the scanner says, in the student's language.
-  static const _photoFailed = Words(
-      'Could not take the photo. Try again or use the regular camera.',
-      'La photo n’a pas pu être prise. Réessayez ou utilisez l’appareil '
-          'photo habituel.',
-      'تعذّر التقاط الصورة. أعد المحاولة أو استخدم الكاميرا العادية.');
-  static const _capturing = Words('Capturing…', 'Capture…', 'جارٍ الالتقاط…');
-  static const _cameraUnavailable = Words('This camera is unavailable',
-      'Cet appareil photo est indisponible', 'هذه الكاميرا غير متاحة');
-  static const _openingCamera = Words('Opening camera…',
-      'Ouverture de l’appareil photo…', 'جارٍ فتح الكاميرا…');
-  static const _tapShutter = Words('Tap the shutter when ready',
-      'Touchez le déclencheur pour prendre la photo',
-      'اضغط على زر الالتقاط لأخذ الصورة');
   static const _close =
       Words('Close scanner', 'Fermer le scanner', 'إغلاق الماسح الضوئي');
   static const _scanTitle = Words(
@@ -587,8 +677,6 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       Words('Auto off', 'Auto désactivé', 'تلقائي: متوقف');
   static const _takePhotoLabel = Words('Take photo manually',
       'Prendre la photo manuellement', 'التقاط الصورة يدويًا');
-  static const _otherCamera =
-      Words('Other camera', 'Autre appareil photo', 'كاميرا أخرى');
   static const _footnote = Words(
       'Automatic capture once the right paper is clear and steady · manual '
           'capture always available',
@@ -596,6 +684,33 @@ class _GuidedScanPageState extends State<GuidedScanPage>
           'capture manuelle toujours possible',
       'التقاط تلقائي حين تكون الوثيقة الصحيحة واضحة وثابتة · الالتقاط اليدوي '
           'متاح دائمًا');
+  static const _cameraApp =
+      Words('Camera app', 'Appli Appareil photo', 'تطبيق الكاميرا');
+  static const _cameraAppHint = Words(
+      'Opens your phone\'s camera app instead of this scanner',
+      'Ouvre l’application Appareil photo du téléphone à la place de ce scanner',
+      'يفتح تطبيق الكاميرا في هاتفك بدل هذا الماسح');
+
+  /// What the panel says now: the photo's own moments first, then the
+  /// camera's, then the live guidance for the frame (scan_coach.dart).
+  ScanGuidance _shownGuidance(bool cameraWorking) {
+    const adjusting = ScanOutlineState.adjusting, searching = ScanOutlineState.searching;
+    final error = _captureError;
+    if (error != null) return ScanGuidance(ScanTextCopy('Try again', error, 'Try again.'), adjusting);
+    if (_preparing) return scanGuidanceDone;
+    if (_busy) return _guidance ?? const ScanGuidance(scanTakingPhoto, ScanOutlineState.holding);
+    if (_cameraFailed) {
+      return const ScanGuidance(
+          ScanTextCopy('Camera unavailable', 'This camera could not open.', 'Camera unavailable.'), searching);
+    }
+    if (!cameraWorking) return const ScanGuidance(ScanTextCopy('Opening camera…', '', 'Opening camera…'), searching);
+    if (!_autoEnabled || !_streamSupported) {
+      return const ScanGuidance(
+          ScanTextCopy('Tap the shutter', 'Take the photo when the whole page is clear.', 'Tap the shutter.'), searching);
+    }
+    return _guidance ??
+        scanGuidanceFor(null, null, profile: widget.profile, aspect: _viewportAspect ?? 0.75);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -608,26 +723,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
   Widget _page(BuildContext context, AppLanguage language) {
     final camera = _camera;
-    final readingWaits = _readingStatus?.allowsCapture == false;
-    final ready = _analysis?.autoReady == true && _streamSupported && !readingWaits;
     final cameraWorking = camera?.value.isInitialized == true;
-    // Framing comes first; once the page is aligned, what the reading still
-    // needs (the bottom lines, the other side, a different paper).
-    final readingHint = _analysis?.autoReady == true && readingWaits
-        ? _readingStatus?.guidance?.copy(_reading.kind, language).detail
-        : null;
-    final label = _captureError?.of(language) ??
-        (_busy
-          ? _capturing.of(language)
-          : _cameraFailed
-            ? _cameraUnavailable.of(language)
-            : !cameraWorking
-              ? _openingCamera.of(language)
-              : !_autoEnabled || !_streamSupported
-                ? _tapShutter.of(language)
-                : readingHint ??
-                    (_analysis?.hint ?? ScanHint.position).labelIn(language));
-    final accent = ready ? const Color(0xFF3DE5B4) : Colors.white;
+    final shown = _shownGuidance(cameraWorking);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -636,22 +733,12 @@ class _GuidedScanPageState extends State<GuidedScanPage>
           fit: StackFit.expand,
           children: [
             if (cameraWorking)
-              _cameraPreview(camera!)
+              _cameraPreview(camera!, shown.state)
             else
               const Center(
                 child: Icon(Icons.document_scanner_outlined,
                     size: 80, color: Colors.white30),
               ),
-            // Painted in viewport coordinates using the same normalized
-            // guide used by live frame analysis.
-            CustomPaint(
-              painter: _ScanGuidePainter(
-                _analysis?.bounds ?? widget.profile.guide(_viewportAspect ?? 0.5),
-                accent,
-                zones: widget.profile.zones,
-                detected: _analysis?.bounds != null,
-              ),
-            ),
             Align(
               alignment: Alignment.topCenter,
               child: Padding(
@@ -719,45 +806,11 @@ class _GuidedScanPageState extends State<GuidedScanPage>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Semantics(
-                    liveRegion: true,
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 14,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xE6151A22),
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(color: Colors.white24),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            label,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: ready ? const Color(0xFF3DE5B4) : Colors.white,
-                              fontSize: 15, fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: LinearProgressIndicator(
-                              value: _autoEnabled && _streamSupported
-                                  ? _progress : 0,
-                              minHeight: 3,
-                              backgroundColor: Colors.white24,
-                              valueColor: const AlwaysStoppedAnimation<Color>(
-                                Color(0xFF3DE5B4),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                  ScanGuidancePanel(
+                    copy: scanCopyIn(shown.copy, language),
+                    state: shown.state,
+                    progress: _autoEnabled && _streamSupported ? _loop.progress : null,
+                    busy: _busy && !_preparing,
                   ),
                   const SizedBox(height: 18),
                   Row(
@@ -803,13 +856,23 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                           ),
                         ),
                       ),
-                      TextButton(
-                        onPressed: _busy ? null : _useOtherCamera,
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white,
-                        ),
-                        child: Text(_otherCamera.of(language)),
-                      ),
+                      // The phone's own camera app sounds its shutter and is
+                      // not this scanner, so it is never opened by itself and
+                      // never offered while this camera works: only when this
+                      // camera cannot open, under a name that says what it is.
+                      if (_cameraFailed)
+                        Semantics(
+                          hint: _cameraAppHint.of(language),
+                          child: TextButton(
+                            onPressed: _busy ? null : _useOtherCamera,
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                            ),
+                            child: Text(_cameraApp.of(language)),
+                          ),
+                        )
+                      else
+                        const SizedBox(width: 96),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -828,104 +891,4 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       ),
     );
   }
-}
-
-class _ScanGuidePainter extends CustomPainter {
-  const _ScanGuidePainter(this.normalizedGuide, this.color, {
-    required this.zones,
-    required this.detected,
-  });
-
-  final Rect normalizedGuide;
-  final Color color;
-  final List<String> zones;
-  final bool detected;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Dynamic border is the candidate's ACTUAL detected extent; the guide
-    // is only displayed while no complete document is confidently located.
-    final rect = Rect.fromLTRB(
-      normalizedGuide.left * size.width,
-      normalizedGuide.top * size.height,
-      normalizedGuide.right * size.width,
-      normalizedGuide.bottom * size.height,
-    );
-    final rounded = RRect.fromRectAndRadius(
-      rect, const Radius.circular(16),
-    );
-    final veil = Path()..fillType = PathFillType.evenOdd;
-    veil.addRect(Offset.zero & size);
-    veil.addRRect(rounded);
-    canvas.drawPath(
-      veil, Paint()..color = const Color(0x99000000),
-    );
-    canvas.drawRRect(
-      rounded,
-      Paint()
-        ..color = color.withValues(alpha: detected ? 0.48 : 0.22)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
-    final corners = Path();
-    const segment = 28.0;
-    final l = rect.left;
-    final r = rect.right;
-    final t = rect.top;
-    final b = rect.bottom;
-    corners
-      ..moveTo(l, t + segment)..lineTo(l, t)..lineTo(l + segment, t)
-      ..moveTo(r - segment, t)..lineTo(r, t)..lineTo(r, t + segment)
-      ..moveTo(l, b - segment)..lineTo(l, b)..lineTo(l + segment, b)
-      ..moveTo(r - segment, b)..lineTo(r, b)..lineTo(r, b - segment);
-    canvas.drawPath(
-      corners,
-      Paint()
-        ..color = color
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 4,
-    );
-
-    // These zones are visual hints only. We DO NOT pretend the camera has
-    // already recognized the passport photo/MRZ or verified a medical stamp.
-    if (zones.contains('passport_mrz')) {
-      final zone = Rect.fromLTWH(
-        rect.left + rect.width * 0.07,
-        rect.top + rect.height * 0.77,
-        rect.width * 0.86,
-        rect.height * 0.17,
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(zone, const Radius.circular(5)),
-        Paint()
-          ..color = color.withValues(alpha: 0.50)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.3,
-      );
-    }
-    if (zones.contains('passport_photo')) {
-      final zone = Rect.fromLTWH(
-        rect.left + rect.width * 0.08,
-        rect.top + rect.height * 0.14,
-        rect.width * 0.23,
-        rect.height * 0.51,
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(zone, const Radius.circular(4)),
-        Paint()
-          ..color = color.withValues(alpha: 0.35)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ScanGuidePainter oldDelegate) =>
-      oldDelegate.normalizedGuide != normalizedGuide ||
-      oldDelegate.color != color ||
-      oldDelegate.detected != detected ||
-      oldDelegate.zones != zones;
 }
