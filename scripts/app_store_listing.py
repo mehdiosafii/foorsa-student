@@ -15,6 +15,10 @@ never the key, a token, a contact's details or a demo account's password.
       to the portal with the demo account App Store Connect holds and reports only what a
       reviewer would meet (a password to change, the contract to sign, the step of the
       file), and prints the review notes with the account's name and password masked.
+  demo-hash
+      The bcrypt hash of the demo account's password App Store Connect holds, encrypted
+      to DEMO_HASH_PUBKEY (RSA-OAEP), so the portal's demo account can be given that
+      password again without the password or its hash appearing in the log.
 """
 import json
 import os
@@ -254,9 +258,32 @@ def review_check() -> int:
     return 0
 
 
+def demo_hash() -> int:
+    import base64
+    import subprocess
+    import tempfile
+    import bcrypt  # installed by the workflow for this command only
+    _, version = app_and_version()
+    review = get(f"/v1/appStoreVersions/{version['id']}/appStoreReviewDetail")["data"]["attributes"]
+    password = review.get("demoAccountPassword") or ""
+    if not password:
+        print("No demo password in App Store Connect.")
+        return 1
+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=10, prefix=b"2b"))
+    with tempfile.NamedTemporaryFile("w", suffix=".pem", dir=os.environ.get("RUNNER_TEMP")) as key:
+        key.write(os.environ["DEMO_HASH_PUBKEY"].strip() + "\n")
+        key.flush()
+        sealed = subprocess.run(["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", key.name,
+                                 "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256"],
+                                input=hashed, capture_output=True, check=True).stdout
+    print("Sealed demo password hash (RSA-OAEP, SHA-256):")
+    print(base64.b64encode(sealed).decode())
+    return 0
+
+
 if __name__ == "__main__":
     command = sys.argv[1] if len(sys.argv) > 1 else "state"
-    commands = {"state": state, "review-check": review_check}
+    commands = {"state": state, "review-check": review_check, "demo-hash": demo_hash}
     if command not in commands:
         sys.exit(f"Unknown command {command!r}: {', '.join(commands)}")
     sys.exit(commands[command]())
