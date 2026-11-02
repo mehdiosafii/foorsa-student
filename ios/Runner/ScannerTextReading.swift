@@ -1005,11 +1005,24 @@ enum ScannerCardFront {
     }
   }
 
+  /// A line of machine-readable characters: a card's three bottom lines, on its
+  /// back. The CIN printed in them is the back's, never the front's number
+  /// (the owner, 2 Nov 2026: read there, it made the back look like the front).
+  static func machineLike(_ text: String) -> Bool {
+    if text.contains("<") || text.contains("«") { return true }
+    let characters = ScannerMRZ.normalize(text).characters
+    guard characters.count >= 24 else { return false }
+    let fillers = characters.filter { $0 == ScannerMRZ.filler }.count
+    let digits = characters.filter { ScannerMRZ.isDigit($0) }.count
+    return fillers >= 2 || digits * 3 >= characters.count
+  }
+
   /// Card numbers on the front: a Moroccan CIN (one or two letters, then
-  /// five to seven digits) or eight digits (a Tunisian card).
+  /// five to seven digits) or eight digits (a Tunisian card), never in a
+  /// machine-readable line.
   static func numbers(in texts: [String]) -> [String] {
     var found: [String] = []
-    for text in texts {
+    for text in texts where !machineLike(text) {
       let tokens = text.uppercased()
         .split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
         .map { Array(String($0).utf8) }
@@ -1568,6 +1581,19 @@ struct ScannerTextReadingSession {
     return cardKeywordSeen || latest.layout.readableLines >= 3 || latest.layout.textRows >= 5
   }
 
+  /// The card's front is what the camera sees now: its number and its printed
+  /// lines in the latest frame, and none of the back's machine-readable lines.
+  /// Only this holds the shutter for a back: what was seen a moment ago is not
+  /// what is in view (the owner, 2 Nov 2026). The same rule as Android's.
+  var frontInView: Bool {
+    guard let latest, latest.machineRows == 0, !latest.cardNumbers.isEmpty else { return false }
+    return latest.cardKeyword || latest.layout.readableLines >= 3 || latest.layout.textRows >= 5
+  }
+
+  /// The card's back is what the camera sees now: its machine-readable lines in
+  /// the latest frame. Only this holds the shutter for a front.
+  var backInView: Bool { (latest?.machineRows ?? 0) > 0 }
+
   func status(glare: Bool) -> ScannerTextGateStatus {
     if readerUnavailable { return .cannotRead }
     let passport = confirmed(.td3) != nil
@@ -1581,12 +1607,14 @@ struct ScannerTextReadingSession {
       if passport { return .waiting(.differentPaper) }
       let front = frontRead
       switch side {
+      // A side read is taken at once; one still being read is taken after the
+      // clear page's grace, as any page; only the other side in view holds it.
       case .back?:
         if card { return .passedReading }
-        return .waiting(front ? .turnCardToBack : machineGuidance(glare: glare))
+        return .waiting(frontInView ? .turnCardToBack : machineGuidance(glare: glare))
       case .front?:
         if front { return .passedReading }
-        return .waiting(card ? .turnCardToFront : frontGuidance(glare: glare))
+        return .waiting(backInView ? .turnCardToFront : frontGuidance(glare: glare))
       case nil:
         if card || front { return .passedReading }
         return .waiting((latest?.machineRows ?? 0) > 0 ? machineGuidance(glare: glare) : frontGuidance(glare: glare))

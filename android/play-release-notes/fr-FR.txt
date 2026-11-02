@@ -1,1 +1,1 @@
-Passeport : ouvrez-le à la page photo et prenez les deux pages sur une seule photo, la page photo et la page en face, qui porte le numéro du passeport. Sur iPhone, le scanner garde maintenant les deux pages. Corrections.
+Prière : l’adhan à l’heure de chaque prière, même application fermée, et la qibla. Vous restez connecté quand l’application se ferme. Passeport : le cadre montre les deux pages. Carte d’identité : le cadre montre la face demandée, et le verso se prend tout seul. Corrections.

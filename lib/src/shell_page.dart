@@ -196,9 +196,10 @@ class _ShellPageState extends State<ShellPage> {
       // Never let unavailable preferences prevent ordinary password sign-in.
     }
     if (!mounted) return;
-    // The portal always opens. With quick sign-in saved, its sign-in screen
-    // offers Face ID or the fingerprint (and opens the prompt by itself once a
-    // launch); the password stays underneath it.
+    // The portal always opens, on the student's session when they have one:
+    // it lasts across launches. Quick sign-in is for after a sign-out: the
+    // sign-in screen then offers Face ID or the fingerprint (on a tap), with
+    // the password underneath it.
     setState(() {
       _biometricWasEnabled = _biometrics.enabled;
       _bootWebView = true;
@@ -220,7 +221,9 @@ class _ShellPageState extends State<ShellPage> {
     forMainFrameOnly: true,
   );
 
-  /// Reloads after quick sign-in is turned off must not clear the session.
+  /// Rebuilds the session script after quick sign-in is forgotten or turned
+  /// off. The script no longer moves the session for it (from 1.2.39), so a
+  /// reload keeps the student signed in either way.
   Future<void> _refreshSessionScript() async {
     final controller = _controller;
     if (controller == null) return;
@@ -339,7 +342,7 @@ class _ShellPageState extends State<ShellPage> {
         try { await _refreshSessionScript(); } catch (_) { /* The next launch reads the stored state. */ }
         return {'ok': true};
       case 'session':
-        return _offerAfterSignIn(data['token'], nonce);
+        return _offerAfterSignIn(data['token'], nonce, fresh: data['fresh'] == true);
     }
     return null;
   }
@@ -420,8 +423,10 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
-  /// After a password sign-in, once the server has confirmed the session.
-  Future<Object?> _offerAfterSignIn(Object? token, String nonce) async {
+  /// After a password sign-in, once the server has confirmed the session; also
+  /// for a session kept from an earlier launch ([fresh] false), offered at most
+  /// once a week to a student who has not turned quick sign-in on.
+  Future<Object?> _offerAfterSignIn(Object? token, String nonce, {required bool fresh}) async {
     if (token is! String) return null;
     if (_biometricBusy) return {'retry': true};
     final session = StudentSession.parse(token);
@@ -431,7 +436,7 @@ class _ShellPageState extends State<ShellPage> {
     try {
       if (!await _biometricSessionIsCurrent(session.token, nonce)) return null;
       // A different account must never inherit the previous student's vault.
-      if (_biometrics.enabled && !_biometrics.hasSavedSession(session)) await _biometrics.forget();
+      if (_biometrics.replacedBy(session, fresh: fresh)) await _biometrics.forget();
       if (!_biometrics.shouldOffer(session.owner) || !await _biometrics.available() ||
           await _biometrics.validate(session) != SessionValidity.valid ||
           !await _biometricSessionIsCurrent(session.token, nonce) || !mounted) {
@@ -1181,6 +1186,14 @@ class _ShellPageState extends State<ShellPage> {
       case 'calendarSync':
         if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'supported': false};
         return _push.calendar(action, args[0] as Map);
+      // The adhan at prayer times (student_adhan.dart): the portal's calls, behind its session.
+      case 'adhanStatus':
+      case 'adhanEnable':
+      case 'adhanSync':
+      case 'adhanClear':
+      case 'adhanExactAlarms':
+        if (!_isTrustedPortal(await _controller?.getUrl()) || (args[0] as Map)['nonce'] != _scannerNonce) return {'supported': false};
+        return _push.adhan(action, args[0] as Map);
       case 'appInfo':
         return {
           'platform': Platform.isIOS ? 'ios' : 'android',

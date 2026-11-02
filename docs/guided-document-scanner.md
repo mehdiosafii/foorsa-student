@@ -137,10 +137,10 @@ panel shows them in the student's language (`scanCopyIn`, `scan_copy_language.da
 French and Arabic for every line, held by `test/scan_copy_language_test.dart`). The
 iPhone scanner's own words are still English only.
 
-1. the page: "Find the page" (a passport: "Show the photo page", with the two
-   lines at the bottom; a card: "Front side" or "Now the back" when the step
-   names a side), "Move back a little", "Move closer", "Show all four corners",
-   "Hold still" while it shakes;
+1. the page: "Find the page" (a passport: "Open the passport flat", the photo
+   page and the page facing it; a card: "Front side" or "Now the back" when the
+   step names a side), "Move back a little", "Move closer", "Show all four
+   corners", "Hold still" while it shakes;
 2. the phone: "Hold the phone flat" when the page's far edge is short or its
    corners leave 72 to 108 degrees (`scanPageHeldFlat`, `isHeldFlat`);
 3. the light: "Too dark", "Glare on the page", "Shadow on the page"
@@ -242,6 +242,32 @@ different paper", "Turn the card over"); the shutter is there for that. Both
 platforms ask `capturesWhenClear` (`ScannerTextGateStatus` on the iPhone,
 `ScanTextGateStatus` on Android), and a page taken this way returns its
 reading with `matched: false`.
+
+**The wrong side of a card is the side in view, not one seen before** (the
+owner, 2 Nov 2026: the front "scans without clicking", the back "needs me
+clicking the capture button"). The card's number counted on the front, and
+its keyword, last the whole session, and a back whose three lines were not
+yet read twice alike was taken for the front, so "Turn the card over" held
+the shutter with the back in view. Worse, the CIN printed in a Moroccan
+card's own machine-readable lines counted as a front's number. Now a back is
+held only while the front is what the latest frame shows (`frontInView`:
+its number and its printed lines, and none of the back's machine-readable
+lines), a front only while the back's lines are in view (`backInView`), and
+a machine-readable line is never searched for a card number
+(`ScanCardFront.machineLike`, `ScannerCardFront.machineLike`). A side still
+being read is then taken on the clear page's grace, as any page; a back with
+no machine-readable lines (an older card) too. The same rule on both
+platforms; `test/scan_text_reading_test.dart` and
+`tools/scanner_text_reading_tests.swift` replay a back shown after its
+front.
+
+**A card's guide shows the side asked for, as the passport's shows its
+pages** (the same day: "id don't have framing like passport does meanwhile
+both needs so"). On Android a card held long side across draws its photo on
+the left of the front (`card_photo`) or its three machine-readable lines
+across the bottom of the back (`card_mrz`), chosen by the step's side
+(`GuidedDocumentProfile.guideZones`). The iPhone draws corner marks only, for
+every paper, the passport included.
 
 **No unbroken run of perfect frames is needed** (the owner, 30 Oct 2026, on
 build 54: the scanner still needed the button). Build 54 counted the grace
@@ -351,6 +377,8 @@ Focus and exposure must remain settled for 0.25 seconds while fresh detections c
 The adaptive session allows up to eight photo attempts, holds at most six corrected images, and lasts at most 60 seconds including processing. Each additional view has an 18-second wait; each processing phase has a separate 20-second deadline. These are limits, not a required photo count. Relative sharpness rejects a weaker incoming shot and drops an earlier soft shot once clearer evidence arrives. The scanner preserves useful photos during supplemental-view retries. Each new view must differ from the latest accepted viewpoint; there is no prescribed left/right route. Translation, uniform zoom, in-plane rotation, and detector jitter do not count as an angle change.
 
 The processor needs at least three usable observations for its median comparison, then searches compatible subsets of three to six images in the retained pool (at most 42 combinations). A fourth or later registered view can supply detail that is hidden in the initial observations. Registration, fine-detail, lighting and byte limits remain authoritative. It ends capture as soon as a selected combination passes; otherwise it asks for another useful view. Exhausting the time or attempt budget requests a lighting/reframing adjustment, never an unverified success. An unchanged failed page does not silently restart.
+
+**On Android the frame is the open booklet** (1.2.39, the owner, 2 Nov 2026: "the app is showing me that I need full two images scanning before I click but when I enter the scan it frames in only in the first page"). The guide drawn first is the passport open at its photo page, held upright: two pages one above the other, 125 by 176 mm (`expectedAspectRatios` `[0.71, 1.42]`), as wide as the height allows so its two lines stay about the size they were read at in the photo page's frame, with the fold across its middle, the passport number's strip on the upper page and the photo and the two lines on the lower one (`ScanGuidePainter`, drawn as the portal's own guide draws it). The photo page alone, or the booklet turned on the desk, is still found as the frame offered next. A passport's lines are read as seen first, then upside down, then a quarter turn either way (`passportTurns` `[0, 2, 1, 3]`), and kept the way they were read: read long side across, as a card's are, an upright open booklet had its two lines turned on end and never read, so the photo went unread after the grace and the camera had meanwhile said "Show the photo page". `test/guided_capture_simulation_test.dart` replays an upright open passport, its stand-in reader reading only what stands upright as ML Kit does, and holds the photo to its two lines having been read. The iPhone's first words are the same; its live outline still follows the photo page, and its still keeps the booklet (below).
 
 Passport detection isolates the details page when the facing page dominates segmentation. **A still then keeps the open booklet** (1.2.36, the owner, 1 Nov 2026: "scan both first pages the one with the infos and the empty one, both in one shot"; the page facing the photo page carries the passport number): when Vision's document model outlines a complete booklet that holds the photo page the cascade found and is 1.6 to 2.6 times its area (`ScannerPassportBooklet`, `openPassportBooklet`), that outline is the crop; anything else keeps the photo page alone. The live outline and the hold still follow the photo page. A passport whose shape the frame cannot accept now says "Open the passport flat · Show the photo page and the page facing it.", no longer "Show only the photo page". The portal tells the camera the same in its instruction, and the server asks GPT to keep the facing page's number character for character. Physical-iPhone acceptance of the booklet crop (a real open passport, both rotations) is still to do. A displaced binding can be recovered only from an observed continuous seam with supported outside edges; ambiguous seams are rejected. Bounded side crops retain the original-image clipping checks, and their outside-edge checks follow the crop orientation. No missing corner or margin is invented.
 

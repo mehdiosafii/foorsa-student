@@ -399,6 +399,44 @@ struct ScannerTextReadingTests {
     precondition(ScannerCardFront.numbers(in: ["12345678"]) == ["12345678"])
     precondition(ScannerCardFront.numbers(in: ["1234567", "123456789"]).isEmpty)
     precondition(ScannerCardFront.hasKeyword(["Royaume du Maroc"]) && !ScannerCardFront.hasKeyword(["MOHAMED"]))
+
+    // The owner, 2 Nov 2026: the back "needs me clicking the capture button". The front seen a moment
+    // before, or the card's number inside the back's own lines, no longer passes for the front
+    // (test/scan_text_reading_test.dart holds Android to the same).
+    session = ScannerTextReadingSession(profile: back)
+    session.ingest(cardFrontFrame())
+    session.ingest(cardFrontFrame())
+    precondition(session.status(glare: false) == .waiting(.turnCardToBack))
+    session.ingest(cardBackFrame([cnieOne, cnieTwo, "ALAMI<<MOHAMED<<<<<<<<<<<<<<<"]))
+    let turned = session.status(glare: false)
+    precondition(!turned.passed && turned.guidance?.holdsCapture != true)
+    precondition(turned.capturesWhenClear(for: ScannerTextGateStatus.clearPageGrace(for: .idCard), kind: .idCard))
+    session = ScannerTextReadingSession(profile: back)
+    session.ingest(cardFrontFrame())
+    session.ingest(cardFrontFrame())
+    session.ingest(frame([line("Fils de AHMED", y: 0.7, height: 0.05), line("et de FATIMA", y: 0.6, height: 0.05),
+      line("Adresse 12 RUE 4 HAY SALAM", y: 0.5, height: 0.05)], size: CGSize(width: 1100, height: 700)))
+    precondition(session.status(glare: false).guidance?.holdsCapture != true)
+    // The number in a back's machine-readable lines is not a front's.
+    precondition(ScannerCardFront.numbers(in: ["IDMARAA12345678 BE123456<<<<<<<"]).isEmpty)
+    precondition(ScannerCardFront.numbers(in: ["IDMARAA12345678 BE123456«««««««"]).isEmpty)
+    precondition(!ScannerCardFront.machineLike("ROYAUME DU MAROC"))
+    let spaced = cnieOne.replacingOccurrences(of: "BE", with: " BE")
+    session = ScannerTextReadingSession(profile: back)
+    session.ingest(cardBackFrame([spaced, cnieTwo, "ALAMI<<MOHAMED<<<<<<<<<<<<<<<"]))
+    session.ingest(cardBackFrame([spaced, cnieTwo, "ALAMI<<MOHAMEO<<<<<<<<<<<<<<<"]))
+    precondition(session.frontNumber == nil && session.status(glare: false) != .waiting(.turnCardToBack))
+    // A front asked for after the back was seen is held only while the back is in view.
+    session = ScannerTextReadingSession(profile: front)
+    session.ingest(cardBackFrame())
+    session.ingest(cardBackFrame())
+    precondition(session.status(glare: false) == .waiting(.turnCardToFront))
+    session.ingest(frame([line("ROYAUME DU MAROC", y: 0.85, height: 0.05), line("MOHAMED", x: 0.4, y: 0.6, width: 0.3, height: 0.05)],
+      size: CGSize(width: 1100, height: 700)))
+    precondition(session.status(glare: false).guidance?.holdsCapture != true)
+    session.ingest(cardFrontFrame())
+    session.ingest(cardFrontFrame())
+    precondition(session.status(glare: false) == .passedReading)
   }
 
   // The owner, 30 Oct 2026: "it should be automatic once the shot is clear". A

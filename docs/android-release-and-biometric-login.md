@@ -157,11 +157,11 @@ native "Welcome back" overlay of 1.2.20 is gone.
   `unlock({auto: true})` whatever release of the portal asks. The
   shell reads the vault through the OS prompt, validates the token with the
   server and returns it to the trusted main frame only; the bridge installs it
-  as this launch's tab session and the portal carries on as after a typed
-  password.
+  as the page's session, kept across launches, and the portal carries on as
+  after a typed password.
 - **Profile › Settings** has a "Sign in with Face ID" switch: `enable()` saves
-  the open session behind the OS prompt; `disable()` forgets it and moves the
-  session back to ordinary storage, so the student stays signed in.
+  the open session behind the OS prompt; `disable()` forgets it, and the
+  student stays signed in.
 
 Enrollment independently validates the token with the server, verifies native
 biometric storage with a read-back, and only then marks it enabled. The saved
@@ -172,16 +172,41 @@ namespaced encrypted store with an authenticated Android KeyStore key,
 strong biometrics only, and enrollment-change invalidation. Android backup and
 device transfer are disabled for app data; biometric keys never migrate.
 
-While quick sign-in is on, the web login and media tokens live in the current
-tab's session storage, and each new native launch clears them, so the app
-opens on the portal's sign-in screen with Face ID. Cancellation and temporary
-network errors do not erase the saved login. **Signing out keeps it** for the
-next sign-in; an expired or rejected session, a changed Face ID / fingerprint
-set, or a deleted account (`portal-logout` with `forgetDevice: true`) forgets
-it. Signing in as a different student replaces it.
+**The student stays signed in when the app closes**, quick sign-in or not
+(the owner, 1 Nov 2026: "once you log to the app, even if the app closes
+let's make sure you stay signed in"). Until 1.2.39 (70), while quick sign-in
+was on, the web login and media tokens lived in the tab's session storage and
+each new launch cleared them, so every launch opened on the sign-in screen.
+From 1.2.39 they stay in the page's lasting storage, and the first launch of
+the new build moves a tab copy an older build left back there
+(`biometric_session.js`). Quick sign-in is for signing back in after a
+sign-out: the saved login stays behind Face ID or the fingerprint.
+Cancellation and temporary network errors do not erase it. **Signing out
+keeps it** for the next sign-in; an expired or rejected session, a changed
+Face ID / fingerprint set, or a deleted account (`portal-logout` with
+`forgetDevice: true`) forgets it.
 
-Tokens retain the server's existing 30-day lifetime; this feature does not
-extend it or store passwords to work around expiry.
+**A kept session is the saved login's own.** The page tells the shell whether
+a session it announces began on the page (`fresh`: a sign-in) or was kept
+from an earlier launch. The shell knows the saved token only once Face ID has
+read it, so it replaces the saved login only for another account, or for a
+new sign-in by the same student (the password typed although Face ID was
+saved), which is then offered in its place (`StudentBiometrics.replacedBy`).
+Judged by the token alone, a kept session read as a stranger's at every
+launch and the saved login was deleted.
+
+**The session renews itself while it is used.** Tokens still last 30 days,
+but `/api/portal/me` hands a session that is a day old a fresh one (the
+portal's `SESSION_RENEW_AFTER_SECONDS`), so a student who opens the app at
+least once a month never has to sign in again. The portal says
+`portal-session-renewed` just before it stores the renewal, and the script
+takes it for the same sign-in: nothing is offered for it. The app answers
+`session: 2` in `FoorsaShellCapabilities`; on older builds, which would take
+every new token for a new sign-in, the portal keeps a renewal only in a
+session's last week and never while the session is in the tab. The saved
+login behind Face ID is not renewed (writing it asks for the face): it signs
+back in for 30 days from when it was saved, then the password does. No
+password is stored to work around expiry.
 
 ## Validation
 
