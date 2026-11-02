@@ -1,21 +1,22 @@
 name: App Store listing
 
-# Reads (and, from a later change, keeps) the App Store listing of Foorsa Student through the
-# App Store Connect API, with the team key the TestFlight workflow uses. It prints states, counts
+# Reads and keeps the App Store listing of Foorsa Student through the App Store Connect API, with
+# the team key the TestFlight workflow uses (scripts/app_store_listing.py). It prints states, counts
 # and whether a field is filled, never the key, a contact's details or a demo password.
+# Started by hand only (Actions › App Store listing › Run workflow):
+#   state          what App Store Connect holds, and the review submission's state
+#   review-check   whether App Review's demo account still signs in to the app as it is today
+#   submit-latest  the newest valid build up for review in place of the one waiting, with
+#                  store/app-store/review-notes.txt as its notes
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: state | review-check | demo-hash | submit-latest
+        description: state | review-check | submit-latest
         required: true
         default: state
-  push:
-    branches: [claude/sweet-allen-fl4203]
-    paths:
-      - 'store/app-store/**'
-      - 'scripts/app_store_listing.py'
-      - '.github/workflows/app-store-listing.yml'
+        type: choice
+        options: [state, review-check, submit-latest]
 
 permissions:
   contents: read
@@ -37,19 +38,7 @@ jobs:
           ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
           ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
-          ACTION: ${{ inputs.action == 'submit-latest' && 'state' || inputs.action || 'state' }}
+          ACTION: ${{ inputs.action }}
         run: |
           python3 scripts/app_store_listing.py "$ACTION"
-          if [ "$GITHUB_EVENT_NAME" = push ]; then python3 scripts/app_store_listing.py review-check; fi
-      - name: Put the newest build up for review
-        # Only a push whose message asks for it, or a run started with this action.
-        if: >-
-          (github.event_name == 'push' && contains(github.event.head_commit.message, '[app-store submit]'))
-          || inputs.action == 'submit-latest'
-        env:
-          ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
-          ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
-          ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
-        run: |
-          python3 scripts/app_store_listing.py submit-latest
-          python3 scripts/app_store_listing.py state
+          if [ "$ACTION" = submit-latest ]; then python3 scripts/app_store_listing.py state; fi
