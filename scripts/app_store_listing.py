@@ -10,6 +10,11 @@ never the key, a token, a contact's details or a demo account's password.
       the App Store version being prepared, its text, screenshots, build, age rating,
       categories, review details, availability and any review submission. App Privacy
       (the data the app collects) is not in Apple's API; it is reported as unknown.
+  review-check
+      Whether App Review's demo account still opens the app as it is today: it signs in
+      to the portal with the demo account App Store Connect holds and reports only what a
+      reviewer would meet (a password to change, the contract to sign, the step of the
+      file), and prints the review notes with the account's name and password masked.
 """
 import json
 import os
@@ -183,8 +188,75 @@ def state() -> int:
     return 0
 
 
+PORTAL = "https://student.foorsa.ma"
+
+
+def app_and_version():
+    apps = get("/v1/apps", {"filter[bundleId]": BUNDLE_ID})
+    app_id = apps["data"][0]["id"]
+    versions = get(f"/v1/apps/{app_id}/appStoreVersions", {"filter[platform]": "IOS", "limit": 1})
+    return app_id, versions["data"][0]
+
+
+def portal(method: str, path: str, body=None, bearer=None):
+    data = json.dumps(body).encode() if body is not None else None
+    headers = {"Content-Type": "application/json", "User-Agent": "Foorsa App Store listing check"}
+    if bearer:
+        headers["Authorization"] = "Bearer " + bearer
+    req = urllib.request.Request(PORTAL + path, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as res:
+            return res.status, json.loads(res.read().decode() or "{}")
+    except urllib.error.HTTPError as err:
+        text = err.read().decode(errors="replace")
+        try:
+            return err.code, json.loads(text)
+        except ValueError:
+            return err.code, {"raw": text[:200]}
+
+
+def review_check() -> int:
+    import hashlib
+    import textwrap
+    _, version = app_and_version()
+    print(f"Version {version['attributes'].get('versionString')} ({version['attributes'].get('appStoreState')})")
+    review = get(f"/v1/appStoreVersions/{version['id']}/appStoreReviewDetail")["data"]["attributes"]
+    name = (review.get("demoAccountName") or "").strip()
+    password = review.get("demoAccountPassword") or ""
+    notes = review.get("notes") or ""
+    for secret, mask in ((password, "<demo password>"), (name, "<demo name>")):
+        if secret:
+            notes = notes.replace(secret, mask)
+    print(f"Demo account: name sha256 {hashlib.sha256(name.lower().encode()).hexdigest()[:16]}, password {'set' if password else 'empty'}")
+    print("Review notes, as App Review reads them (account masked):")
+    for paragraph in notes.splitlines():
+        print(textwrap.fill(paragraph, 110, initial_indent="  | ", subsequent_indent="  | ") if paragraph.strip() else "  |")
+    if not (name and password):
+        print("No demo account to try.")
+        return 1
+    status, body = portal("POST", "/api/portal/login", {"identifier": name, "password": password})
+    print(f"Portal sign-in with the demo account: HTTP {status}"
+          + (f", error {body.get('error')!r}, code {body.get('code')}" if status != 200 else ""))
+    if status != 200 or not body.get("token"):
+        return 1
+    print(f"  must change password at first sign-in: {body.get('mustChangePassword')}, kind {body.get('kind')}")
+    status, me = portal("GET", "/api/portal/me", bearer=body["token"])
+    print(f"/api/portal/me: HTTP {status}")
+    if status == 200:
+        signing = me.get("signing") or {}
+        rail = me.get("rail") or {}
+        print(f"  file: rail step {rail.get('step')} on hold {rail.get('onHold') if 'onHold' in rail else me.get('onHold')}, "
+              f"track {me.get('track')}, in China {me.get('inChina')}, papers open {me.get('papersOpen')}")
+        print(f"  signing popup required: {signing.get('required')}, contract {(signing.get('contract') or {}).get('status') if isinstance(signing.get('contract'), dict) else signing.get('contract')}, "
+              f"authorization {(signing.get('authorization') or {}).get('status') if isinstance(signing.get('authorization'), dict) else signing.get('authorization')}")
+        todo = me.get("todo") or {}
+        print(f"  to do: {todo.get('count')} ({todo.get('detailsCount')} details), consent version on file {me.get('consentVersion')}")
+    return 0
+
+
 if __name__ == "__main__":
     command = sys.argv[1] if len(sys.argv) > 1 else "state"
-    if command != "state":
-        sys.exit(f"Unknown command {command!r}: state")
-    sys.exit(state())
+    commands = {"state": state, "review-check": review_check}
+    if command not in commands:
+        sys.exit(f"Unknown command {command!r}: {', '.join(commands)}")
+    sys.exit(commands[command]())

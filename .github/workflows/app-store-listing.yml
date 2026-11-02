@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: state
+        description: state | review-check
         required: true
         default: state
   push:
@@ -38,4 +38,6 @@ jobs:
           ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
           ACTION: ${{ inputs.action || 'state' }}
-        run: python3 scripts/app_store_listing.py "$ACTION"
+        run: |
+          python3 scripts/app_store_listing.py "$ACTION"
+          if [ "$GITHUB_EVENT_NAME" = push ]; then python3 scripts/app_store_listing.py review-check; fi
