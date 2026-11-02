@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: state | review-check | demo-hash
+        description: state | review-check | demo-hash | submit-latest
         required: true
         default: state
   push:
@@ -37,7 +37,19 @@ jobs:
           ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
           ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
-          ACTION: ${{ inputs.action || 'state' }}
+          ACTION: ${{ inputs.action == 'submit-latest' && 'state' || inputs.action || 'state' }}
         run: |
           python3 scripts/app_store_listing.py "$ACTION"
           if [ "$GITHUB_EVENT_NAME" = push ]; then python3 scripts/app_store_listing.py review-check; fi
+      - name: Put the newest build up for review
+        # Only a push whose message asks for it, or a run started with this action.
+        if: >-
+          (github.event_name == 'push' && contains(github.event.head_commit.message, '[app-store submit]'))
+          || inputs.action == 'submit-latest'
+        env:
+          ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
+        run: |
+          python3 scripts/app_store_listing.py submit-latest
+          python3 scripts/app_store_listing.py state

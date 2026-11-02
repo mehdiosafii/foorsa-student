@@ -19,6 +19,12 @@ never the key, a token, a contact's details or a demo account's password.
       The bcrypt hash of the demo account's password App Store Connect holds, encrypted
       to DEMO_HASH_PUBKEY (RSA-OAEP), so the portal's demo account can be given that
       password again without the password or its hash appearing in the log.
+  submit-latest
+      Puts the newest valid build up for review in place of the one waiting: cancels the
+      review submission waiting (if any), names the version after the build
+      (CFBundleShortVersionString), attaches the build, writes store/app-store/review-notes.txt
+      into the review details (the demo account is kept as it is), and submits. Text,
+      screenshots, age rating, categories and the manual release stay as they are.
 """
 import json
 import os
@@ -281,9 +287,89 @@ def demo_hash() -> int:
     return 0
 
 
+def patch(path: str, type_: str, id_: str, attributes=None, relationships=None):
+    data = {"type": type_, "id": id_}
+    if attributes:
+        data["attributes"] = attributes
+    if relationships:
+        data["relationships"] = relationships
+    return request("PATCH", path, body={"data": data})
+
+
+def version_state(version_id: str) -> str:
+    a = get(f"/v1/appStoreVersions/{version_id}")["data"]["attributes"]
+    return a.get("appStoreState") or a.get("appVersionState") or ""
+
+
+EDITABLE = {"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY"}
+
+
+def submit_latest() -> int:
+    import time
+    app_id, version = app_and_version()
+    vid = version["id"]
+    print(f"Version {version['attributes'].get('versionString')} is {version_state(vid)}")
+
+    builds = get("/v1/builds", {"filter[app]": app_id, "filter[processingState]": "VALID", "filter[expired]": "false",
+                               "sort": "-uploadedDate", "limit": 1, "fields[builds]": "version,uploadedDate"})
+    if not builds.get("data"):
+        print("::error::No valid build to submit.")
+        return 1
+    build = builds["data"][0]
+    marketing = get(f"/v1/builds/{build['id']}/preReleaseVersion")["data"]["attributes"]["version"]
+    number = build["attributes"]["version"]
+    print(f"Newest valid build: {marketing} ({number})")
+
+    # 1. The submission waiting goes back to the developer, so the version can change.
+    subs = get("/v1/reviewSubmissions", {"filter[app]": app_id, "filter[platform]": "IOS", "limit": 10})
+    for sub in subs.get("data", []):
+        if sub["attributes"].get("state") in ("WAITING_FOR_REVIEW", "READY_FOR_REVIEW"):
+            patch(f"/v1/reviewSubmissions/{sub['id']}", "reviewSubmissions", sub["id"], {"canceled": True})
+            print(f"Cancelled review submission {sub['id']} ({sub['attributes'].get('state')})")
+    for _ in range(40):
+        state_now = version_state(vid)
+        if state_now in EDITABLE:
+            break
+        time.sleep(6)
+    else:
+        print(f"::error::The version is still {version_state(vid)}; nothing was changed on it.")
+        return 1
+    print(f"Version is now {state_now}")
+
+    # 2. The version takes the build's number and the build.
+    if version["attributes"].get("versionString") != marketing:
+        patch(f"/v1/appStoreVersions/{vid}", "appStoreVersions", vid, {"versionString": marketing})
+        print(f"Version renamed {version['attributes'].get('versionString')} -> {marketing}")
+    request("PATCH", f"/v1/appStoreVersions/{vid}/relationships/build", body={"data": {"type": "builds", "id": build["id"]}})
+    print(f"Build {marketing} ({number}) attached")
+
+    # 3. Review notes for this build; the demo account stays as it is.
+    notes_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "store", "app-store", "review-notes.txt")
+    notes = open(notes_path, encoding="utf-8").read().replace("{version}", marketing).replace("{build}", number).strip()
+    if len(notes) > 4000:
+        print(f"::error::The review notes are {len(notes)} characters; App Store Connect takes 4000.")
+        return 1
+    detail = get(f"/v1/appStoreVersions/{vid}/appStoreReviewDetail")["data"]
+    patch(f"/v1/appStoreReviewDetails/{detail['id']}", "appStoreReviewDetails", detail["id"], {"notes": notes})
+    print(f"Review notes written ({len(notes)} characters)")
+
+    # 4. A new submission with this version, submitted.
+    sub = request("POST", "/v1/reviewSubmissions", body={"data": {
+        "type": "reviewSubmissions", "attributes": {"platform": "IOS"},
+        "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}})["data"]
+    request("POST", "/v1/reviewSubmissionItems", body={"data": {
+        "type": "reviewSubmissionItems",
+        "relationships": {"reviewSubmission": {"data": {"type": "reviewSubmissions", "id": sub["id"]}},
+                          "appStoreVersion": {"data": {"type": "appStoreVersions", "id": vid}}}}})
+    done = patch(f"/v1/reviewSubmissions/{sub['id']}", "reviewSubmissions", sub["id"], {"submitted": True})["data"]
+    print(f"Submitted {marketing} ({number}) for review: submission {done['id']} is {done['attributes'].get('state')}")
+    print(f"Version is now {version_state(vid)}")
+    return 0
+
+
 if __name__ == "__main__":
     command = sys.argv[1] if len(sys.argv) > 1 else "state"
-    commands = {"state": state, "review-check": review_check, "demo-hash": demo_hash}
+    commands = {"state": state, "review-check": review_check, "demo-hash": demo_hash, "submit-latest": submit_latest}
     if command not in commands:
         sys.exit(f"Unknown command {command!r}: {', '.join(commands)}")
     sys.exit(commands[command]())
