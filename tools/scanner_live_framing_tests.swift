@@ -113,8 +113,11 @@ struct ScannerLiveFramingTests {
     // the page, the phone held flat, the light, then the hold. The same words as Android's
     // (test/scan_coach_test.dart in the Flutter app holds the two tables to each other).
     precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .adaptive).title == "Find the page")
+    // The passport is asked for open at its photo page, both pages in one photo (1 Nov 2026).
+    precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .passport).title
+      == "Open the passport flat")
     precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .passport).detail
-      == "Show the photo page with the two lines at the bottom.")
+      == "Show the photo page and the page facing it.")
     precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .card, side: "front").title == "Front side")
     precondition(ScannerLiveGuidance.copy(framing: .searching, lighting: .good, layout: .card, side: "back").title == "Now the back")
     precondition(ScannerLiveGuidance.copy(framing: .ready, lighting: .dim, layout: .adaptive, flat: false).title

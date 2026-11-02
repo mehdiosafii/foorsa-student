@@ -15,6 +15,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 
 import 'push_registration.dart';
+import 'student_adhan.dart';
 
 @pragma('vm:entry-point')
 Future<void> studentFirebaseBackground(RemoteMessage message) async {
@@ -186,6 +187,7 @@ class StudentPush {
   bool _listening = false;
   bool _localReady = false;
   Map<String, dynamic>? _calendarState;
+  Map<String, dynamic>? _adhanState;
   bool _disposed = false;
   Future<void>? _starting;
   void Function()? onTokenChanged;
@@ -238,6 +240,7 @@ class StudentPush {
           ));
       await _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
           ?.createNotificationChannel(AndroidNotificationChannel('student_updates', updatesChannel.of(language), importance: Importance.high));
+      await _createAdhanChannels(language);
       _localReady = true;
       tzdata.initializeTimeZones();
       final localLaunch = await _local.getNotificationAppLaunchDetails();
@@ -376,11 +379,15 @@ class StudentPush {
     await FlutterCallkitIncoming.endAllCalls();
     _calendarState = {'enabled': false};
     await _saveCalendarState();
+    _adhanState = {'enabled': false};
+    await _saveAdhanState();
   }
 
   Future<void> _openLocal(String? payload) async {
     if (payload == '/contact/chat') return openChat();
     if (payload == '/calendar') return openCalendar();
+    // A call to prayer opens the portal's Prayer times (its adhan player and the day's times).
+    if (payload == '/prayer') return openUpdate('/prayer');
     if (payload != null && payload.startsWith('/notifications?event=')) {
       final route = studentUpdateRoute({'type': 'student_update', 'route': '/notifications', 'eventId': payload.substring('/notifications?event='.length)});
       if (route != null) await openUpdate(route);
@@ -440,6 +447,168 @@ class StudentPush {
     }
     return {'supported': true, 'enabled': _calendarState!['enabled'] == true, 'permission': _calendarState!['enabled'] == true,
       'count': _calendarState!['count'] ?? 0, 'through': _calendarState!['through']};
+  });
+
+  // ── The adhan (student_adhan.dart) ──────────────────────────────────────
+  /// One channel per sound: a channel's sound is fixed once Android has made it.
+  Future<void> _createAdhanChannels(AppLanguage language) async {
+    final android = _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    if (android == null) return;
+    await android.createNotificationChannel(AndroidNotificationChannel(
+      adhanChannelId, adhanChannelName.of(language),
+      description: adhanChannelDescription.of(language),
+      importance: Importance.high,
+      playSound: true,
+      sound: const RawResourceAndroidNotificationSound(adhanAndroidSound),
+    ));
+    await android.createNotificationChannel(AndroidNotificationChannel(
+      adhanFajrChannelId, adhanFajrChannelName.of(language),
+      description: adhanChannelDescription.of(language),
+      importance: Importance.high,
+      playSound: true,
+      sound: const RawResourceAndroidNotificationSound(adhanAndroidFajrSound),
+    ));
+  }
+
+  Future<File> _adhanFile() async => File('${(await getApplicationSupportDirectory()).path}/adhan-calls.json');
+  Future<void> _saveAdhanState() async {
+    try {
+      await (await _adhanFile()).writeAsString(jsonEncode(_adhanState));
+    } catch (_) {
+      // Kept for this run; the next sync writes it again.
+    }
+  }
+
+  Future<void> _cancelAdhan() async {
+    for (var i = 0; i < adhanMaxCalls; i++) {
+      await _local.cancel(id: adhanNotificationBase + i);
+    }
+  }
+
+  /// iOS plays a notification's sound only from the bundle or Library/Sounds: the recording is copied
+  /// there once (again if its size changed with a new build).
+  Future<bool> _installIosAdhanSound() async {
+    if (!Platform.isIOS) return true;
+    try {
+      final bytes = (await rootBundle.load(adhanIosSoundAsset)).buffer.asUint8List();
+      final sounds = Directory('${(await getLibraryDirectory()).path}/Sounds');
+      await sounds.create(recursive: true);
+      final file = File('${sounds.path}/$adhanIosSound');
+      if (!await file.exists() || await file.length() != bytes.length) await file.writeAsBytes(bytes, flush: true);
+      return true;
+    } catch (error) {
+      unawaited(_problems.report('push: adhan sound not installed: ${describePushError(error)}'));
+      return false;
+    }
+  }
+
+  Future<bool> _adhanPermission() async {
+    try {
+      if (Platform.isIOS) {
+        final options = await _local.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.checkPermissions();
+        return options?.isEnabled == true;
+      }
+      return await _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.areNotificationsEnabled() == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Android 12 and later: whether a call can land on its minute ("Alarms and reminders").
+  Future<bool?> _adhanExact() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.canScheduleExactNotifications();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> _adhanStatus() async => {
+        'supported': true,
+        'enabled': (_adhanState?['count'] ?? 0) > 0,
+        'permission': await _adhanPermission(),
+        'count': _adhanState?['count'] ?? 0,
+        'through': _adhanState?['through'],
+        'exact': await _adhanExact(),
+      };
+
+  Future<void> _clearAdhan() async {
+    await _cancelAdhan();
+    _adhanState = {'enabled': false};
+    await _saveAdhanState();
+  }
+
+  /// `adhanStatus`, `adhanEnable` (asks to notify, inside the student's tap), `adhanSync` (the calls,
+  /// written again only when they change), `adhanClear`, `adhanExactAlarms` (Android's settings page).
+  Future<Map<String, dynamic>> adhan(String action, Map<dynamic, dynamic> input) => _serial(() async {
+    await start();
+    if (!_localReady) return {'supported': false};
+    final owner = '${input['owner']}';
+    if (!RegExp(r'^[1-9][0-9]{0,14}$').hasMatch(owner)) return {'error': 'Invalid adhan account'};
+    if (_adhanState == null) {
+      try { _adhanState = Map<String, dynamic>.from(jsonDecode(await (await _adhanFile()).readAsString()) as Map); }
+      catch (_) { _adhanState = {'enabled': false}; }
+    }
+    // Another student signed in on this phone: the previous one's calls go.
+    if (_adhanState!['owner'] != null && _adhanState!['owner'] != owner) await _clearAdhan();
+    switch (action) {
+      case 'adhanClear':
+        await _clearAdhan();
+      case 'adhanEnable':
+        await _local.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.requestPermissions(alert: true, badge: false, sound: true);
+        await _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestNotificationsPermission();
+      case 'adhanExactAlarms':
+        await _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestExactAlarmsPermission();
+      case 'adhanSync':
+        final raw = input['calls'];
+        if (raw is! List || raw.length > adhanMaxCalls) return {'error': 'Invalid adhan calls'};
+        final calls = validAdhanCalls(raw, DateTime.now());
+        // The schedule and how it is delivered: a language, a new phone setting or a new build writes it again.
+        final exact = await _adhanExact() == true;
+        final given = '${input['fingerprint']}';
+        final fingerprint = '${given.length > 6000 ? given.substring(0, 6000) : given}|exact:$exact|v1';
+        if (_adhanState!['fingerprint'] != fingerprint || _adhanState!['owner'] != owner) {
+          await _cancelAdhan();
+          final soundReady = await _installIosAdhanSound();
+          final language = _language;
+          for (var i = 0; i < calls.length; i++) {
+            final call = calls[i];
+            await _local.zonedSchedule(
+              id: adhanNotificationBase + i,
+              title: call.title,
+              body: call.body,
+              scheduledDate: tz.TZDateTime.from(call.at, tz.UTC),
+              notificationDetails: NotificationDetails(
+                android: AndroidNotificationDetails(
+                  call.full ? adhanChannelId : adhanFajrChannelId,
+                  (call.full ? adhanChannelName : adhanFajrChannelName).of(language),
+                  channelDescription: adhanChannelDescription.of(language),
+                  importance: Importance.high,
+                  priority: Priority.high,
+                  playSound: true,
+                  sound: RawResourceAndroidNotificationSound(call.full ? adhanAndroidSound : adhanAndroidFajrSound),
+                  category: AndroidNotificationCategory.reminder,
+                  icon: 'ic_stat_message',
+                ),
+                // Presented with its sound even while the app is open.
+                iOS: DarwinNotificationDetails(
+                  presentAlert: true, presentBanner: true, presentList: true, presentSound: true,
+                  sound: soundReady ? adhanIosSound : null,
+                ),
+              ),
+              androidScheduleMode: exact ? AndroidScheduleMode.exactAllowWhileIdle : AndroidScheduleMode.inexactAllowWhileIdle,
+              payload: '/prayer',
+            );
+          }
+          _adhanState = {
+            'owner': owner, 'enabled': calls.isNotEmpty, 'fingerprint': fingerprint, 'count': calls.length,
+            'through': calls.isEmpty ? null : calls.last.at.toIso8601String(),
+          };
+          await _saveAdhanState();
+        }
+    }
+    return _adhanStatus();
   });
 
   void dispose() {

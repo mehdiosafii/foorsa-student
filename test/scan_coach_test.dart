@@ -59,8 +59,11 @@ void main() {
       }
     });
 
-    test('a passport asks for its photo page and its two lines, a card for the side the step asks for', () {
-      expect(guide(null, of: passport).copy.detail, 'Show the photo page with the two lines at the bottom.');
+    test('a passport asks for both pages from the start, a card for the side the step asks for', () {
+      // Open at its photo page, both pages in one photo (the owner, 1 Nov 2026):
+      // the guide is the open booklet, and the words say so before anything is found.
+      expect(guide(null, of: passport).copy,
+          const ScanTextCopy('Open the passport flat', 'Show the photo page and the page facing it.', 'Both pages.'));
       expect(title(guide(frame(ScanHint.position), of: passport)), 'Open the passport flat');
       expect(title(guide(null, of: profile('parent_id', side: 'front'))), 'Front side');
       expect(title(guide(null, of: profile('parent_id', side: 'back'))), 'Now the back');

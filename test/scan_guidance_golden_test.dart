@@ -119,7 +119,7 @@ Widget phone(GuidanceState state, GuidedDocumentProfile fallback) {
                   guide: profile.guide(0.75),
                   state: state.guidance.state,
                   corners: state.corners,
-                  zones: profile.zones,
+                  zones: profile.guideZones,
                 ),
               ),
             ],
@@ -172,7 +172,7 @@ void main() {
       const GuidanceState(scanGuidanceDone, corners: square),
     ];
     expect([for (final state in states) state.guidance.copy.title], [
-      'Find the page', 'Show the photo page', 'Now the back', 'Move closer', 'Hold the phone flat',
+      'Find the page', 'Open the passport flat', 'Now the back', 'Move closer', 'Hold the phone flat',
       'Shadow on the page', 'Hold still', 'Got it',
     ]);
 

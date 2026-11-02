@@ -240,10 +240,39 @@ class ScanGuidePainter extends CustomPainter {
     }
 
     // Visual hints only: the camera does not pretend to have read the
-    // passport's photo or its lines from these.
+    // passport's photo or its lines from these. A passport is asked for open
+    // at its photo page, both pages in one photo (the owner, 1 Nov 2026), so
+    // a passport guide taller than it is wide is the open booklet: the page
+    // facing the photo page above the fold, with the passport number punched
+    // along its edge, and the photo page below it, with the photo and the two
+    // lines (the portal's own guide draws it the same way, UploadGuide.tsx).
+    final passport = zones.contains('passport_mrz') || zones.contains('passport_photo');
+    final booklet = quad == null && passport && rect.height > rect.width;
+    final photoPage = booklet ? Rect.fromLTRB(rect.left, rect.center.dy, rect.right, rect.bottom) : rect;
+    if (booklet) {
+      final hint = Paint()
+        ..color = colour.withValues(alpha: 0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3
+        ..strokeCap = StrokeCap.round;
+      canvas.drawPath(
+          dashed(Path()
+            ..moveTo(rect.left + 12, rect.center.dy)
+            ..lineTo(rect.right - 12, rect.center.dy)),
+          hint);
+      final number = Rect.fromLTWH(rect.right - rect.width * 0.15, rect.top + rect.height * 0.07,
+          rect.width * 0.08, rect.height * 0.34);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(number, const Radius.circular(4)),
+        Paint()
+          ..color = colour.withValues(alpha: 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+    }
     if (quad == null && zones.contains('passport_mrz')) {
-      final zone = Rect.fromLTWH(rect.left + rect.width * 0.07, rect.top + rect.height * 0.77,
-          rect.width * 0.86, rect.height * 0.17);
+      final zone = Rect.fromLTWH(photoPage.left + photoPage.width * 0.07, photoPage.top + photoPage.height * 0.77,
+          photoPage.width * 0.86, photoPage.height * 0.17);
       canvas.drawRRect(
         RRect.fromRectAndRadius(zone, const Radius.circular(5)),
         Paint()
@@ -252,9 +281,45 @@ class ScanGuidePainter extends CustomPainter {
           ..strokeWidth = 1.3,
       );
     }
+    // A card held long side across (ICAO's ID-1, the Moroccan CNIE): its photo
+    // on the left of the front, its three machine-readable lines across the
+    // bottom of the back.
+    final cardGuide = quad == null && rect.width > rect.height;
+    if (cardGuide && zones.contains('card_photo')) {
+      final zone = Rect.fromLTWH(rect.left + rect.width * 0.05, rect.top + rect.height * 0.2,
+          rect.width * 0.27, rect.height * 0.6);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(zone, const Radius.circular(4)),
+        Paint()
+          ..color = colour.withValues(alpha: 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+    }
+    if (cardGuide && zones.contains('card_mrz')) {
+      final zone = Rect.fromLTWH(rect.left + rect.width * 0.05, rect.top + rect.height * 0.64,
+          rect.width * 0.9, rect.height * 0.28);
+      final hint = Paint()
+        ..color = colour.withValues(alpha: 0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3;
+      canvas.drawRRect(RRect.fromRectAndRadius(zone, const Radius.circular(5)), hint);
+      // Its three lines, so the student knows which edge goes at the bottom.
+      final lines = Paint()
+        ..color = colour.withValues(alpha: 0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..strokeCap = StrokeCap.round;
+      for (var row = 1; row <= 3; row++) {
+        final y = zone.top + zone.height * row / 4;
+        canvas.drawPath(dashed(Path()
+          ..moveTo(zone.left + 8, y)
+          ..lineTo(zone.right - 8, y)), lines);
+      }
+    }
     if (quad == null && zones.contains('passport_photo')) {
-      final zone = Rect.fromLTWH(rect.left + rect.width * 0.08, rect.top + rect.height * 0.14,
-          rect.width * 0.23, rect.height * 0.51);
+      final zone = Rect.fromLTWH(photoPage.left + photoPage.width * 0.08, photoPage.top + photoPage.height * 0.14,
+          photoPage.width * 0.23, photoPage.height * 0.51);
       canvas.drawRRect(
         RRect.fromRectAndRadius(zone, const Radius.circular(4)),
         Paint()

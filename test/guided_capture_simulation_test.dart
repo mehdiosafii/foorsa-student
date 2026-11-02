@@ -34,6 +34,11 @@ const viewAspect = sensorHeight / sensorWidth;
 /// bottom of the page (a passport's two lines).
 LiveTextReadResult fakeRead(ScanFrameWork work, SensorFrames frames, {List<String> machineLines = const []}) {
   final crop = work.textCrop!;
+  // ML Kit reads a line as it stands in the image it is handed: the scene's
+  // page is upright in the view, so a crop turned on end or upside down reads
+  // nothing (an open passport's two lines, turned long side across as a card's
+  // are, were never read).
+  if (crop.quarterTurns % 4 != 0) return const LiveTextReadResult(LiveTextReadStatus.read);
   final region = work.wholeView ? scanWholeViewRegion : work.analysis.bounds!;
   final page = ScanTextGeometry.bounds(crop.page)!;
   Offset toCrop(double x, double y) => Offset(
@@ -65,10 +70,14 @@ LiveTextReadResult fakeRead(ScanFrameWork work, SensorFrames frames, {List<Strin
 }
 
 class Run {
-  Run(this.firedAt, this.outlined, this.frames);
+  Run(this.firedAt, this.outlined, this.frames, {this.matched = false});
   final Duration? firedAt;
   final int outlined;
   final int frames;
+
+  /// The paper's reading had passed when the photo was taken (a passport's
+  /// two lines read), not taken only for being steady or in view long enough.
+  final bool matched;
 }
 
 /// Frames every 250 ms for [seconds]; a read the loop asks for comes back
@@ -108,7 +117,7 @@ Run replay(GuidedDocumentProfile profile, CameraScene scene, {
       loop.textStarted(now, wholeView: work.wholeView);
       pending = (at: now.add(readTakes), work: work, epoch: loop.textEpoch);
     }
-    if (fire) return Run(now.difference(start), outlined, i + 1);
+    if (fire) return Run(now.difference(start), outlined, i + 1, matched: loop.captureMatched);
   }
   return Run(null, outlined, count);
 }
@@ -121,8 +130,15 @@ void main() {
   final passport = GuidedDocumentProfile.fromPortal({'documentKey': 'identity'});
   final card = GuidedDocumentProfile.fromPortal({'documentKey': 'parent_id'});
   final a4 = transcript.guide(viewAspect);
-  final dataPage = passport.guide(viewAspect);
+  // The guide is the open passport, both pages one above the other (the owner,
+  // 1 Nov 2026); the photo page alone is the guide offered next.
+  final booklet = passport.guide(viewAspect);
+  final dataPage = passport.candidateGuides(viewAspect)[1];
   final cardGuide = card.guide(viewAspect);
+  const passportLines = [
+    'P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<',
+    'L898902C36UTO7408122F1204159ZE184226B<<<<<10',
+  ];
 
   group('takes the page by itself, within a few seconds', () {
     final cases = <String, (GuidedDocumentProfile, CameraScene, double)>{
@@ -135,7 +151,9 @@ void main() {
       'a page on a white desk (no outline: found by its text)': (transcript, CameraScene(page: around(a4, 0.9), background: 212), 4.5),
       'a page in a dim room': (transcript, CameraScene(page: a4, paper: 140, ink: 35, background: 45), 3.5),
       'a page under a hand\'s shadow': (transcript, CameraScene(page: a4, shadow: 0.4), 3.5),
-      'a passport\'s photo page': (passport, CameraScene(page: dataPage), 4),
+      'an open passport on its guide, the fold across its middle':
+          (passport, CameraScene(page: booklet, foldAt: 0.5, foldShade: 30), 4),
+      'a passport\'s photo page alone': (passport, CameraScene(page: dataPage), 4),
       // Both pages of the booklet in view, the photo page below the fold.
       'an open passport, turned 6°': (passport, CameraScene(
           page: Rect.fromCenter(center: const Offset(0.5, 0.5), width: 0.62, height: 0.62 * viewAspect / (88 / 125)),
@@ -185,12 +203,23 @@ void main() {
   });
 
   test('a passport whose two lines read is taken as soon as it is steady', () {
-    final run = replay(passport, CameraScene(page: dataPage), machineLines: const [
-      'P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<',
-      'L898902C36UTO7408122F1204159ZE184226B<<<<<10',
-    ], readTakes: const Duration(milliseconds: 300));
+    final run = replay(passport, CameraScene(page: dataPage), machineLines: passportLines,
+        readTakes: const Duration(milliseconds: 300));
     expect(run.firedAt, isNotNull);
     expect(run.firedAt!.inMilliseconds, lessThanOrEqualTo(2500));
+    expect(run.matched, isTrue);
+  });
+
+  test('an open passport held upright has its two lines read and is taken as soon as it is steady', () {
+    // Read long side across, as a card is, these lines were turned on end and
+    // never read: the photo went only once the page had been steady a while,
+    // unread, and the camera had meanwhile told the student to show the photo
+    // page, the one page the frame then held.
+    final run = replay(passport, CameraScene(page: booklet, foldAt: 0.5, foldShade: 30), machineLines: passportLines,
+        readTakes: const Duration(milliseconds: 300));
+    expect(run.firedAt, isNotNull);
+    expect(run.firedAt!.inMilliseconds, lessThanOrEqualTo(2500));
+    expect(run.matched, isTrue, reason: 'taken before its two lines were read');
   });
 
   test('a cell is the average of its pixels, so noise and tremor leave a held page steady', () {

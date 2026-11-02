@@ -45,36 +45,41 @@ function portal({local = new Map(), tab = new Map(), config = {}, origin = 'http
   };
 }
 
-test('existing password login is unchanged until the student opts in', () => {
+test('a password session stays in lasting storage, quick sign-in on or off', () => {
   const p = portal({local: new Map([[TOKEN, 'session']])});
   assert.equal(p.storage.getItem(TOKEN), 'session');
-  assert.equal(p.local.get(TOKEN), 'session');
   assert.equal(p.window.__foorsaBiometrics.protect('session'), true);
-  assert.equal(p.storage.getItem(TOKEN), 'session');
-  assert.equal(p.local.has(TOKEN), false);
-  assert.equal(p.local.get(MARKER), '1');
+  assert.equal(p.local.get(TOKEN), 'session');
+  assert.equal(p.local.has(MARKER), false);
   p.storage.setItem(TOKEN, 'renewed');
-  assert.equal(p.storage.getItem(TOKEN), 'renewed');
-  assert.equal(p.local.has(TOKEN), false);
+  assert.equal(p.local.get(TOKEN), 'renewed');
 });
 
-test('a cold launch clears old browser credentials before the portal reads them', () => {
-  const local = new Map([[TOKEN, 'old-disk-token'], [MARKER, '1']]);
-  const tab = new Map([[TOKEN, 'old-tab-token'], ['foorsa_biometric_boot', 'old-boot']]);
+test('a relaunch finds the student signed in: the app no longer clears the session at launch', () => {
+  // The owner, 1 Nov 2026: "once you log to the app, even if the app closes let's make sure you stay signed in".
+  const local = new Map([[TOKEN, 'student'], [KIND, 'student']]);
+  portal({local, tab: new Map()});
+  const relaunch = portal({local, tab: new Map(), config: {protected: true, boot: 'boot-2'}});
+  assert.equal(relaunch.storage.getItem(TOKEN), 'student');
+});
+
+test('a session an older build kept in the tab goes back to lasting storage', () => {
+  const local = new Map([[MARKER, '1']]);
+  const tab = new Map([[TOKEN, 'tab-session'], ['foorsa_biometric_boot', 'old-boot']]);
   const p = portal({local, tab});
-  assert.equal(p.storage.getItem(TOKEN), null);
-  assert.equal(local.has(TOKEN), false);
+  assert.equal(p.storage.getItem(TOKEN), 'tab-session');
+  assert.equal(local.get(TOKEN), 'tab-session');
+  assert.equal(local.has(MARKER), false);
+  assert.equal(tab.has(TOKEN), false);
+  // A cold launch of an older build's quick sign-in had nothing left in the tab: the sign-in screen, once.
+  const cold = portal({local: new Map([[MARKER, '1']]), tab: new Map()});
+  assert.equal(cold.storage.getItem(TOKEN), null);
+  assert.equal(cold.local.has(MARKER), false);
 });
 
-test('only the natively unlocked token is restored; reloading after logout cannot replay it', () => {
-  const local = new Map(); const tab = new Map();
-  const config = {protected: true, token: 'unlocked'};
-  const p = portal({local, tab, config});
-  assert.equal(p.storage.getItem(TOKEN), 'unlocked');
-  assert.equal(p.local.has(TOKEN), false);
-  p.logout();
-  const reload = portal({local, tab, config});
-  assert.equal(reload.storage.getItem(TOKEN), null);
+test('the shell never hands the page a token through its config', () => {
+  const p = portal({config: {protected: true, token: 'unlocked'}});
+  assert.equal(p.storage.getItem(TOKEN), null);
 });
 
 test('a successful authenticated probe waits for the main-frame bridge nonce', async () => {
@@ -87,6 +92,45 @@ test('a successful authenticated probe waits for the main-frame bridge nonce', a
   assert.equal(p.calls[0][1].nonce, 'main-frame-nonce');
   await p.me('student');
   assert.equal(p.calls.length, 1);
+});
+
+test('the app hears whether a session began on this page or was kept from an earlier launch', async () => {
+  // A kept session must never read as a stranger's: the app would delete the saved Face ID login.
+  const p = portal({local: new Map([[TOKEN, 'kept'], [KIND, 'student']])}); p.ready();
+  await p.me('kept');
+  assert.equal(p.calls[0][1].token, 'kept');
+  assert.equal(p.calls[0][1].fresh, false);
+  p.signOut();
+  p.storage.setItem(TOKEN, 'typed-password');
+  await p.me('typed-password');
+  assert.equal(p.calls[1][1].token, 'typed-password');
+  assert.equal(p.calls[1][1].fresh, true);
+  // The page's own call carries only what the script puts in it.
+  assert.deepEqual(Object.keys(p.calls[1][1]).sort(), ['fresh', 'nonce', 'operation', 'token']);
+});
+
+test('a session the portal renewed is the same sign-in: nothing is offered for it', async () => {
+  const p = portal({local: new Map([[TOKEN, 'student'], [KIND, 'student']])}); p.ready();
+  await p.me('student');
+  assert.equal(p.calls.length, 1);
+  p.listeners.get('portal-session-renewed')({detail: {token: 'renewed'}});
+  p.storage.setItem(TOKEN, 'renewed');
+  await p.me('renewed');
+  assert.equal(p.calls.length, 1);
+  // A real new sign-in is still announced, as one.
+  p.storage.setItem(TOKEN, 'signed-in-again');
+  await p.me('signed-in-again');
+  assert.equal(p.calls.length, 2);
+  assert.equal(p.calls[1][1].token, 'signed-in-again');
+  assert.equal(p.calls[1][1].fresh, true);
+});
+
+test('a renewal names its token: another token stored after it is a sign-in', async () => {
+  const p = portal({local: new Map([[TOKEN, 'student']])}); p.ready();
+  p.listeners.get('portal-session-renewed')({detail: {token: 'renewed'}});
+  p.storage.setItem(TOKEN, 'someone-else');
+  await p.me('someone-else');
+  assert.deepEqual(plain(p.calls.map((call) => call[1].token)), ['someone-else']);
 });
 
 test('failed, cross-origin, or mismatched probes cannot suggest enrollment', async () => {
@@ -134,20 +178,6 @@ test('late responses from a signed-out account cannot enroll the next student', 
   assert.equal(p.window.__foorsaBiometrics.protect('first'), false);
 });
 
-test('media bearer tokens are session-only after opt-in and cleared on a new launch', () => {
-  const MEDIA = 'foorsa_portal_media_token';
-  const local = new Map([[TOKEN, 'student'], [MEDIA, 'media-credential']]);
-  const tab = new Map();
-  const p = portal({local, tab});
-  p.window.__foorsaBiometrics.protect('student');
-  assert.equal(local.has(MEDIA), false);
-  assert.equal(p.storage.getItem(MEDIA), 'media-credential');
-  p.storage.setItem(MEDIA, 'renewed-media');
-  assert.equal(local.has(MEDIA), false);
-  const next = portal({local, tab, config: {boot: 'boot-2'}});
-  assert.equal(next.storage.getItem(MEDIA), null);
-});
-
 // ── 1.2.21: the sign-in screen and Profile › Settings drive quick sign-in ──
 
 test('the bridge asks the shell for its nonce once the platform is ready', () => {
@@ -157,7 +187,7 @@ test('the bridge asks the shell for its nonce once the platform is ready', () =>
 });
 
 test('status waits for the main-frame nonce, then names what the phone uses', async () => {
-  const p = portal({config: {protected: true}});
+  const p = portal();
   p.native(async (data) => data.operation === 'status' ? {available: true, enabled: true, kind: 'face'} : null);
   const pending = p.window.__foorsaBiometrics.status();
   await Promise.resolve();
@@ -170,25 +200,24 @@ test('status waits for the main-frame nonce, then names what the phone uses', as
   assert.equal(p.calls[0][1].nonce, 'main-frame-nonce');
 });
 
-test('unlocking installs the saved session for this launch only, with nothing more to offer', async () => {
-  const local = new Map([[MARKER, '1']]); const tab = new Map();
-  const p = portal({local, tab, config: {protected: true}}); p.ready();
+test('unlocking signs the student in for good, with nothing more to offer', async () => {
+  const local = new Map(); const tab = new Map();
+  const p = portal({local, tab}); p.ready();
   p.native(async (data) => data.operation === 'unlock' ? {ok: true, token: 'saved'} : null);
   assert.equal(p.storage.getItem(TOKEN), null);
   const result = await p.window.__foorsaBiometrics.unlock();
   assert.equal(result.ok, true);
   assert.equal(result.token, undefined);
-  assert.equal(p.storage.getItem(TOKEN), 'saved');
-  assert.equal(local.has(TOKEN), false);
+  assert.equal(local.get(TOKEN), 'saved');
   assert.equal(p.storage.getItem(KIND), 'student');
   await p.me('saved');
   assert.deepEqual(plain(p.calls.map((call) => call[1].operation)), ['unlock']);
-  const nextLaunch = portal({local, tab, config: {protected: true, boot: 'boot-2'}});
-  assert.equal(nextLaunch.storage.getItem(TOKEN), null);
+  const nextLaunch = portal({local, tab, config: {boot: 'boot-2'}});
+  assert.equal(nextLaunch.storage.getItem(TOKEN), 'saved');
 });
 
 test('a refused unlock leaves the sign-in screen as it was and says why', async () => {
-  const p = portal({config: {protected: true}}); p.ready();
+  const p = portal(); p.ready();
   p.native(async () => ({ok: false, reason: 'cancelled'}));
   assert.deepEqual(plain(await p.window.__foorsaBiometrics.unlock()), {ok: false, reason: 'cancelled'});
   assert.equal(p.storage.getItem(TOKEN), null);
@@ -198,35 +227,29 @@ test('a refused unlock leaves the sign-in screen as it was and says why', async 
 
 test('the prompt opens only from a tap, never by itself', async () => {
   // The owner, 30 Oct 2026: "you need to click the face id logo".
-  const tab = new Map();
-  const p = portal({tab, config: {protected: true}}); p.ready();
+  const p = portal(); p.ready();
   p.native(async () => ({ok: false, reason: 'cancelled'}));
   assert.equal((await p.window.__foorsaBiometrics.unlock({auto: true})).reason, 'skipped');
   assert.equal(p.calls.length, 0);
   assert.equal((await p.window.__foorsaBiometrics.unlock()).reason, 'cancelled');
   assert.equal((await p.window.__foorsaBiometrics.unlock()).reason, 'cancelled');
   assert.equal(p.calls.length, 2);
-  const relaunch = portal({tab, config: {protected: true, boot: 'boot-2'}}); relaunch.ready();
-  relaunch.native(async () => ({ok: false, reason: 'cancelled'}));
-  assert.equal((await relaunch.window.__foorsaBiometrics.unlock({auto: true})).reason, 'skipped');
-  assert.equal(relaunch.calls.length, 0);
 });
 
-test('Settings turns it on for the open session and off without signing the student out', async () => {
+test('Settings turns it on for the open session and off, the student signed in throughout', async () => {
   const local = new Map([[TOKEN, 'student'], [KIND, 'student']]); const tab = new Map();
   const p = portal({local, tab}); p.ready();
   p.native(async (data) => {
-    if (data.operation === 'enable') { p.window.__foorsaBiometrics.protect(data.token); return {ok: true}; }
+    if (data.operation === 'enable') return {ok: p.window.__foorsaBiometrics.protect(data.token)};
     if (data.operation === 'disable') return {ok: true};
     return null;
   });
   assert.deepEqual(plain(await p.window.__foorsaBiometrics.enable()), {ok: true});
   assert.equal(p.calls[0][1].token, 'student');
-  assert.equal(local.has(TOKEN), false);
-  assert.equal(local.get(MARKER), '1');
-  assert.deepEqual(plain(await p.window.__foorsaBiometrics.disable()), {ok: true});
   assert.equal(local.get(TOKEN), 'student');
   assert.equal(local.has(MARKER), false);
+  assert.deepEqual(plain(await p.window.__foorsaBiometrics.disable()), {ok: true});
+  assert.equal(local.get(TOKEN), 'student');
   const relaunch = portal({local, tab, config: {boot: 'boot-2'}});
   assert.equal(relaunch.storage.getItem(TOKEN), 'student');
 });
@@ -240,16 +263,14 @@ test('Settings cannot turn it on for an ambassador or without a session', async 
 });
 
 test('signing out keeps quick sign-in for the sign-in screen; an expired session or a deletion forgets it', () => {
-  const local = new Map([[MARKER, '1']]);
-  const p = portal({local, tab: new Map(), config: {protected: true, token: 'unlocked'}}); p.ready();
+  const local = new Map([[TOKEN, 'student']]);
+  const p = portal({local, tab: new Map()}); p.ready();
   p.signOut();
   assert.equal(p.calls.length, 0);
   assert.equal(p.storage.getItem(TOKEN), null);
-  assert.equal(local.get(MARKER), '1');
   p.signOut({signedOut: true, forgetDevice: true});
   assert.deepEqual(plain(p.calls.map((call) => call[1].operation)), ['forget']);
-  assert.equal(local.has(MARKER), false);
-  const expired = portal({local: new Map([[MARKER, '1']]), config: {protected: true}}); expired.ready();
+  const expired = portal({local: new Map([[TOKEN, 'student']])}); expired.ready();
   expired.logout();
   assert.deepEqual(plain(expired.calls.map((call) => call[1].operation)), ['forget']);
 });

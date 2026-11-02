@@ -717,7 +717,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                   painter: ScanGuidePainter(
                     guide: analysis?.bounds ?? widget.profile.guide(_viewportAspect ?? 0.75),
                     state: state,
-                    zones: widget.profile.zones,
+                    zones: widget.profile.guideZones,
                     corners: analysis?.bounds != null ? analysis?.corners : null,
                   ),
                 ),

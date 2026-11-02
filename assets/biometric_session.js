@@ -12,7 +12,6 @@
   const rawGet = Storage.prototype.getItem;
   const rawSet = Storage.prototype.setItem;
   const rawRemove = Storage.prototype.removeItem;
-  let protectedSession = config.protected || rawGet.call(localStorage, protectedKey) === '1';
   let generation = 0;
   let nonce = null;
   let readyWaiters = [];
@@ -20,37 +19,39 @@
   let pendingLogout = false;
   let blocked = false;
   let announced = null;
+  let renewing = null;
+  // The session the portal stored on this page (a sign-in), as opposed to one
+  // the app kept from an earlier launch: the shell replaces a saved quick
+  // sign-in only for a new sign-in or another account.
+  let startedHere = null;
 
-  if (protectedSession) {
-    for (const key of credentialKeys) rawRemove.call(localStorage, key);
-    if (rawGet.call(sessionStorage, bootKey) !== config.boot) {
-      for (const key of credentialKeys) rawRemove.call(sessionStorage, key);
-      rawSet.call(sessionStorage, bootKey, config.boot);
-      if (config.token) {
-        rawSet.call(sessionStorage, tokenKey, config.token);
-        rawSet.call(localStorage, kindKey, 'student');
-      }
+  // The student stays signed in when the app closes (the owner, 1 Nov 2026: "once you log to the
+  // app, even if the app closes let's make sure you stay signed in"). Until 1.2.39 the session
+  // lived in this tab only while quick sign-in was on, and every launch opened on the sign-in
+  // screen. Its marker, and a tab copy a reload kept, go back to ordinary lasting storage; the
+  // saved login behind Face ID or the fingerprint stays, for signing back in after a sign-out.
+  if (rawGet.call(localStorage, protectedKey) === '1') {
+    for (const key of credentialKeys) {
+      const value = rawGet.call(sessionStorage, key);
+      if (value && !rawGet.call(localStorage, key)) rawSet.call(localStorage, key, value);
+      rawRemove.call(sessionStorage, key);
     }
+    rawRemove.call(localStorage, protectedKey);
+    rawRemove.call(sessionStorage, bootKey);
   }
   // Do not retain a second copy inside the bridge's closures after bootstrap.
   config.token = null;
 
-  // Keep the active web session in tab storage. The durable login lives only
-  // in the native vault. Every new native launch clears this tab session before
-  // React can read it, so the portal opens on its sign-in screen, where the
-  // student unlocks with Face ID or a fingerprint (or types their password).
-  Storage.prototype.getItem = function(key) {
-    if (this === localStorage && credentialKeys.has(key) && protectedSession) {
-      return rawGet.call(sessionStorage, key);
-    }
-    return rawGet.call(this, key);
-  };
   Storage.prototype.setItem = function(key, value) {
     if (this === localStorage && key === tokenKey) {
       generation++;
-      announced = null;
+      // A session the portal renewed (portal-session-renewed, below) is the same sign-in, not a
+      // new one: there is nothing to offer for it.
+      const renewal = renewing !== null && String(value) === renewing;
+      announced = renewal ? renewing : null;
+      startedHere = renewal ? null : String(value);
+      renewing = null;
     }
-    if (this === localStorage && credentialKeys.has(key) && protectedSession) return rawSet.call(sessionStorage, key, value);
     return rawSet.call(this, key, value);
   };
   Storage.prototype.removeItem = function(key) {
@@ -58,15 +59,15 @@
       generation++;
       pendingSession = null;
       announced = null;
+      startedHere = null;
     }
-    if (this === localStorage && credentialKeys.has(key)) rawRemove.call(sessionStorage, key);
     return rawRemove.call(this, key);
   };
 
-  const send = (operation, token) => {
+  const send = (operation, token, extra) => {
     if (!nonce || !window.flutter_inappwebview?.callHandler) return;
     return window.flutter_inappwebview.callHandler('FoorsaStudentBiometrics', {
-      operation, token, nonce,
+      ...extra, operation, token, nonce,
     });
   };
   // The shell hands this page its nonce on every load and whenever asked. A
@@ -95,16 +96,6 @@
   };
   window.addEventListener('flutterInAppWebViewPlatformReady', requestReady);
 
-  // Quick sign-in is off: the session goes back to ordinary, lasting storage.
-  const unprotect = () => {
-    for (const key of credentialKeys) {
-      const value = rawGet.call(sessionStorage, key);
-      if (value) rawSet.call(localStorage, key, value);
-    }
-    rawRemove.call(localStorage, protectedKey);
-    protectedSession = false;
-  };
-
   const flush = () => {
     if (pendingLogout) {
       if (!nonce) return;
@@ -114,28 +105,31 @@
     if (pendingSession && !blocked && pendingSession === localStorage.getItem(tokenKey)
         && localStorage.getItem(kindKey) !== 'agent' && pendingSession !== announced && nonce) {
       announced = pendingSession;
-      Promise.resolve(send('session', pendingSession)).then((result) => {
+      Promise.resolve(send('session', pendingSession, {fresh: pendingSession === startedHere})).then((result) => {
         if (result?.retry) { announced = null; setTimeout(flush, 750); }
       }).catch(() => { announced = null; });
     }
   };
+  // The portal says a session it is about to keep is a renewal of the open one
+  // (src/portal/sessionRenewal.ts), just before it stores it.
+  window.addEventListener('portal-session-renewed', (event) => {
+    const token = event && event.detail && event.detail.token;
+    renewing = typeof token === 'string' && token ? token : null;
+  });
   window.addEventListener('portal-logout', (event) => {
     generation++;
     pendingSession = null;
+    startedHere = null;
     // Signing out keeps quick sign-in: it waits on the sign-in screen for the
     // next time. An expired or rejected session, or a deleted account, takes
-    // it away, and the session goes back to ordinary storage.
+    // it away.
     const detail = event && event.detail;
     const keepQuickSignIn = !!detail && detail.signedOut === true && detail.forgetDevice !== true;
     for (const key of credentialKeys) {
       rawRemove.call(localStorage, key);
       rawRemove.call(sessionStorage, key);
     }
-    if (!keepQuickSignIn) {
-      pendingLogout = true;
-      rawRemove.call(localStorage, protectedKey);
-      protectedSession = false;
-    }
+    if (!keepQuickSignIn) pendingLogout = true;
     flush();
   });
 
@@ -173,17 +167,11 @@
       flush();
     },
     matches(token) { return token === localStorage.getItem(tokenKey) && !blocked; },
-    protect(token) {
-      if (token !== localStorage.getItem(tokenKey) || blocked) return false;
-      rawSet.call(sessionStorage, tokenKey, token);
-      const media = rawGet.call(localStorage, mediaKey);
-      if (media) rawSet.call(sessionStorage, mediaKey, media);
-      rawSet.call(sessionStorage, bootKey, config.boot);
-      rawSet.call(localStorage, protectedKey, '1');
-      for (const key of credentialKeys) rawRemove.call(localStorage, key);
-      protectedSession = true;
-      return true;
-    },
+    // Builds before 1.2.39 moved the session into the tab here, so the next
+    // launch opened on the sign-in screen. The session now stays where it is:
+    // the saved login is for after a sign-out. True while the token is still
+    // the page's session, which the shell checks before keeping the login.
+    protect(token) { return token === localStorage.getItem(tokenKey) && !blocked; },
     // ── For the portal's sign-in screen and Profile › Settings ──────────
     // Whether this phone can do it and whether a sign-in is saved. `kind`
     // names what the phone uses: face, touch or (Android) biometric.
@@ -196,28 +184,27 @@
         kind: result.kind === 'face' || result.kind === 'touch' ? result.kind : 'biometric',
       };
     },
-    // The OS prompt opens; on success the saved session becomes this tab's
-    // session and the portal carries on as if the password had been typed.
-    // Only from a tap on the sign-in screen's icon (the owner, 30 Oct 2026:
-    // "you need to click the face id logo"): `auto`, the screen opening the
-    // prompt by itself, is refused, whatever release of the portal asks.
+    // The OS prompt opens; on success the saved session becomes the page's
+    // session, kept across launches, and the portal carries on as if the
+    // password had been typed. Only from a tap on the sign-in screen's icon
+    // (the owner, 30 Oct 2026: "you need to click the face id logo"): `auto`,
+    // the screen opening the prompt by itself, is refused, whatever release of
+    // the portal asks.
     async unlock(options) {
       if (options && options.auto) return {ok: false, reason: 'skipped'};
       const result = await call('unlock');
       if (!result || result.ok !== true || typeof result.token !== 'string' || !result.token) {
         return {ok: false, reason: reasonOf(result)};
       }
-      for (const key of credentialKeys) rawRemove.call(localStorage, key);
+      rawRemove.call(localStorage, mediaKey);
       rawRemove.call(sessionStorage, mediaKey);
-      rawSet.call(sessionStorage, tokenKey, result.token);
-      rawSet.call(sessionStorage, bootKey, config.boot);
+      rawSet.call(localStorage, tokenKey, result.token);
       rawSet.call(localStorage, kindKey, 'student');
-      rawSet.call(localStorage, protectedKey, '1');
-      protectedSession = true;
       blocked = false;
       generation++;
       // Already saved: there is nothing to offer for this session.
       announced = result.token;
+      startedHere = null;
       return {ok: true};
     },
     // Turned on from Profile › Settings, for the session open now.
@@ -231,7 +218,6 @@
     async disable() {
       const result = await call('disable');
       if (!result || result.ok !== true) return {ok: false, reason: reasonOf(result)};
-      unprotect();
       return {ok: true};
     },
   }), configurable: false});

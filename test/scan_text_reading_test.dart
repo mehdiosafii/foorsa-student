@@ -285,17 +285,36 @@ void main() {
 
     test('a passport without readable lines says what to change', () {
       var reading = session('identity');
-      expect(reading.turnPolicy, const ScanTextTurnPolicy.landscape(upsideDown: false));
+      // Open at its photo page, both pages one above the other (the owner, 1 Nov
+      // 2026): read as seen first, then upside down, then a quarter turn either way.
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(0));
       reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)]));
       expect(reading.status(glare: false).guidance, ScanTextGuidance.reading);
-      expect(reading.turnPolicy, const ScanTextTurnPolicy.landscape(upsideDown: true));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(2));
       reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 2));
       expect(reading.status(glare: false).guidance, ScanTextGuidance.showMachineLines);
       expect(reading.status(glare: true).guidance, ScanTextGuidance.glareOnMachineLines);
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(1));
+      reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 1));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(3));
+      // Round again: the student may turn the passport.
+      reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 3));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(0));
       reading.ingest(passportFrame());
-      expect(reading.turnPolicy, const ScanTextTurnPolicy.landscape(upsideDown: false));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(0));
       reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)]));
-      expect(reading.turnPolicy, const ScanTextTurnPolicy.landscape(upsideDown: false));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(0));
+
+      // Found, it is kept the way its two lines were read: here a photo page
+      // alone, held sideways.
+      reading = session('identity')
+        ..ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)]))
+        ..ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 2))
+        ..ingest(frame([line('PASSPORT PASSEPORT', y: 0.85), line(passportOne, y: 0.17), line(passportTwo, y: 0.11)],
+            turns: 1));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(1));
+      reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 1));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(1));
 
       reading = session('identity')..ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], width: 700, height: 495));
       expect(reading.status(glare: false).guidance, ScanTextGuidance.moveCloserMachineLines);
@@ -365,6 +384,61 @@ void main() {
         ..ingest(frame(const []));
       expect(reading.status(glare: false).guidance, ScanTextGuidance.showCardDetails);
       expect(reading.status(glare: true).guidance, ScanTextGuidance.glareOnText);
+    });
+
+    // The owner, 2 Nov 2026: the back "needs me clicking the capture button". The front seen a moment
+    // before, or the card's number inside the back's own lines, no longer passes for the front.
+    test('a back is taken by itself once the front is out of view, before its lines are confirmed', () {
+      final reading = session('parent_id', side: 'back')
+        ..ingest(cardFrontFrame())
+        ..ingest(cardFrontFrame());
+      expect(reading.status(glare: false).guidance, ScanTextGuidance.turnCardToBack);
+      // Turned over: its lines in view, read once (a second read would confirm them).
+      reading.ingest(cardBackFrame([cnieOne, cnieTwo, 'ALAMI<<MOHAMED<<<<<<<<<<<<<<<']));
+      final status = reading.status(glare: false);
+      expect(status.passed, isFalse);
+      expect(status.guidance?.holdsCapture, isFalse);
+      expect(status.capturesWhenClear(ScanTextGateStatus.clearPageGrace(ScanPaperKind.idCard), ScanPaperKind.idCard), isTrue);
+      // An older card whose back has no machine-readable lines: taken on the same grace.
+      final older = session('parent_id', side: 'back')
+        ..ingest(cardFrontFrame())
+        ..ingest(cardFrontFrame())
+        ..ingest(frame([
+          line('Fils de AHMED', y: 0.7, height: 0.05),
+          line('et de FATIMA', y: 0.6, height: 0.05),
+          line('Adresse 12 RUE 4 HAY SALAM', y: 0.5, height: 0.05),
+        ], width: 1100, height: 700));
+      expect(older.status(glare: false).guidance?.holdsCapture, isFalse);
+    });
+
+    test('the number in a back’s machine-readable lines is not a front’s', () {
+      expect(ScanCardFront.numbers(['IDMARAA12345678 BE123456<<<<<<<']), isEmpty);
+      expect(ScanCardFront.numbers(['IDMARAA12345678 BE123456«««««««']), isEmpty);
+      expect(ScanCardFront.numbers(['N° BE123456']), ['BE123456']);
+      expect(ScanCardFront.machineLike('ROYAUME DU MAROC'), isFalse);
+      final spaced = cnieOne.replaceFirst('BE', ' BE');
+      final reading = session('parent_id', side: 'back')
+        ..ingest(cardBackFrame([spaced, cnieTwo, 'ALAMI<<MOHAMED<<<<<<<<<<<<<<<']))
+        ..ingest(cardBackFrame([spaced, cnieTwo, 'ALAMI<<MOHAMEO<<<<<<<<<<<<<<<']));
+      expect(reading.frontNumber, isNull);
+      expect(reading.status(glare: false).guidance, isNot(ScanTextGuidance.turnCardToBack));
+    });
+
+    test('a front asked for after the back was seen is held only while the back is in view', () {
+      final reading = session('parent_id', side: 'front')
+        ..ingest(cardBackFrame())
+        ..ingest(cardBackFrame());
+      expect(reading.status(glare: false).guidance, ScanTextGuidance.turnCardToFront);
+      // Turned over, its number not read yet: no longer held.
+      reading.ingest(frame([
+        line('ROYAUME DU MAROC', y: 0.85, height: 0.05),
+        line('MOHAMED', x: 0.4, y: 0.6, width: 0.3, height: 0.05),
+      ], width: 1100, height: 700));
+      expect(reading.status(glare: false).guidance?.holdsCapture, isFalse);
+      reading
+        ..ingest(cardFrontFrame())
+        ..ingest(cardFrontFrame());
+      expect(reading.status(glare: false), ScanTextGateStatus.passedReading);
     });
 
     test('without a side either side is the card, Tunisian fronts included', () {

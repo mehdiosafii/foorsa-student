@@ -13,6 +13,8 @@ void main() {
       'language': true,
       'push': 2,
       'pagePermissions': 2,
+      'adhan': 1,
+      'session': 2,
     });
   });
 
@@ -25,6 +27,8 @@ void main() {
       'language': true,
       'push': 2,
       'pagePermissions': 2,
+      'adhan': 1,
+      'session': 2,
     });
   });
 

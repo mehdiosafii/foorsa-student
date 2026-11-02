@@ -41,8 +41,10 @@ ScanTextCopy scanLiveGuidance({
     case ScanFraming.searching:
       switch (layout) {
         case GuidedScanLayout.passport:
-          return const ScanTextCopy('Show the photo page',
-              'Show the photo page with the two lines at the bottom.', 'Two bottom lines.');
+          // Asked for open at its photo page from the start, both pages in one
+          // photo (the owner, 1 Nov 2026): the Android guide is that open booklet.
+          return const ScanTextCopy('Open the passport flat',
+              'Show the photo page and the page facing it.', 'Both pages.');
         case GuidedScanLayout.card:
           if (side == 'front') {
             return const ScanTextCopy('Front side', 'Show the side with the photo.', 'The photo side.');
