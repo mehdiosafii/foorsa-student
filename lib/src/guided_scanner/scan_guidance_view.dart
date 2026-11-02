@@ -281,6 +281,42 @@ class ScanGuidePainter extends CustomPainter {
           ..strokeWidth = 1.3,
       );
     }
+    // A card held long side across (ICAO's ID-1, the Moroccan CNIE): its photo
+    // on the left of the front, its three machine-readable lines across the
+    // bottom of the back.
+    final cardGuide = quad == null && rect.width > rect.height;
+    if (cardGuide && zones.contains('card_photo')) {
+      final zone = Rect.fromLTWH(rect.left + rect.width * 0.05, rect.top + rect.height * 0.2,
+          rect.width * 0.27, rect.height * 0.6);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(zone, const Radius.circular(4)),
+        Paint()
+          ..color = colour.withValues(alpha: 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+    }
+    if (cardGuide && zones.contains('card_mrz')) {
+      final zone = Rect.fromLTWH(rect.left + rect.width * 0.05, rect.top + rect.height * 0.64,
+          rect.width * 0.9, rect.height * 0.28);
+      final hint = Paint()
+        ..color = colour.withValues(alpha: 0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3;
+      canvas.drawRRect(RRect.fromRectAndRadius(zone, const Radius.circular(5)), hint);
+      // Its three lines, so the student knows which edge goes at the bottom.
+      final lines = Paint()
+        ..color = colour.withValues(alpha: 0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..strokeCap = StrokeCap.round;
+      for (var row = 1; row <= 3; row++) {
+        final y = zone.top + zone.height * row / 4;
+        canvas.drawPath(dashed(Path()
+          ..moveTo(zone.left + 8, y)
+          ..lineTo(zone.right - 8, y)), lines);
+      }
+    }
     if (quad == null && zones.contains('passport_photo')) {
       final zone = Rect.fromLTWH(photoPage.left + photoPage.width * 0.08, photoPage.top + photoPage.height * 0.14,
           photoPage.width * 0.23, photoPage.height * 0.51);

@@ -1049,11 +1049,27 @@ abstract final class ScanCardFront {
         return keywords.any(upper.contains);
       });
 
+  /// A line of machine-readable characters: a card's three bottom lines, on its
+  /// back. The CIN printed in them is the back's, never the front's number
+  /// (the owner, 2 Nov 2026: the back "needs me clicking the capture button":
+  /// read there, it made the back look like the front).
+  static bool machineLike(String text) {
+    if (text.contains('<') || text.contains('«')) return true;
+    final reading = ScanMrz.normalize(text);
+    final characters = reading.characters;
+    if (characters.length < 24) return false;
+    final fillers = characters.where((c) => c == ScanMrz.filler).length;
+    final digits = characters.where(ScanMrz.isDigit).length;
+    return fillers >= 2 || digits * 3 >= characters.length;
+  }
+
   /// Card numbers on the front: a Moroccan CIN (one or two letters, then
-  /// five to seven digits) or eight digits (a Tunisian card).
+  /// five to seven digits) or eight digits (a Tunisian card), never in a
+  /// machine-readable line.
   static List<String> numbers(List<String> texts) {
     final found = <String>[];
     for (final text in texts) {
+      if (machineLike(text)) continue;
       final tokens = text.toUpperCase().split(RegExp('[^A-Z0-9]+')).where((token) => token.isNotEmpty)
           .map((token) => token.codeUnits).toList();
       final candidates = [...tokens];
@@ -1856,6 +1872,22 @@ class ScanTextReadingSession {
     return _cardKeywordSeen || latest.layout.readableLines >= 3 || latest.layout.textRows >= 5;
   }
 
+  /// The card's front is what the camera sees now: its number and its printed
+  /// lines in the latest frame, and none of the back's machine-readable lines.
+  /// Only this holds the shutter for a back ("Turn the card over"): what was
+  /// seen a moment ago is not what is in view (the owner, 2 Nov 2026: the back
+  /// "needs me clicking the capture button" once the front had been read, its
+  /// lines not yet confirmed).
+  bool get frontInView {
+    final latest = _latest;
+    if (latest == null || latest.machineRows > 0 || latest.cardNumbers.isEmpty) return false;
+    return latest.cardKeyword || latest.layout.readableLines >= 3 || latest.layout.textRows >= 5;
+  }
+
+  /// The card's back is what the camera sees now: its machine-readable lines
+  /// in the latest frame. Only this holds the shutter for a front.
+  bool get backInView => (_latest?.machineRows ?? 0) > 0;
+
   ScanTextGateStatus status({required bool glare}) {
     if (_readerUnavailable) return ScanTextGateStatus.cannotRead;
     final passport = confirmed(ScanMrzFormat.td3) != null;
@@ -1869,12 +1901,14 @@ class ScanTextReadingSession {
         if (passport) return const ScanTextGateStatus.waiting(ScanTextGuidance.differentPaper);
         final front = frontRead;
         switch (side) {
+          // A side read is taken at once; one still being read is taken after the
+          // clear page's grace, as any page; only the other side in view holds it.
           case ScanCardSide.back:
             if (card) return ScanTextGateStatus.passedReading;
-            return ScanTextGateStatus.waiting(front ? ScanTextGuidance.turnCardToBack : _machineGuidance(glare));
+            return ScanTextGateStatus.waiting(frontInView ? ScanTextGuidance.turnCardToBack : _machineGuidance(glare));
           case ScanCardSide.front:
             if (front) return ScanTextGateStatus.passedReading;
-            return ScanTextGateStatus.waiting(card ? ScanTextGuidance.turnCardToFront : _frontGuidance(glare));
+            return ScanTextGateStatus.waiting(backInView ? ScanTextGuidance.turnCardToFront : _frontGuidance(glare));
           case null:
             if (card || front) return ScanTextGateStatus.passedReading;
             return ScanTextGateStatus.waiting(

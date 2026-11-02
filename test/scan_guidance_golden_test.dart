@@ -119,7 +119,7 @@ Widget phone(GuidanceState state, GuidedDocumentProfile fallback) {
                   guide: profile.guide(0.75),
                   state: state.guidance.state,
                   corners: state.corners,
-                  zones: profile.zones,
+                  zones: profile.guideZones,
                 ),
               ),
             ],

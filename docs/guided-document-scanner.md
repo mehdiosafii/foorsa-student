@@ -243,6 +243,32 @@ platforms ask `capturesWhenClear` (`ScannerTextGateStatus` on the iPhone,
 `ScanTextGateStatus` on Android), and a page taken this way returns its
 reading with `matched: false`.
 
+**The wrong side of a card is the side in view, not one seen before** (the
+owner, 2 Nov 2026: the front "scans without clicking", the back "needs me
+clicking the capture button"). The card's number counted on the front, and
+its keyword, last the whole session, and a back whose three lines were not
+yet read twice alike was taken for the front, so "Turn the card over" held
+the shutter with the back in view. Worse, the CIN printed in a Moroccan
+card's own machine-readable lines counted as a front's number. Now a back is
+held only while the front is what the latest frame shows (`frontInView`:
+its number and its printed lines, and none of the back's machine-readable
+lines), a front only while the back's lines are in view (`backInView`), and
+a machine-readable line is never searched for a card number
+(`ScanCardFront.machineLike`, `ScannerCardFront.machineLike`). A side still
+being read is then taken on the clear page's grace, as any page; a back with
+no machine-readable lines (an older card) too. The same rule on both
+platforms; `test/scan_text_reading_test.dart` and
+`tools/scanner_text_reading_tests.swift` replay a back shown after its
+front.
+
+**A card's guide shows the side asked for, as the passport's shows its
+pages** (the same day: "id don't have framing like passport does meanwhile
+both needs so"). On Android a card held long side across draws its photo on
+the left of the front (`card_photo`) or its three machine-readable lines
+across the bottom of the back (`card_mrz`), chosen by the step's side
+(`GuidedDocumentProfile.guideZones`). The iPhone draws corner marks only, for
+every paper, the passport included.
+
 **No unbroken run of perfect frames is needed** (the owner, 30 Oct 2026, on
 build 54: the scanner still needed the button). Build 54 counted the grace
 from the last frame that was steady and clear, so one soft frame, a tremor

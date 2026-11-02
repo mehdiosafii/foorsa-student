@@ -386,6 +386,61 @@ void main() {
       expect(reading.status(glare: true).guidance, ScanTextGuidance.glareOnText);
     });
 
+    // The owner, 2 Nov 2026: the back "needs me clicking the capture button". The front seen a moment
+    // before, or the card's number inside the back's own lines, no longer passes for the front.
+    test('a back is taken by itself once the front is out of view, before its lines are confirmed', () {
+      final reading = session('parent_id', side: 'back')
+        ..ingest(cardFrontFrame())
+        ..ingest(cardFrontFrame());
+      expect(reading.status(glare: false).guidance, ScanTextGuidance.turnCardToBack);
+      // Turned over: its lines in view, read once (a second read would confirm them).
+      reading.ingest(cardBackFrame([cnieOne, cnieTwo, 'ALAMI<<MOHAMED<<<<<<<<<<<<<<<']));
+      final status = reading.status(glare: false);
+      expect(status.passed, isFalse);
+      expect(status.guidance?.holdsCapture, isFalse);
+      expect(status.capturesWhenClear(ScanTextGateStatus.clearPageGrace(ScanPaperKind.idCard), ScanPaperKind.idCard), isTrue);
+      // An older card whose back has no machine-readable lines: taken on the same grace.
+      final older = session('parent_id', side: 'back')
+        ..ingest(cardFrontFrame())
+        ..ingest(cardFrontFrame())
+        ..ingest(frame([
+          line('Fils de AHMED', y: 0.7, height: 0.05),
+          line('et de FATIMA', y: 0.6, height: 0.05),
+          line('Adresse 12 RUE 4 HAY SALAM', y: 0.5, height: 0.05),
+        ], width: 1100, height: 700));
+      expect(older.status(glare: false).guidance?.holdsCapture, isFalse);
+    });
+
+    test('the number in a back’s machine-readable lines is not a front’s', () {
+      expect(ScanCardFront.numbers(['IDMARAA12345678 BE123456<<<<<<<']), isEmpty);
+      expect(ScanCardFront.numbers(['IDMARAA12345678 BE123456«««««««']), isEmpty);
+      expect(ScanCardFront.numbers(['N° BE123456']), ['BE123456']);
+      expect(ScanCardFront.machineLike('ROYAUME DU MAROC'), isFalse);
+      final spaced = cnieOne.replaceFirst('BE', ' BE');
+      final reading = session('parent_id', side: 'back')
+        ..ingest(cardBackFrame([spaced, cnieTwo, 'ALAMI<<MOHAMED<<<<<<<<<<<<<<<']))
+        ..ingest(cardBackFrame([spaced, cnieTwo, 'ALAMI<<MOHAMEO<<<<<<<<<<<<<<<']));
+      expect(reading.frontNumber, isNull);
+      expect(reading.status(glare: false).guidance, isNot(ScanTextGuidance.turnCardToBack));
+    });
+
+    test('a front asked for after the back was seen is held only while the back is in view', () {
+      final reading = session('parent_id', side: 'front')
+        ..ingest(cardBackFrame())
+        ..ingest(cardBackFrame());
+      expect(reading.status(glare: false).guidance, ScanTextGuidance.turnCardToFront);
+      // Turned over, its number not read yet: no longer held.
+      reading.ingest(frame([
+        line('ROYAUME DU MAROC', y: 0.85, height: 0.05),
+        line('MOHAMED', x: 0.4, y: 0.6, width: 0.3, height: 0.05),
+      ], width: 1100, height: 700));
+      expect(reading.status(glare: false).guidance?.holdsCapture, isFalse);
+      reading
+        ..ingest(cardFrontFrame())
+        ..ingest(cardFrontFrame());
+      expect(reading.status(glare: false), ScanTextGateStatus.passedReading);
+    });
+
     test('without a side either side is the card, Tunisian fronts included', () {
       var reading = session('parent_id')
         ..ingest(cardBackFrame())

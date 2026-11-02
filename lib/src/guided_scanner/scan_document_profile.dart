@@ -73,6 +73,15 @@ class GuidedDocumentProfile {
   /// portal says. Older portals send none, and either side is accepted.
   final String? side;
 
+  /// What the guide draws inside its outline: the portal's zones, and for a
+  /// card the side this capture asks for (the owner, 2 Nov 2026: "id don't
+  /// have framing like passport does meanwhile both needs so"): its photo on
+  /// the front, its three machine-readable lines on the back. Hints only, as
+  /// the passport's are.
+  List<String> get guideZones => layout != GuidedScanLayout.card
+      ? zones
+      : [...zones, side == 'back' ? 'card_mrz' : 'card_photo'];
+
   /// Small, non-sensitive hints for the native camera. Native code still
   /// validates every value and falls back to a general page guide.
   Map<String, Object> toNativeRequest() => {

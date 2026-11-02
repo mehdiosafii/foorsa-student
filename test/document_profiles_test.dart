@@ -45,6 +45,16 @@ ScanLumaGrid simulatedDocument(
 }
 
 void main() {
+  // The owner, 2 Nov 2026: "id don't have framing like passport does meanwhile both needs so".
+  test('a card guide shows the side the step asks for, as the passport\'s shows its pages', () {
+    expect(GuidedDocumentProfile.fromPortal({'documentKey': 'parent_id', 'side': 'back'}).guideZones, contains('card_mrz'));
+    expect(GuidedDocumentProfile.fromPortal({'documentKey': 'parent_id', 'side': 'front'}).guideZones, contains('card_photo'));
+    expect(GuidedDocumentProfile.fromPortal({'documentKey': 'parent_id'}).guideZones, contains('card_photo'));
+    expect(GuidedDocumentProfile.fromPortal({'documentKey': 'parent_id', 'side': 'back'}).guideZones, isNot(contains('card_photo')));
+    expect(GuidedDocumentProfile.fromPortal({'documentKey': 'identity'}).guideZones, ['passport_photo', 'passport_mrz']);
+    expect(GuidedDocumentProfile.fromPortal({'documentKey': 'transcript'}).guideZones, isNot(contains('card_photo')));
+  });
+
   const analyzer = ScanFrameAnalyzer();
 
   test('each document knows its relevant frame and major details', () {
