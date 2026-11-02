@@ -116,9 +116,11 @@ def state() -> int:
             editable = v
     if not (versions or {}).get("data"):
         print("  none: a version has to be created before anything can be submitted")
-    if editable:
-        vid = editable["id"]
-        section(f"Version {editable['attributes'].get('versionString')} being prepared")
+    # The version being prepared, else the newest one, whatever its state (one in review is read too).
+    shown = editable or ((versions or {}).get("data") or [None])[0]
+    if shown:
+        vid = shown["id"]
+        section(f"Version {shown['attributes'].get('versionString')} ({shown['attributes'].get('appStoreState') or shown['attributes'].get('appVersionState')})")
         locs = try_get("version localizations", f"/v1/appStoreVersions/{vid}/appStoreVersionLocalizations")
         for loc in (locs or {}).get("data", []):
             la = loc["attributes"]
@@ -167,7 +169,12 @@ def state() -> int:
     section("Review submissions")
     subs = try_get("review submissions", "/v1/reviewSubmissions", {"filter[app]": app_id, "limit": 5})
     for s in (subs or {}).get("data", []):
-        print(f"  {s['id']}: {s['attributes'].get('state')} submitted {s['attributes'].get('submittedDate')}")
+        print(f"  {s['id']}: {s['attributes'].get('state')} submitted {s['attributes'].get('submittedDate')}, platform {s['attributes'].get('platform')}")
+        items = try_get("submission items", f"/v1/reviewSubmissions/{s['id']}/items")
+        for item in (items or {}).get("data", []):
+            rel = item.get("relationships", {})
+            what = [k for k, v in rel.items() if (v.get("data") if isinstance(v, dict) else None)]
+            print(f"    item {item['id']}: {item['attributes'].get('state')} ({', '.join(what) or 'no linked object shown'})")
     if not (subs or {}).get("data"):
         print("  none")
 
