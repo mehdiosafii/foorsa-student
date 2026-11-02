@@ -222,7 +222,7 @@ class _ShellPageState extends State<ShellPage> {
   );
 
   /// Rebuilds the session script after quick sign-in is forgotten or turned
-  /// off. The script no longer moves the session for it (from 1.2.38), so a
+  /// off. The script no longer moves the session for it (from 1.2.39), so a
   /// reload keeps the student signed in either way.
   Future<void> _refreshSessionScript() async {
     final controller = _controller;

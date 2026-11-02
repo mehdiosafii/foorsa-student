@@ -39,7 +39,7 @@ a time in the next 15 days, a sound and both lines (control characters taken
 out, 120 and 200 characters at most), one per minute, soonest first, at most
 40. Another student signing in on the phone clears the previous one's calls,
 and signing out clears them all (`_clear`). `FoorsaShellCapabilities` answers
-`adhan: 1` from 1.2.38 (69); an older build answers nothing, and the portal
+`adhan: 1` from 1.2.39 (70); an older build answers nothing, and the portal
 then sounds the adhan only while it is open (its in-page player).
 
 ## The sound
