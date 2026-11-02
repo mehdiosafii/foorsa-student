@@ -1,0 +1,44 @@
+name: App Store listing
+
+# Reads and keeps the App Store listing of Foorsa Student through the App Store Connect API, with
+# the team key the TestFlight workflow uses (scripts/app_store_listing.py). It prints states, counts
+# and whether a field is filled, never the key, a contact's details or a demo password.
+# Started by hand only (Actions › App Store listing › Run workflow):
+#   state          what App Store Connect holds, and the review submission's state
+#   review-check   whether App Review's demo account still signs in to the app as it is today
+#   submit-latest  the newest valid build up for review in place of the one waiting, with
+#                  store/app-store/review-notes.txt as its notes
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: state | review-check | submit-latest
+        required: true
+        default: state
+        type: choice
+        options: [state, review-check, submit-latest]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-listing
+  cancel-in-progress: false
+
+jobs:
+  listing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: App Store listing
+        env:
+          ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          python3 scripts/app_store_listing.py "$ACTION"
+          if [ "$ACTION" = submit-latest ]; then python3 scripts/app_store_listing.py state; fi
