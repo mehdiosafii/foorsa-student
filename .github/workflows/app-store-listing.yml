@@ -1,0 +1,41 @@
+name: App Store listing
+
+# Reads (and, from a later change, keeps) the App Store listing of Foorsa Student through the
+# App Store Connect API, with the team key the TestFlight workflow uses. It prints states, counts
+# and whether a field is filled, never the key, a contact's details or a demo password.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: state
+        required: true
+        default: state
+  push:
+    branches: [claude/sweet-allen-fl4203]
+    paths:
+      - 'store/app-store/**'
+      - 'scripts/app_store_listing.py'
+      - '.github/workflows/app-store-listing.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-listing
+  cancel-in-progress: false
+
+jobs:
+  listing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: App Store listing
+        env:
+          ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
+          ACTION: ${{ inputs.action || 'state' }}
+        run: python3 scripts/app_store_listing.py "$ACTION"
