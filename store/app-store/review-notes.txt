@@ -1,0 +1,36 @@
+Foorsa Student is the app for students of Foorsa, an education agency in Morocco and Tunisia that handles their applications to universities in China. Foorsa staff create each account after the student signs a contract, so there is no public sign-up. We have requested Unlisted App Distribution.
+
+Build {version} ({build}) is iPhone-only; on iPad it runs in iPhone compatibility mode.
+
+FIRST LAUNCH
+A short onboarding asks for the app's language (English, French or Arabic) and explains each permission just before the system asks for it.
+
+SIGNING IN WITH THE DEMO ACCOUNT
+1. On the sign-in screen, tap "Sign in with a password" under the email field.
+2. Enter the user name from Sign-In Information in "Phone number or passport number", then the password.
+3. Tick the agreement under the button (terms of use and privacy notice), then sign in.
+The app may then offer Face ID; "Not Now" skips it. Students normally sign in with a link or a six-digit code sent to the email on their Foorsa file; the demo account uses a password so that App Review can sign in.
+
+Sam Demo is a fictional bachelor applicant at the document stage.
+
+WHAT TO TRY
+1. Home: the student's next action and what is still needed. The bell at the top opens notifications.
+2. Documents (Home > Documents): each paper Foorsa needs, the passport first. "?" shows guidance and a reference sample. Adding a paper scans it with the camera, or takes a photo or a file. Claude (Anthropic) reads uploaded papers to fill in the student's details and OpenAI cleans up scans; the privacy notice agreed to at sign-in names both.
+3. Introduction video (Documents > Introduction video > "Record it here"): Foorsa writes a short script from the file, the student practises reading it aloud (the words light up as they speak; the microphone is used on the phone only), then films it with the front camera. Nothing is sent until the student confirms the take.
+4. Contact > Live chat: messages with the student's Foorsa adviser, with photos, PDFs and voice notes.
+5. My journey (Home > My journey): the seven steps from registration to arriving in China.
+6. Learn: CSCA exam preparation and HSK Chinese lessons, from Foorsa's own sites.
+7. Invoices (Home > Invoices): the student's fees and payments to Foorsa.
+8. Explore China (on Home): an interactive 3D map of 16 Chinese cities.
+9. Profile (the picture at the top right): language, appearance, phone notifications (with "Send me a test notification"), contact, privacy policy, and "Delete my account" at the foot. Confirming deletion removes this demo sign-in; please tell us if you need it restored.
+
+Universities, visa, flight and arrival screens fill in as Foorsa moves a student's file forward, so they are mostly empty for this demo student.
+
+CALLS
+A Foorsa adviser can call a student through the app; the call rings with CallKit (VoIP push). The demo account receives no calls.
+
+PAYMENTS
+Students pay Foorsa for services delivered outside the app (university applications, visa, flights and airport pickup) and pay their university's fees. Nothing digital is sold in the app.
+
+PERMISSIONS
+Camera: scanning documents, the ID photo selfie and the introduction video. Microphone: the introduction video, voice notes in the live chat and the reading practice. Photos: choosing a document photo. Notifications: reminders of what the student has to do and adviser replies. Face ID: optional quick sign-in. Motion: checking the phone is held level while filming. Location: only if the student turns on prayer times; it stays on the phone.
