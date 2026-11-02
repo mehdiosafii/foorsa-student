@@ -124,6 +124,27 @@ void main() {
     expect(report.autoReady, isTrue);
   });
 
+  test('the passport\'s guide is the open booklet, both pages, its lines as wide as the photo page\'s were', () {
+    // The owner, 1 Nov 2026: both pages in one photo, the photo page and the
+    // page facing it. The camera's frame asked for the photo page alone while
+    // the portal's guide asked for both.
+    final p = profile('identity');
+    for (final aspect in [0.75, 0.5625, 0.5]) {
+      final booklet = p.guide(aspect);
+      // Taller than wide on the page, two passport pages of 125 by 88 mm.
+      expect(booklet.width * aspect / booklet.height, closeTo(125 / 176, 0.02), reason: '$aspect');
+      expect(booklet.top, greaterThan(0.035), reason: '$aspect');
+      expect(booklet.bottom, lessThan(0.965), reason: '$aspect');
+      // The photo page alone is the frame offered next, and the booklet is
+      // nearly as wide: the two lines keep about the size they were read at.
+      final photoPage = p.candidateGuides(aspect)[1];
+      expect(photoPage.width * aspect / photoPage.height, closeTo(125 / 88, 0.02), reason: '$aspect');
+      expect(booklet.width, greaterThan(photoPage.width * 0.94), reason: '$aspect');
+    }
+    // An older portal that sends no instruction gets the booklet's words too.
+    expect(GuidedDocumentProfile.fromPortal('passport').instruction, contains('both pages'));
+  });
+
   test('passport data page and open spread work in both camera rotations', () {
     final p = profile('identity');
     expect(p.candidateGuides(previewAspect), hasLength(2));

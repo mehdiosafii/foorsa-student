@@ -1633,6 +1633,14 @@ class ScanTextReadingSession {
   static const minimumMachineRowHeight = 14.0;
   static const paperTurns = [0, 1, 3];
 
+  /// A passport is asked for open at its photo page, both pages one above the
+  /// other in a portrait frame (the owner, 1 Nov 2026), so its two lines are
+  /// read as seen first, then upside down, then turned a quarter either way
+  /// (the photo page alone held sideways, or the booklet turned on the desk).
+  /// Read long side across, as a card is, an upright open booklet had its two
+  /// lines turned on end and never read: the camera then waited for the button.
+  static const passportTurns = [0, 2, 1, 3];
+
   /// Below this long side, in pixels of the image read, the print is too small.
   static double minimumPageSide(ScanPaperKind kind) => switch (kind) {
         ScanPaperKind.passport => 800,
@@ -1640,9 +1648,11 @@ class ScanTextReadingSession {
         ScanPaperKind.paper => 900,
       };
 
-  static ScanTextTurnPolicy initialPolicy(ScanPaperKind kind) => kind == ScanPaperKind.paper
-      ? ScanTextTurnPolicy.fixed(paperTurns.first)
-      : const ScanTextTurnPolicy.landscape(upsideDown: false);
+  static ScanTextTurnPolicy initialPolicy(ScanPaperKind kind) => switch (kind) {
+        ScanPaperKind.paper => ScanTextTurnPolicy.fixed(paperTurns.first),
+        ScanPaperKind.passport => ScanTextTurnPolicy.fixed(passportTurns.first),
+        ScanPaperKind.idCard => const ScanTextTurnPolicy.landscape(upsideDown: false),
+      };
 
   final ScanPaperKind kind;
   final ScanCardSide? side;
@@ -1663,6 +1673,7 @@ class ScanTextReadingSession {
   bool _cardKeywordSeen = false;
   bool _turnLocked = false;
   int _paperTurnIndex = 0;
+  int _passportTurnIndex = 0;
   final Map<int, int> _paperTurnScores = {};
   Rect? _lastPage;
   DateTime? _pageMissingSince;
@@ -1688,6 +1699,7 @@ class ScanTextReadingSession {
     _cardKeywordSeen = false;
     _turnLocked = false;
     _paperTurnIndex = 0;
+    _passportTurnIndex = 0;
     _paperTurnScores.clear();
     _lastPage = null;
     _pageMissingSince = null;
@@ -1775,10 +1787,17 @@ class ScanTextReadingSession {
     if (_turnLocked) return;
     switch (kind) {
       case ScanPaperKind.passport:
+        if (summary.machineRows > 0) {
+          // Kept the way these lines were read.
+          _turnLocked = true;
+          _turnPolicy = ScanTextTurnPolicy.fixed(summary.quarterTurns);
+          return;
+        }
+        // Round again after the last: the student may turn the passport.
+        _passportTurnIndex = (_passportTurnIndex + 1) % passportTurns.length;
+        _turnPolicy = ScanTextTurnPolicy.fixed(passportTurns[_passportTurnIndex]);
       case ScanPaperKind.idCard:
-        final found = summary.machineRows > 0 ||
-            (kind == ScanPaperKind.idCard &&
-                (summary.layout.readableLines >= 3 || summary.cardNumbers.isNotEmpty));
+        final found = summary.machineRows > 0 || summary.layout.readableLines >= 3 || summary.cardNumbers.isNotEmpty;
         if (found) {
           _turnLocked = true;
         } else if (_turnPolicy.isLandscape) {

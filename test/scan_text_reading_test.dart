@@ -285,17 +285,36 @@ void main() {
 
     test('a passport without readable lines says what to change', () {
       var reading = session('identity');
-      expect(reading.turnPolicy, const ScanTextTurnPolicy.landscape(upsideDown: false));
+      // Open at its photo page, both pages one above the other (the owner, 1 Nov
+      // 2026): read as seen first, then upside down, then a quarter turn either way.
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(0));
       reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)]));
       expect(reading.status(glare: false).guidance, ScanTextGuidance.reading);
-      expect(reading.turnPolicy, const ScanTextTurnPolicy.landscape(upsideDown: true));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(2));
       reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 2));
       expect(reading.status(glare: false).guidance, ScanTextGuidance.showMachineLines);
       expect(reading.status(glare: true).guidance, ScanTextGuidance.glareOnMachineLines);
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(1));
+      reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 1));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(3));
+      // Round again: the student may turn the passport.
+      reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 3));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(0));
       reading.ingest(passportFrame());
-      expect(reading.turnPolicy, const ScanTextTurnPolicy.landscape(upsideDown: false));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(0));
       reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)]));
-      expect(reading.turnPolicy, const ScanTextTurnPolicy.landscape(upsideDown: false));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(0));
+
+      // Found, it is kept the way its two lines were read: here a photo page
+      // alone, held sideways.
+      reading = session('identity')
+        ..ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)]))
+        ..ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 2))
+        ..ingest(frame([line('PASSPORT PASSEPORT', y: 0.85), line(passportOne, y: 0.17), line(passportTwo, y: 0.11)],
+            turns: 1));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(1));
+      reading.ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], turns: 1));
+      expect(reading.turnPolicy, const ScanTextTurnPolicy.fixed(1));
 
       reading = session('identity')..ingest(frame([line('REPUBLIC OF UTOPIA', y: 0.8)], width: 700, height: 495));
       expect(reading.status(glare: false).guidance, ScanTextGuidance.moveCloserMachineLines);

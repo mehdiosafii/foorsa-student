@@ -91,10 +91,18 @@ class GuidedDocumentProfile {
 
   /// These are deliberately wide: the guide suggests positioning but must
   /// not reject different Moroccan documents or Chinese university forms.
+  ///
+  /// A passport is asked for open at its photo page, both pages in one photo
+  /// (the owner, 1 Nov 2026: the page facing the photo page carries the
+  /// passport number), so the guide drawn first is the open booklet held
+  /// upright: two pages one above the other, 125 by 176 mm. Until then the
+  /// guide was the photo page alone, and the portal's guide and the camera's
+  /// frame asked for two different shots. The photo page alone, or the
+  /// booklet turned on the desk, is 1.42 and is still found.
   List<double> get expectedAspectRatios => documentKey == 'receipts'
     ? [0.71, 1.42, 0.35, 2.85]
     : switch (layout) {
-      GuidedScanLayout.passport => [1.42, 0.71],
+      GuidedScanLayout.passport => [0.71, 1.42],
       GuidedScanLayout.card => [1.585, 0.63],
       GuidedScanLayout.portrait => [0.71, 1.42],
       GuidedScanLayout.adaptive => [0.71, 1.42],
@@ -165,9 +173,9 @@ class GuidedDocumentProfile {
       'Carte d’identité du parent', 'بطاقة تعريف أحد الوالدين');
   static const _document = Words('document', 'document', 'وثيقة');
   static const _passportHow = Words(
-      'Include the portrait and both machine-readable lines.',
-      'Incluez la photo et les deux lignes du bas.',
-      'أظهر الصورة والسطرين في أسفل الصفحة.');
+      'Open it at the photo page: both pages, the two lines at the bottom too.',
+      'Ouvrez-le à la page photo : les deux pages, avec les deux lignes du bas.',
+      'افتحه على صفحة الصورة: الصفحتان معًا، مع السطرين في الأسفل.');
   static const _parentCardHow = Words(
       'Include every corner and both sides if requested.',
       'Incluez chaque coin, et les deux faces si elles sont demandées.',
@@ -191,7 +199,11 @@ class GuidedDocumentProfile {
   Rect _guideForAspect(double ratio, double viewportAspect) {
     final safeAspect = viewportAspect > 0.25 && viewportAspect < 1.3
       ? viewportAspect : 0.5;
-    var width = ratio > 1 ? 0.83 : 0.75;
+    // The open passport is as wide as its photo page, and its two lines must
+    // stay as large as they were in the photo page's guide to be read live:
+    // it takes as much of the width as the height allows.
+    var width = ratio > 1 ? 0.83
+      : layout == GuidedScanLayout.passport ? 0.86 : 0.75;
     var height = width * safeAspect / ratio;
     // A tall viewport (a preview covering the whole screen) keeps the guide
     // to 57% of its height. A wider one (the 3:4 photo shown whole on

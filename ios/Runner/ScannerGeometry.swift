@@ -896,8 +896,10 @@ enum ScannerLiveGuidance {
     case .searching:
       switch layout {
       case .passport:
-        return .init(title: "Show the photo page",
-          detail: "Show the photo page with the two lines at the bottom.", compact: "Two bottom lines.")
+        // Asked for open at its photo page from the start, both pages in one photo (the owner,
+        // 1 Nov 2026): the Android guide is that open booklet (scan_document_profile.dart).
+        return .init(title: "Open the passport flat",
+          detail: "Show the photo page and the page facing it.", compact: "Both pages.")
       case .card:
         if side == "front" {
           return .init(title: "Front side", detail: "Show the side with the photo.", compact: "The photo side.")
