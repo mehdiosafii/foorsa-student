@@ -38,22 +38,6 @@ jobs:
           ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
           ACTION: ${{ inputs.action || 'state' }}
-          # A one-off key whose private half never leaves the session restoring the demo account.
-          DEMO_HASH_PUBKEY: |
-            -----BEGIN PUBLIC KEY-----
-            MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAwyZg6xfQdPuxVEulYRcT
-            2GedvMpESGRHroDLU6Ih+V5jRRxl5Ja7LdDm8xCyMKPvVtVXazldOcbxUZ3hiVTi
-            h7iTjeb2585gUR57m5xTfHsnnCuWs0PAYrGpVO2mPV48EEL7CqIlTkoIzPkUKhMW
-            TuGi/mr1+HGU6Toepxu1n/sV6KO+blRxqcmdck2oLZI42Mb4YfZkmK2GZmV31gMx
-            VlMHodxcr1fOAx3BrLgPT01FBB1cprnkIVds96A0E5+rrQPnYZc08xUR6jEc58Gw
-            xErlIVOFNXu/HPOlLXAkZOK3owmE4FaLhJJrbJ72bnK3SJhhdQhbybcSOcYOTr/z
-            BMZgzv3oJ/tQ9mqj1XkndgpZXZJdCYmjPFwM4RdpM513hxmC1drJKkeoowm4qoTu
-            8sTXGzgAXx//u9VbkNPuTxBLfzXn+H05yTcZGvVnbL3bUOvn5DB4J9W5NhZ8Ysx5
-            qVfG/tfUW1ZYqjzQYjCmDDDURmCO+c6LZl6J/1E4rOtLAgMBAAE=
-            -----END PUBLIC KEY-----
         run: |
           python3 scripts/app_store_listing.py "$ACTION"
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            python3 -m pip install --quiet bcrypt==4.2.1
-            python3 scripts/app_store_listing.py demo-hash
-          fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then python3 scripts/app_store_listing.py review-check; fi
