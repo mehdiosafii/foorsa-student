@@ -292,19 +292,19 @@ class PushRegistration {
       // through PushKit as before. Android has no such way round Google.
       if (platform.isIOS && apns != null) {
         _report('push: token failed: $failure (registered with Apple)');
-        return _ready('apns:${apns.toLowerCase()}', permission, callsEnabled, voip);
+        return _readyAnswer('apns:${apns.toLowerCase()}', permission, callsEnabled, voip);
       }
       _report('push: token failed: $failure');
       return {'token': null, 'status': 'error', 'reason': 'token: $failure', 'permission': pushPermissionName(permission)};
     }
     return {
-      ..._ready(token!, permission, callsEnabled, voip),
+      ..._readyAnswer(token!, permission, callsEnabled, voip),
       // So the server drops this iPhone's Apple-only row from China, if any.
       if (apns != null) 'apnsToken': apns.toLowerCase(),
     };
   }
 
-  Map<String, dynamic> _ready(String token, PushPermission permission, bool callsEnabled, String? voip) => {
+  Map<String, dynamic> _readyAnswer(String token, PushPermission permission, bool callsEnabled, String? voip) => {
         'token': token,
         'platform': platform.isIOS ? 'ios' : 'android',
         'status': 'ready',
