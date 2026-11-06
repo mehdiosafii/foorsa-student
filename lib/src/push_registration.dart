@@ -155,6 +155,7 @@ class PushRegistration {
     this.apnsWait = const Duration(seconds: 10),
     this.apnsPoll = const Duration(milliseconds: 500),
     this.retryInitAfter = const Duration(seconds: 30),
+    this.fcmWait = const Duration(seconds: 20),
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
@@ -169,6 +170,11 @@ class PushRegistration {
   /// A Firebase that did not start is tried again after this long: it used to
   /// be written off for the rest of the app's life.
   final Duration retryInitAfter;
+
+  /// How long to wait for Firebase's token. Firebase gets it from Google's
+  /// servers, which do not answer in mainland China: without a limit the
+  /// request hung, and the calendar, the adhan and sign-out queued behind it.
+  final Duration fcmWait;
   final DateTime Function() _now;
 
   bool _ready = false;
@@ -239,10 +245,11 @@ class PushRegistration {
     }
     at('auto-init');
     await platform.enableAutoInit();
+    String? apns;
     if (platform.isIOS) {
       at('APNs token');
       final deadline = _now().add(apnsWait);
-      var apns = await platform.apnsToken();
+      apns = await platform.apnsToken();
       while (apns == null && _now().isBefore(deadline)) {
         await Future<void>.delayed(apnsPoll);
         apns = await platform.apnsToken();
@@ -259,35 +266,54 @@ class PushRegistration {
         };
       }
     }
+    at('token');
     String? token;
+    String? failure;
     try {
-      token = await platform.fcmToken();
+      token = await platform.fcmToken().timeout(fcmWait);
+      if (token == null || token.isEmpty) failure = 'empty';
+    } on TimeoutException {
+      failure = 'timeout';
     } catch (error) {
-      final code = describePushError(error);
-      _report('push: token failed: $code');
-      return {'token': null, 'status': 'error', 'reason': 'token: $code', 'permission': pushPermissionName(permission)};
-    }
-    if (token == null || token.isEmpty) {
-      _report('push: token failed: empty');
-      return {'token': null, 'status': 'error', 'reason': 'token: empty', 'permission': pushPermissionName(permission)};
+      failure = describePushError(error);
     }
     String? voip;
-    try {
-      voip = await platform.voipToken();
-    } catch (_) {
-      voip = null;
+    if (failure == null || (platform.isIOS && apns != null)) {
+      try {
+        voip = await platform.voipToken();
+      } catch (_) {
+        voip = null;
+      }
+    }
+    if (failure != null) {
+      // An iPhone that cannot reach Google (mainland China) still has Apple's
+      // own token: the server sends to it through Apple directly
+      // (apnsPush.service.ts in foorsa-reward), and the adviser's calls ring
+      // through PushKit as before. Android has no such way round Google.
+      if (platform.isIOS && apns != null) {
+        _report('push: token failed: $failure (registered with Apple)');
+        return _ready('apns:${apns.toLowerCase()}', permission, callsEnabled, voip);
+      }
+      _report('push: token failed: $failure');
+      return {'token': null, 'status': 'error', 'reason': 'token: $failure', 'permission': pushPermissionName(permission)};
     }
     return {
-      'token': token,
-      'platform': platform.isIOS ? 'ios' : 'android',
-      'status': 'ready',
-      'notificationVersion': 2,
-      // The server rings only devices that say so (nativeAdviserCalls).
-      'callsEnabled': callsEnabled,
-      'voipToken': voip == null || voip.isEmpty ? null : voip,
-      'permission': pushPermissionName(permission),
+      ..._ready(token!, permission, callsEnabled, voip),
+      // So the server drops this iPhone's Apple-only row from China, if any.
+      if (apns != null) 'apnsToken': apns.toLowerCase(),
     };
   }
+
+  Map<String, dynamic> _ready(String token, PushPermission permission, bool callsEnabled, String? voip) => {
+        'token': token,
+        'platform': platform.isIOS ? 'ios' : 'android',
+        'status': 'ready',
+        'notificationVersion': 2,
+        // The server rings only devices that say so (nativeAdviserCalls).
+        'callsEnabled': callsEnabled,
+        'voipToken': voip == null || voip.isEmpty ? null : voip,
+        'permission': pushPermissionName(permission),
+      };
 
   /// Where this phone stands, without asking the student anything: the
   /// portal's Settings row (On, Off, Not set up yet).

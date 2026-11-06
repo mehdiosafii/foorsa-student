@@ -23,6 +23,17 @@ stay signed in when the app closes (from 1.2.39), and can opt into securely
 saved Face ID, Touch ID, or Android biometric sign-in for after a sign-out.
 See [release setup, session behavior, and device checks](docs/android-release-and-biometric-login.md).
 
+## In mainland China (1.2.40)
+
+Google does not answer in mainland China, so from 1.2.40 (71) an iPhone that
+cannot get its Firebase token registers Apple's own token and is sent its
+notifications straight through Apple (adviser calls ring through PushKit as
+before), and the offline screen leaves a slow load to finish instead of
+cutting it off every six seconds. Android students in China get the app from
+https://student.foorsa.ma/android: Google Play's own APK of the version in
+production, sent there by `google-play.yml`'s `direct-download` job. See
+[push](docs/student-push.md) and [web view recovery](docs/web-view-recovery.md).
+
 ## The adhan
 
 From 1.2.39 (70) the app sounds a recorded adhan at the prayer times the

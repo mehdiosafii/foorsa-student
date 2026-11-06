@@ -71,3 +71,16 @@ bool isLoadFailure({required int? code, required String description, required bo
 /// takes well under a second; on 1 Nov 2026 some phones' WebView refused a
 /// settings call while it was being made, and the student sat on the loader.
 const webViewStartLimit = Duration(seconds: 15);
+
+/// How long a load started by the offline screen's retry is left to finish
+/// before the next retry may start another (shell_page.dart). The retry ticks
+/// every six seconds, and each new load cancelled the one before: on a slow
+/// connection, such as from mainland China, where the portal's first load
+/// takes several seconds, no load ever finished and the student sat on "No
+/// internet connection" with a network that worked (6 Nov 2026).
+const retryLoadPatience = Duration(seconds: 45);
+
+/// Whether the offline screen's retry may start a new load now: none is under
+/// way, or the one under way has had [retryLoadPatience] and not finished.
+bool shouldRetryLoad({required DateTime? loadStartedAt, required DateTime now}) =>
+    loadStartedAt == null || now.difference(loadStartedAt) >= retryLoadPatience;

@@ -7,7 +7,7 @@ on:
     # when that version is already in Google Play (no rebuild, no upload).
     paths: [pubspec.yaml, .github/google-play-promote.txt]
   pull_request:
-    paths: ['.github/workflows/google-play.yml', 'scripts/prepare_android_release.py', 'scripts/publish_google_play.py', pubspec.yaml, .github/google-play-promote.txt]
+    paths: ['.github/workflows/google-play.yml', 'scripts/prepare_android_release.py', 'scripts/publish_google_play.py', 'scripts/publish_direct_download.py', pubspec.yaml, .github/google-play-promote.txt]
   workflow_dispatch:
     inputs:
       track:
@@ -15,6 +15,14 @@ on:
         type: choice
         options: [internal, alpha, beta, production]
         default: internal
+      direct_download_only:
+        description: Only publish a version's Play APK as Foorsa's direct download (no Play release)
+        type: boolean
+        default: false
+      direct_download_version:
+        description: With direct_download_only, the version in production to publish (1.2.39+70); empty is pubspec.yaml's
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -60,8 +68,13 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          DIRECT_DOWNLOAD_ONLY: ${{ inputs.direct_download_only }}
         run: |
-          if [ "$EVENT" = workflow_dispatch ]; then
+          if [ "$EVENT" = workflow_dispatch ] && [ "$DIRECT_DOWNLOAD_ONLY" = true ]; then
+            # Nothing goes to Google Play: the direct-download job below only
+            # fetches the APK of the version already there.
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = workflow_dispatch ]; then
             echo 'changed=true' >> "$GITHUB_OUTPUT"
           elif [ "$(date -u +%s)" -lt "$(date -u -d 2026-10-31T18:03:00Z +%s)" ]; then
             # The owner, 30 Oct 2026: TestFlight only until the scheduled
@@ -204,3 +217,43 @@ jobs:
         run: python3 -m pip install 'google-api-python-client==2.187.0' 'google-auth==2.43.0'
       - name: Send the version already in Play to the track
         run: python3 scripts/publish_google_play.py
+
+  # The Android app as a download from Foorsa's own domain, for students in
+  # mainland China, where Google Play does not open: Play's own universal APK
+  # of a version in production (signed with Play's app signing key, so it
+  # updates the Play install and the other way round), sent to Foorsa and
+  # served at https://student.foorsa.ma/android (scripts/publish_direct_download.py).
+  # It lives in this workflow because Google's Workload Identity trusts only
+  # this file on main; Foorsa checks the same, from this run's identity token.
+  # A failure here never marks the Play release as failed.
+  direct-download:
+    needs: [version, publish, promote]
+    if: >-
+      always() && github.ref == 'refs/heads/main' && (
+        (needs.publish.result == 'success' && (inputs.track || vars.GOOGLE_PLAY_TRACK || 'internal') == 'production') ||
+        (needs.promote.result == 'success' && needs.version.outputs.promote == 'production') ||
+        (github.event_name == 'workflow_dispatch' && inputs.direct_download_only)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DIRECT_DOWNLOAD_VERSION: ${{ (needs.promote.result == 'success' && needs.version.outputs.promote_version) || inputs.direct_download_version || '' }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/1046359922746/locations/global/workloadIdentityPools/github-actions/providers/foorsa-student
+      GOOGLE_PLAY_SERVICE_ACCOUNT: play-publisher@foorsa-play-publishing.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Authenticate to Google Play without a key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+      - name: Install Play client
+        run: python3 -m pip install 'google-api-python-client==2.187.0' 'google-auth==2.43.0'
+      - name: Send Play's APK to Foorsa's direct download
+        run: python3 scripts/publish_direct_download.py

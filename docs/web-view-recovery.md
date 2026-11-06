@@ -67,3 +67,12 @@ There were only 4 Android sessions that week.
   off the UI isolate (`bridge_files.dart`): ten photos from the library at a
   time held the app's frames while each was encoded.
 
+## A slow load is not offline (1.2.40)
+
+On the offline screen the retry ticks every 6 s, and each tick loaded the page
+again, cancelling the load before it. On a connection where the portal's first
+load takes longer than that (from mainland China it was 2 to 10 s, 6 Nov 2026),
+no load ever finished and the student sat on "No internet connection" with a
+network that worked. `_retry()` now leaves a load under way alone for
+`retryLoadPatience` (45 s, `shouldRetryLoad`), counted from `onLoadStart` and
+cleared by `onLoadStop` or a main-frame error.

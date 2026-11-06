@@ -368,8 +368,10 @@ class StudentPush {
     if (_registration.ready) {
       try {
         await FirebaseMessaging.instance.setAutoInitEnabled(false);
+        // Google's servers do not answer in mainland China: sign-out does not
+        // wait on them, nor does anything queued behind it.
         // ignore: deprecated_member_use
-        await FirebaseMessaging.instance.deleteToken();
+        await FirebaseMessaging.instance.deleteToken().timeout(const Duration(seconds: 10));
       } catch (_) {
         // Signed out all the same; the server forgot the token already.
       }
