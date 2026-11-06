@@ -65,4 +65,17 @@ void main() {
     expect(retry, contains('_recovery.pageToReload()'));
     expect(File('lib/main.dart').readAsStringSync(), contains('reportUncaughtErrors();'));
   });
+
+  test('a slow load is left to finish, not cut off by the next retry', () {
+    final start = DateTime.utc(2026, 11, 6, 12);
+    expect(shouldRetryLoad(loadStartedAt: null, now: start), isTrue);
+    // The retry ticks every six seconds; a load from China takes longer.
+    expect(shouldRetryLoad(loadStartedAt: start, now: start.add(const Duration(seconds: 6))), isFalse);
+    expect(shouldRetryLoad(loadStartedAt: start, now: start.add(const Duration(seconds: 30))), isFalse);
+    // A load that never ends is given up on.
+    expect(shouldRetryLoad(loadStartedAt: start, now: start.add(retryLoadPatience)), isTrue);
+    final shell = File('lib/src/shell_page.dart').readAsStringSync();
+    final retry = RegExp(r'void _retry\(\) \{[\s\S]*?\n  \}').firstMatch(shell)![0]!;
+    expect(retry, contains('shouldRetryLoad('));
+  });
 }

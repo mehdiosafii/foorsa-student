@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -24,6 +25,9 @@ class FakePlatform implements PushPlatform {
   int apnsAsks = 0;
   String? refusal;
   Object? tokenError;
+
+  /// Firebase's token never comes (Google's servers do not answer, as in China).
+  bool tokenHangs = false;
   String? fcm = 'fcm-token-${'x' * 140}';
   String? voip = 'a' * 64;
 
@@ -50,6 +54,7 @@ class FakePlatform implements PushPlatform {
 
   @override
   Future<String?> fcmToken() async {
+    if (tokenHangs) return Completer<String?>().future;
     if (tokenError != null) throw tokenError!;
     return fcm;
   }
@@ -89,6 +94,7 @@ void main() {
         reporter,
         apnsWait: const Duration(seconds: 1),
         apnsPoll: const Duration(milliseconds: 10),
+        fcmWait: const Duration(milliseconds: 200),
         now: () => DateTime.now(),
       );
 
@@ -171,7 +177,7 @@ void main() {
   });
 
   test('a token Firebase refuses is named by its code, never its message', () async {
-    final platform = FakePlatform()..tokenError = FirebaseException(plugin: 'firebase_messaging', code: 'unknown', message: 'with a path /var/mobile');
+    final platform = FakePlatform(isIOS: false)..tokenError = FirebaseException(plugin: 'firebase_messaging', code: 'unknown', message: 'with a path /var/mobile');
     final device = await registration(platform).token(requestPermission: true, callsEnabled: false);
     expect(device['status'], 'error');
     expect(device['reason'], 'token: FirebaseException firebase_messaging/unknown');
@@ -188,8 +194,48 @@ void main() {
   });
 
   test('a token that comes back empty is not handed to the portal', () async {
-    final platform = FakePlatform()..fcm = '';
+    final platform = FakePlatform(isIOS: false)..fcm = '';
     expect((await registration(platform).token(requestPermission: true, callsEnabled: false))['status'], 'error');
+  });
+
+  test('an iPhone that cannot reach Google registers with Apple, and its calls still ring', () async {
+    final platform = FakePlatform()
+      ..apns = 'AB${'c' * 62}'
+      ..tokenError = FirebaseException(plugin: 'firebase_messaging', code: 'unknown', message: 'no network');
+    final device = await registration(platform).token(requestPermission: true, callsEnabled: true);
+    expect(device['status'], 'ready');
+    expect(device['platform'], 'ios');
+    expect(device['token'], 'apns:ab${'c' * 62}');
+    expect(device['voipToken'], 'a' * 64);
+    expect(device['callsEnabled'], isTrue);
+    expect(device.containsKey('apnsToken'), isFalse);
+    await settle();
+    expect(sent, ['push: token failed: FirebaseException firebase_messaging/unknown (registered with Apple)']);
+  });
+
+  test('a Firebase token that never comes is given up on, and the iPhone registers with Apple', () async {
+    final platform = FakePlatform()..tokenHangs = true;
+    final started = DateTime.now();
+    final device = await registration(platform).token(requestPermission: true, callsEnabled: false);
+    expect(DateTime.now().difference(started), lessThan(const Duration(seconds: 5)));
+    expect(device['token'], 'apns:apns-token');
+    await settle();
+    expect(sent, ['push: token failed: timeout (registered with Apple)']);
+  });
+
+  test('an Android phone that cannot reach Google says so, with nothing to register', () async {
+    final platform = FakePlatform(isIOS: false)
+      ..apns = null
+      ..tokenHangs = true;
+    final device = await registration(platform).token(requestPermission: true, callsEnabled: false);
+    expect(device, {'token': null, 'status': 'error', 'reason': 'token: timeout', 'permission': 'granted'});
+  });
+
+  test('an iPhone with a Firebase token also names its Apple token, so the server drops an older Apple-only row', () async {
+    final platform = FakePlatform()..apns = 'ABCD';
+    final device = await registration(platform).token(requestPermission: true, callsEnabled: false);
+    expect(device['token'], platform.fcm);
+    expect(device['apnsToken'], 'abcd');
   });
 
   test('the Settings row reads where the phone stands without asking anything', () async {

@@ -37,6 +37,20 @@ and the three-second wait for it (below).
    Only the reason is sent (`CrashReports`, `POST /api/portal/client-error`,
    `source: 'shell'`), never a token or an id. The day's reasons are kept in
    `push_problems.json` in the app's support directory.
+   **In mainland China** (from 1.2.40, 6 Nov 2026) Google's servers do not
+   answer, so the FCM token never comes: the app waits for it at most
+   `fcmWait` (20 s), and an iPhone that has Apple's token registers it as
+   `apns:<hex>` with its PushKit token instead (`push: token failed: <code>
+   (registered with Apple)` on the crash board). foorsa-reward then sends that
+   phone's chat, update and test pushes straight to Apple (`apnsPush.service.ts`),
+   shaped as Firebase shapes them (`gcm.message_id`), so the taps open the same
+   screens; adviser calls ring through PushKit as before. Before, the PushKit
+   token was sent only with an FCM token, so a phone installed in China got
+   neither. An iPhone with an FCM token also sends `apnsToken`, so the server
+   drops its `apns:` row once it reaches Google again. Android has no such way:
+   FCM is its only push, and it needs Google. Sign-out's `deleteToken()` waits
+   at most 10 s, so nothing queued behind it (the calendar, the adhan) waits on
+   Google either.
 4. The portal POSTs `/api/portal/push/register`. A refusal is reported from
    the page (`push: register failed <status>`), and for an app build that
    does not report its own reasons (no `push` in `FoorsaShellCapabilities`),

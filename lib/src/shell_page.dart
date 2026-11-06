@@ -164,6 +164,9 @@ class _ShellPageState extends State<ShellPage> {
   bool _errorThisLoad = false;
   /// While offline: quiet retry loop behind the branded overlay.
   Timer? _retryTimer;
+  /// When the main page's current load started, until it stops or fails: the
+  /// retry leaves a slow load to finish (shouldRetryLoad).
+  DateTime? _loadStartedAt;
   /// The page to come back to when the web view dies or a load fails
   /// (web_view_recovery.dart): never Home while a page was open.
   final WebViewRecovery _recovery = WebViewRecovery(Uri.parse(AppConfig.baseUrl));
@@ -568,6 +571,9 @@ class _ShellPageState extends State<ShellPage> {
       _rebuildWebView();
       return;
     }
+    final now = DateTime.now();
+    if (!shouldRetryLoad(loadStartedAt: _loadStartedAt, now: now)) return;
+    _loadStartedAt = now;
     controller.loadUrl(
         urlRequest: URLRequest(url: WebUri(_recovery.pageToReload().toString())));
   }
@@ -1536,9 +1542,11 @@ class _ShellPageState extends State<ShellPage> {
                 onLoadStart: (controller, url) {
                   _updateChatViewport(url);
                   _errorThisLoad = false;
+                  _loadStartedAt = DateTime.now();
                   _scannerNonce = _newScannerNonce();
                 },
                 onLoadStop: (controller, url) async {
+                  _loadStartedAt = null;
                   await _openPushChat();
                   // A choice made in the onboarding while this page loaded.
                   if (ShellLanguage.instance.handOver != null) {
@@ -1566,6 +1574,7 @@ class _ShellPageState extends State<ShellPage> {
                           description: error.description,
                           isIOS: Platform.isIOS)) {
                     _errorThisLoad = true;
+                    _loadStartedAt = null;
                     _enterOffline();
                   }
                 },
