@@ -33,13 +33,10 @@ class ScanLumaPlane {
   /// The luminance plane of a stream frame. Null for a layout the scanner
   /// cannot read, which disables auto-capture but never the manual shutter.
   static ScanLumaPlane? fromCameraImage(CameraImage image) {
-    final format = image.format.group;
-    if (format != ImageFormatGroup.yuv420 && format != ImageFormatGroup.bgra8888) return null;
-    if (image.width <= 0 || image.height <= 0 || image.planes.isEmpty) return null;
+    if (whyUnreadable(image) != null) return null;
     final plane = image.planes.first;
-    final bgra = format == ImageFormatGroup.bgra8888;
+    final bgra = image.format.group == ImageFormatGroup.bgra8888;
     final pixelStride = plane.bytesPerPixel ?? (bgra ? 4 : 1);
-    if (plane.bytesPerRow <= 0 || pixelStride <= 0) return null;
     return ScanLumaPlane(
       bytes: plane.bytes,
       width: image.width,
@@ -49,6 +46,29 @@ class ScanLumaPlane {
       bgra: bgra,
     );
   }
+
+  /// Why [fromCameraImage] cannot read [image], in a few words for the crash
+  /// board (the frame's format, size and strides, never its pixels); null
+  /// when it can.
+  static String? whyUnreadable(CameraImage image) {
+    final format = image.format.group;
+    if (format != ImageFormatGroup.yuv420 && format != ImageFormatGroup.bgra8888) {
+      return 'frame format ${format.name} (raw ${image.format.raw})';
+    }
+    if (image.width <= 0 || image.height <= 0 || image.planes.isEmpty) {
+      return 'frame ${image.width}x${image.height}, ${image.planes.length} planes';
+    }
+    final plane = image.planes.first;
+    final pixelStride = plane.bytesPerPixel ?? (format == ImageFormatGroup.bgra8888 ? 4 : 1);
+    if (plane.bytesPerRow <= 0 || pixelStride <= 0) {
+      return 'frame row stride ${plane.bytesPerRow}, pixel stride $pixelStride';
+    }
+    return null;
+  }
+
+  /// The plane's layout for the crash board, when its grid cannot be sampled.
+  String get layout =>
+      '${width}x$height, row $rowStride, pixel $pixelStride, ${bytes.length ~/ 1024} KB';
 }
 
 /// The share of the upright camera image the preview shows, when the preview

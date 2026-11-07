@@ -29,6 +29,23 @@
 /// (scan_coach.dart): find the page, the whole page, closer, the phone flat,
 /// the light, what the reading still needs, then hold still; the outline is
 /// dashed until the page is held and solid while it is (scan_guidance_view.dart).
+///
+/// And later on 1 Nov 2026 (the owner, on an Android 17 phone: "In Android the
+/// scanning didn't show the auto scanning interface"), the page says when it
+/// loses automatic capture, and keeps it where it can:
+///
+/// - On Android the image stream's camera side runs after startImageStream
+///   has returned, and its errors never reach the page: a stream that failed
+///   sends no frame. A frame not in by [guidedScanFrameWait] counts as a
+///   failure too, as a throw or a frame the scanner cannot read already did
+///   (once frames have come, after one more ask: a busy phone, or a frame
+///   lost between two asks).
+/// - A stream that fails at [ResolutionPreset.max] before its first frame
+///   reopens the camera once at [ResolutionPreset.veryHigh] (1080p stills, but
+///   automatic capture) instead of leaving the shutter alone.
+/// - Each such loss, a camera that does not open, and a student who leaves
+///   for the phone's camera app are reported once a scan to the crash board,
+///   with the reason and the preset (scan_trouble.dart).
 library;
 
 import 'dart:async';
@@ -40,6 +57,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../app_language.dart';
+import '../crash_reports.dart';
 import 'camera_luma.dart';
 import 'live_text_reader.dart';
 import 'scan_coach.dart';
@@ -50,6 +68,7 @@ import 'scan_frame_processor.dart';
 import 'scan_guidance_view.dart';
 import 'scan_photo.dart';
 import 'scan_text_reading.dart';
+import 'scan_trouble.dart';
 
 class GuidedScanResult {
   const GuidedScanResult.captured(this.file, {this.liveReading, this.bytes})
@@ -83,6 +102,22 @@ const guidedScanResolutions = [
 /// stream would follow the photo to the sensor's maximum.
 const guidedScanIosResolutions = [ResolutionPreset.veryHigh, ResolutionPreset.high];
 
+/// The presets the camera opens at, in turn. Once the Android image stream
+/// has failed at [ResolutionPreset.max] in this scan, the next one down first:
+/// its stills are 1080p, but its frames keep automatic capture; then the
+/// maximum again, for the shutter alone, if it does not open.
+List<ResolutionPreset> guidedScanPresets({required bool android, bool streamFailedAtMax = false}) {
+  if (!android) return guidedScanIosResolutions;
+  if (!streamFailedAtMax) return guidedScanResolutions;
+  return const [ResolutionPreset.veryHigh, ResolutionPreset.max];
+}
+
+/// The longest a frame asked for may take to come before the image stream
+/// counts as failed. A frame is normally in within a few hundred
+/// milliseconds; Android's stream sends none at all when its camera side
+/// failed (startImageStream has returned by then, and says nothing).
+const guidedScanFrameWait = Duration(seconds: 4);
+
 /// The longest a frame's work may take before it is done inline instead.
 const guidedScanWorkerTimeout = Duration(seconds: 2);
 
@@ -104,13 +139,18 @@ Offset guidedScanFocusPoint(Rect? page, {required int sensorWidth, required int 
 }
 
 class GuidedScanPage extends StatefulWidget {
-  const GuidedScanPage({super.key, required this.profile, @visibleForTesting this.android});
+  const GuidedScanPage({super.key, required this.profile,
+      @visibleForTesting this.android, @visibleForTesting this.reportTrouble});
 
   final GuidedDocumentProfile profile;
 
   /// Whether this is the Android camera: the phone's own platform, unless a
   /// test runs the Android screen on another (guided_scan_page_test.dart).
   final bool? android;
+
+  /// Where the scanner's troubles go (scan_trouble.dart): the crash board,
+  /// unless a test listens instead.
+  final void Function(String message)? reportTrouble;
 
   @override
   State<GuidedScanPage> createState() => _GuidedScanPageState();
@@ -157,6 +197,20 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   DateTime? _frameAskedAt;
   Timer? _nextFrame;
   Future<void>? _stopping;
+  // Each ask is numbered, and watched until its frame is in.
+  int _frameAsks = 0;
+  Timer? _frameWatch;
+  int _framesFromCamera = 0;
+  // Asks in a row whose frame did not come, once frames have come.
+  int _lateAsks = 0;
+
+  // How the camera opened, for the crash board; once the image stream has
+  // failed at the maximum, the camera opens a step lower for this scan.
+  ResolutionPreset? _openedPreset;
+  String? _openedNote;
+  bool _streamFailedAtMax = false;
+  String? _cameraFailure;
+  final _reported = <ScanTrouble>{};
 
   @override
   void initState() {
@@ -229,6 +283,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   void _forgetFrames() {
     _nextFrame?.cancel();
     _nextFrame = null;
+    _frameWatch?.cancel();
+    _frameWatch = null;
     _framePending = false;
     _worker?.forget();
     _inline.forget();
@@ -263,6 +319,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     _initializing = true;
     final generation = ++_cameraGeneration;
     CameraController? opened;
+    // The presets that did not open, each with its error's name.
+    final failed = <(ResolutionPreset, String)>[];
     try {
       final pendingDispose = _pendingDispose;
       _pendingDispose = null;
@@ -275,11 +333,12 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       if (rearCameras.isEmpty) throw StateError('No rear camera');
       final description = rearCameras.first;
       Object? lastError;
+      ResolutionPreset? openedAt;
 
       // The still photo is taken at the resolution the camera opens at, so
       // the sensor's full 4:3 frame first. CameraX bounds the preview and
       // the image stream to the screen's size or below meanwhile.
-      for (final preset in _android ? guidedScanResolutions : guidedScanIosResolutions) {
+      for (final preset in guidedScanPresets(android: _android, streamFailedAtMax: _streamFailedAtMax)) {
         opened = CameraController(
           description, preset,
           enableAudio: false,
@@ -289,9 +348,11 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         );
         try {
           await opened.initialize();
+          openedAt = preset;
           break;
         } catch (error) {
           lastError = error;
+          failed.add((preset, scanErrorName(error)));
           await _disposeCamera(opened);
           opened = null;
           if (error is CameraException &&
@@ -307,6 +368,10 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         return;
       }
       _camera = opened;
+      _openedPreset = openedAt;
+      _openedNote = scanCameraNote(openedAt!, opened.value.previewSize, skipped: failed);
+      _framesFromCamera = 0;
+      _lateAsks = 0;
       _sensorOrientation = description.sensorOrientation == 270 ? 270 : 90;
       try {
         await opened.lockCaptureOrientation(DeviceOrientation.portraitUp);
@@ -330,11 +395,16 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       _resetGuidance();
       _forgetFrames();
       if (_autoEnabled) unawaited(_askForFrame());
-    } catch (_) {
+    } catch (error) {
       if (opened != null && _camera != opened) {
         await _disposeCamera(opened);
       }
       if (mounted && !_closing) {
+        // Not a camera taken away by a pause: the next resume reopens it.
+        if (_appActive && generation == _cameraGeneration) {
+          final why = _cameraFailure = scanOpenFailure(error, failed);
+          _report(ScanTrouble.cameraFailed, why);
+        }
         setState(() {
           _cameraFailed = true;
           _streamSupported = false;
@@ -364,31 +434,111 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       return;
     }
     final generation = _cameraGeneration;
+    final ask = ++_frameAsks;
     _framePending = true;
     _frameAskedAt = DateTime.now();
+    // Watched from before the stream starts: a frame that comes at once must
+    // not leave a watch behind for a later ask.
+    _frameWatch?.cancel();
+    _frameWatch = Timer(guidedScanFrameWait, () => _frameLate(ask, generation));
     try {
-      await camera.startImageStream(_onFrame);
-    } catch (_) {
-      _framePending = false;
+      await camera.startImageStream((image) => _onFrame(image, generation));
+    } catch (error) {
+      if (ask == _frameAsks) {
+        _framePending = false;
+        _frameWatch?.cancel();
+        _frameWatch = null;
+      }
       // Still photos without an image stream: keep the shutter usable and
       // never fake "auto-ready".
       if (mounted && generation == _cameraGeneration && !_closing) {
-        setState(() => _streamSupported = false);
+        _streamFailed('startImageStream threw ${scanErrorName(error)}', generation);
       }
     }
   }
 
-  void _onFrame(CameraImage image) {
-    if (!_framePending || _frameInFlight) return;
+  /// The frame [ask] wanted did not come in [guidedScanFrameWait].
+  void _frameLate(int ask, int generation) {
+    if (ask != _frameAsks || !_framePending || generation != _cameraGeneration || !_wantsFrames) {
+      return;
+    }
+    _frameWatch = null;
     _framePending = false;
+    // A camera that has streamed: one frame slow on a busy phone, or lost
+    // between two asks, is asked for again before the stream counts as stopped.
     final camera = _camera;
-    final generation = _cameraGeneration;
+    if (_framesFromCamera > 0 && ++_lateAsks < 2 && camera != null) {
+      _stopping = _stopImageStream(camera);
+      _askForNextFrame();
+      return;
+    }
+    _streamFailed(
+        _framesFromCamera == 0
+            ? 'no frame in ${guidedScanFrameWait.inSeconds} s'
+            : 'frames stopped after $_framesFromCamera',
+        generation);
+  }
+
+  /// The image stream failed ([reason]). At the sensor's maximum, before any
+  /// frame came, the camera reopens once a step lower to keep automatic
+  /// capture; otherwise the shutter alone stays.
+  void _streamFailed(String reason, int generation) {
+    if (!mounted || _closing || generation != _cameraGeneration) return;
+    final camera = _camera;
+    if (_android && !_busy && camera != null && _openedPreset == ResolutionPreset.max &&
+        _framesFromCamera == 0 && !_streamFailedAtMax) {
+      _streamFailedAtMax = true;
+      _report(ScanTrouble.streamRetried, reason);
+      _camera = null;
+      _cameraGeneration++;
+      _resetGuidance();
+      _forgetFrames();
+      setState(() => _streamSupported = false);
+      _pendingDispose = _stopImageStream(camera).then((_) => _disposeCamera(camera));
+      _scheduleCameraStart();
+      return;
+    }
+    _autoCaptureLost(reason);
+  }
+
+  /// No automatic capture for the rest of this camera: the shutter alone,
+  /// never a faked "auto-ready", and the reason on the crash board.
+  void _autoCaptureLost(String reason) {
+    _forgetFrames();
+    final camera = _camera;
+    if (camera != null) _stopping = _stopImageStream(camera);
+    _report(ScanTrouble.autoCaptureLost, reason);
+    if (mounted) setState(() => _streamSupported = false);
+  }
+
+  /// Sends [trouble] to the crash board, at most once a scan.
+  void _report(ScanTrouble trouble, String reason) {
+    if (!_reported.add(trouble)) return;
+    final message = scanTroubleReport(trouble, reason,
+        camera: trouble == ScanTrouble.cameraFailed || trouble == ScanTrouble.cameraApp ? null : _openedNote);
+    final listener = widget.reportTrouble;
+    if (listener != null) {
+      listener(message);
+    } else {
+      unawaited(CrashReports.instance.report(message, where: scanTroubleWhere));
+    }
+  }
+
+  void _onFrame(CameraImage image, int generation) {
+    // A frame from a camera since closed, or one nobody asked for.
+    if (generation != _cameraGeneration || !_framePending || _frameInFlight) return;
+    _framePending = false;
+    _frameWatch?.cancel();
+    _frameWatch = null;
+    _framesFromCamera++;
+    _lateAsks = 0;
+    final camera = _camera;
     if (camera != null) _stopping = _stopImageStream(camera);
     if (!_wantsFrames) return;
     final plane = ScanLumaPlane.fromCameraImage(image);
     if (plane == null) {
       // Unsupported preview formats must never auto-trigger.
-      if (mounted) setState(() => _streamSupported = false);
+      _autoCaptureLost(ScanLumaPlane.whyUnreadable(image) ?? 'frame not readable');
       return;
     }
     _frameInFlight = true;
@@ -434,7 +584,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     }
     if (!mounted || _closing || _busy || generation != _cameraGeneration || !_autoEnabled) return;
     if (work == null) {
-      setState(() => _streamSupported = false);
+      _autoCaptureLost('frame not sampled (${plane.layout})');
       return;
     }
     final now = DateTime.now();
@@ -489,6 +639,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     var delivered = false;
     _nextFrame?.cancel();
     _nextFrame = null;
+    _frameWatch?.cancel();
+    _frameWatch = null;
     setState(() {
       _busy = true;
       _captureError = null;
@@ -613,6 +765,9 @@ class _GuidedScanPageState extends State<GuidedScanPage>
 
   Future<void> _useOtherCamera() async {
     if (_busy || _closing) return;
+    // The phone's camera app has no automatic capture: the board says why
+    // the student is there.
+    _report(ScanTrouble.cameraApp, _cameraFailure ?? 'not known');
     _closing = true;
     _cameraGeneration++;
     _forgetFrames();
@@ -678,6 +833,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     _closing = true;
     _cameraGeneration++;
     _nextFrame?.cancel();
+    _frameWatch?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     final camera = _camera;
     _camera = null;

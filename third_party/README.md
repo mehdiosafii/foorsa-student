@@ -8,7 +8,7 @@ neither copy.
 `test/android_plugin_patches_test.dart` fails if an override or a patch goes
 missing. **To upgrade either plugin**, replace its folder with the new published
 version (`lib`, `android` without `src/test`, `LICENSE`, `pubspec.yaml`), apply
-the patch below again, check that upstream has not fixed it already, and run
+the patches below again, check that upstream has not fixed it already, and run
 `flutter test` and `flutter build appbundle`.
 
 ## flutter_inappwebview_android 1.1.3: guarded web view settings
@@ -41,3 +41,22 @@ not as the original camera of the phone".
 **The patch.** `ImageCaptureProxyApi.pigeon_defaultConstructor` sets
 `CAPTURE_MODE_MAXIMIZE_QUALITY` and JPEG quality 95. Only the guided scanner
 opens this camera.
+
+## camera_android_camerax 0.6.30: the image stream at preview size beside a still at the maximum
+
+**What was wrong.** Upstream gives the preview, the still (`ImageCapture`) and
+the image stream (`ImageAnalysis`) one `ResolutionSelector`. At
+`ResolutionPreset.max` that is the highest available resolution, so the stream
+asks for a YUV frame at the sensor's size beside a JPEG at the sensor's size. A
+camera guarantees a YUV stream only at preview size beside a JPEG at its
+maximum, so CameraX has to settle the stream lower, and each frame the scanner
+asks for crosses the platform channel whole. The owner, 1 Nov 2026, on an
+Android 17 phone: "the scanning didn't show the auto scanning interface"
+(`docs/guided-document-scanner.md`).
+
+**The patch.** In `lib/src/android_camera_camerax.dart`, at
+`ResolutionPreset.max` `ImageAnalysis` gets `foorsaImageAnalysisMaxSelector()`.
+That asks for 4:3 at most 1440 × 1080 (`foorsaImageAnalysisMaxSize`), closest
+lower then higher. The preview and the still keep the highest available, and
+every other preset is as published. The scanner reads a 160-cell grid and a
+crop for the text reader from each frame, and needs no more.

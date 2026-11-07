@@ -38,7 +38,8 @@ dependency_overrides:
   # WebView, the web view was never created and the app sat on its loader.
   flutter_inappwebview_android:
     path: third_party/flutter_inappwebview_android
-  # The camera: the guided scanner's still in CameraX's quality mode.
+  # The camera: the guided scanner's still in CameraX's quality mode, and its
+  # image stream at preview size beside a still at the maximum.
   camera_android_camerax:
     path: third_party/camera_android_camerax
 
