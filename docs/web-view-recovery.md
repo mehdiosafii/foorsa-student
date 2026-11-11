@@ -76,3 +76,49 @@ no load ever finished and the student sat on "No internet connection" with a
 network that worked. `_retry()` now leaves a load under way alone for
 `retryLoadPatience` (45 s, `shouldRetryLoad`), counted from `onLoadStart` and
 cleared by `onLoadStop` or a main-frame error.
+
+## The stress test of 11 Nov 2026
+
+The owner, 11 Nov 2026: "stress test the app, so we can detect all the
+crashes, and all possible failures". What it found in the shell's own part,
+each pinned by a test that fails on the code as it was:
+
+- **The start watch counted time the app could not draw.** The fifteen
+  seconds of `webViewStartLimit` ran whatever the app was doing. An app started
+  without being shown, or left in its first seconds, draws no frame, so no web
+  view is even asked for; the watch still ended, reported `Web view stopped:
+  not created in time` and put "No internet connection" up for a student who
+  had one. The crash board's thirteen such reports of 1 to 8 Nov (every build
+  from 1.2.34 to 1.2.40, in pairs seconds apart, none with an error beside it)
+  have that shape: a device farm starting each new build unseen. Now
+  `WebViewStartWatch` (`web_view_recovery.dart`) counts only while the app is
+  on screen (`appCanDraw`), starts again when it comes back, and does not
+  believe a watch that ended late by the phone's clock (the app was
+  suspended).
+- **The retry made a new web view every six seconds while there was none.**
+  One that needed longer than that was thrown away before it finished, each
+  time. `_retry()` now leaves a web view being made its fifteen seconds
+  (`WebViewStartWatch.mayRebuild`), as `shouldRetryLoad` does for a page, and
+  makes none while the app is away.
+- **A download or a preview had no time limit.** `shell_page.dart` fetched
+  the file with a bare `HttpClient`: on a connection that stalls mid-file the
+  loader stayed over the app for good, and an iPhone has no back button.
+  `fetchToFile` (`file_fetch.dart`) gives the server 15 s to connect and 30 s
+  without a byte, closes the connection whatever happens and removes a
+  half-written file. The portal already falls back to the phone's browser
+  when the app does not answer `{ ok: true }`.
+- **The loader was taken away with `Navigator.pop()`.** On Android a student
+  who pressed back while it showed had closed it already; when the file
+  arrived the pop took the app's own page and left a blank app. `ShellSpinner`
+  removes its own route and no other. The "Set up your device" reminder had
+  the same fault (`device_access.dart`): Allow's answer and the resume after
+  the system prompt both found every access granted and both popped. It now
+  closes once, its Continue is never off, and a system prompt that never
+  answers (Android, when one is interrupted) no longer leaves its buttons
+  dead.
+
+`test/web_view_recovery_test.dart`, `test/file_fetch_test.dart`,
+`test/shell_spinner_test.dart` and `test/device_access_test.dart` pin them.
+What only a phone can confirm: that a real slow phone's first web view now
+finishes, and the loader and the reminder under the phone's own back button
+and prompts.

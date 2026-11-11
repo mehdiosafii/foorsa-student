@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'app_language.dart';
@@ -139,16 +141,48 @@ class _AccessDialogState extends State<_AccessDialog>
     _refresh();
   }
 
+  /// How long a system prompt's answer may follow the app's return before the
+  /// request is taken for lost.
+  static const _answerWait = Duration(seconds: 1);
+  bool _closed = false;
+  Timer? _lostAnswer;
+
+  /// Closes the reminder, once. Allow's answer and the resume that follows
+  /// the system prompt can both find every access granted while the dialog
+  /// is still leaving (its State stays mounted for the exit); a second pop
+  /// then took the app's own page off the screen and left it blank.
+  void _close() {
+    if (_closed || !mounted) return;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return;
+    _closed = true;
+    Navigator.of(context).pop();
+  }
+
   Future<void> _refresh() async {
     final values = await Future.wait(studentPermissions.map((p) => p.status));
-    if (!mounted) return;
+    if (!mounted || _closed) return;
     setState(() => _statuses = Map.fromIterables(studentPermissions, values));
-    if (values.every((s) => s.isGranted)) Navigator.of(context).pop();
+    if (values.every((s) => s.isGranted)) _close();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && !_busy) _refresh();
+    if (state != AppLifecycleState.resumed) return;
+    if (!_busy) {
+      _refresh();
+      return;
+    }
+    // Back from a system prompt with its answer still owed. Android gives no
+    // answer when the prompt was interrupted (Home, then the app again) or
+    // when another request was already open: the buttons would stay off for
+    // good. A moment later the phone is asked where things stand instead.
+    _lostAnswer?.cancel();
+    _lostAnswer = Timer(_answerWait, () {
+      if (!mounted || !_busy) return;
+      setState(() => _busy = false);
+      _refresh();
+    });
   }
 
   Future<void> _allow(Permission permission) async {
@@ -174,7 +208,7 @@ class _AccessDialogState extends State<_AccessDialog>
       if (mounted &&
           _statuses.length == 3 &&
           _statuses.values.every((s) => s.isGranted)) {
-        Navigator.of(context).pop();
+        _close();
       }
     } catch (_) {
       if (mounted) {
@@ -221,6 +255,7 @@ class _AccessDialogState extends State<_AccessDialog>
 
   @override
   void dispose() {
+    _lostAnswer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -248,9 +283,10 @@ class _AccessDialogState extends State<_AccessDialog>
           Text(_later.of(language), style: const TextStyle(fontSize: 12)),
         ])),
         actions: [
+          // Never off: the student can always go on without the access,
+          // whatever a system prompt is doing.
           TextButton(
-              onPressed: _busy ? null : () => Navigator.of(context).pop(),
-              child: Text(_continue.of(language)))
+              onPressed: _close, child: Text(_continue.of(language)))
         ],
       ),
     );

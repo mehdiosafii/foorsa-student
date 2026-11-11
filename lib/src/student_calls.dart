@@ -451,6 +451,22 @@ class StudentCalls extends ChangeNotifier {
   }
 }
 
+/// Who is calling, as the invite names them; null when it names nobody (no
+/// name, an empty one, or only spaces).
+String? callerNameOf(Map<dynamic, dynamic> invite) {
+  final raw = invite['callerName'];
+  if (raw is! String) return null;
+  final name = raw.trim();
+  return name.isEmpty ? null : name;
+}
+
+/// The letter in the call screen's circle: the name's first whole character
+/// (an Arabic or accented letter is never cut in half), Foorsa's F for a call
+/// that names nobody. An empty name used to throw here, inside the app's own
+/// frame, and the whole app went grey for the length of the call.
+String callerInitial(String? name) =>
+    name == null || name.isEmpty ? 'F' : name.characters.first;
+
 class StudentCallOverlay extends StatelessWidget {
   const StudentCallOverlay({super.key, required this.child});
   final Widget child;
@@ -482,11 +498,11 @@ class StudentCallOverlay extends StatelessWidget {
                           radius: 55,
                           backgroundColor: Colors.white12,
                           child: Text(
-                              '${invite['callerName'] ?? 'F'}'.substring(0, 1),
+                              callerInitial(callerNameOf(invite)),
                               style: const TextStyle(
                                   fontSize: 42, color: Colors.white))),
                       const SizedBox(height: 28),
-                      Text('${invite['callerName'] ?? _adviser.of(language)}',
+                      Text(callerNameOf(invite) ?? _adviser.of(language),
                           style: const TextStyle(
                               fontSize: 28, color: Colors.white)),
                       const SizedBox(height: 14),

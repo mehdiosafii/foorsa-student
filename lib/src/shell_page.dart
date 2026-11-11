@@ -32,6 +32,7 @@ import 'boot_loader_gate.dart';
 import 'bridge_files.dart';
 import 'config.dart';
 import 'embedded_navigation.dart';
+import 'file_fetch.dart';
 import 'quick_sign_in_offer.dart';
 import 'shell_appearance.dart';
 import 'shell_capabilities.dart';
@@ -120,7 +121,7 @@ class ShellPage extends StatefulWidget {
 }
 
 
-class _ShellPageState extends State<ShellPage> {
+class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
   String? _pushOpenPending;
   late final StudentPush _push = StudentPush(
     openChat: () async {
@@ -174,8 +175,15 @@ class _ShellPageState extends State<ShellPage> {
   /// process is gone.
   int _webViewGeneration = 0;
   /// Running from the moment a web view is put on the screen until it says it
-  /// was created (web_view_recovery.dart, [webViewStartLimit]).
-  Timer? _startWatch;
+  /// was created, while the app can draw (web_view_recovery.dart).
+  late final WebViewStartWatch _startWatch = WebViewStartWatch(
+    lifecycle: () => WidgetsBinding.instance.lifecycleState,
+    onStuck: () {
+      if (!mounted || _controller != null) return;
+      unawaited(CrashReports.instance.report('Web view stopped: not created in time'));
+      _enterOffline();
+    },
+  );
   DateTime? _lastBackPress;
   Color _chromeColor = const Color(0xFF0B1220);
   String _scannerNonce = _newScannerNonce();
@@ -518,6 +526,8 @@ class _ShellPageState extends State<ShellPage> {
   @override
   void initState() {
     super.initState();
+    // The web view's start is timed only while the app is on screen.
+    WidgetsBinding.instance.addObserver(this);
     ShellLanguage.instance.addListener(_languageChanged);
     _push.onTokenChanged = () async {
       final controller = _controller;
@@ -568,6 +578,9 @@ class _ShellPageState extends State<ShellPage> {
   void _retry() {
     final controller = _controller;
     if (controller == null) {
+      // A web view still being made is left to finish: a new one every six
+      // seconds threw each away before a slow phone was done with it.
+      if (!_startWatch.mayRebuild()) return;
       _rebuildWebView();
       return;
     }
@@ -593,17 +606,14 @@ class _ShellPageState extends State<ShellPage> {
 
   /// A web view that never says it was created (on 1 Nov 2026 some phones'
   /// WebView refused a settings call while it was being made) would leave the
-  /// student on the loader for good. After [webViewStartLimit] the offline
-  /// screen takes over: it says so, and its retry makes a new web view.
-  void _watchWebViewStart() {
-    _startWatch?.cancel();
-    final generation = _webViewGeneration;
-    _startWatch = Timer(webViewStartLimit, () {
-      if (!mounted || generation != _webViewGeneration || _controller != null) return;
-      unawaited(CrashReports.instance.report('Web view stopped: not created in time'));
-      _enterOffline();
-    });
-  }
+  /// student on the loader for good. After [webViewStartLimit] on screen the
+  /// offline screen takes over: it says so, and its retry makes a new web
+  /// view. Time the app spends hidden does not count (WebViewStartWatch).
+  void _watchWebViewStart() => _startWatch.start();
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) =>
+      _startWatch.lifecycleChanged(state);
 
   /// The page's process died (memory, most often after big uploads). Report it
   /// and bring the same page back; a page that keeps dying gets the offline
@@ -820,21 +830,12 @@ class _ShellPageState extends State<ShellPage> {
     final uri = Uri.tryParse(url);
     if (uri == null || url.isEmpty) return {'ok': false, 'error': 'bad url'};
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlightLoader(size: 30)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    // Its own route, taken away by name (file_fetch.dart): a student who
+    // closed it with Android's back button loses nothing else.
+    final spinner = mounted
+        ? ShellSpinner.show(context, child: const FlightLoader(size: 30))
+        : null;
+    void dismissSpinner() => spinner?.dismiss();
 
     try {
       var name = filename.trim().isEmpty ? 'document' : filename.trim();
@@ -843,17 +844,9 @@ class _ShellPageState extends State<ShellPage> {
       final tmp = File('${tmpDir.path}/dl_$name');
 
       // Same fetch as the preview: the URL is pre-authenticated (?t=) and
-      // already carries Content-Disposition — no extra headers.
-      final client = HttpClient();
-      try {
-        final response = await client.getUrl(uri).then((r) => r.close());
-        if (response.statusCode >= 400) {
-          throw HttpException('HTTP ${response.statusCode}');
-        }
-        await response.pipe(tmp.openWrite());
-      } finally {
-        client.close();
-      }
+      // already carries Content-Disposition — no extra headers. Given up
+      // when the connection stalls, so the loader never stays for good.
+      await fetchToFile(uri, tmp);
 
       var openPath = tmp.path;
       if (Platform.isAndroid) {
@@ -952,21 +945,10 @@ class _ShellPageState extends State<ShellPage> {
     if (uri == null) return;
     _previewBusy = true;
     final messenger = ScaffoldMessenger.maybeOf(context);
-    var spinnerUp = false;
-    if (mounted) {
-      spinnerUp = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: FlightLoader(size: 30)),
-      );
-    }
-    void dismissSpinner() {
-      if (spinnerUp && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      spinnerUp = false;
-    }
+    final spinner = mounted
+        ? ShellSpinner.show(context, child: const FlightLoader(size: 30))
+        : null;
+    void dismissSpinner() => spinner?.dismiss();
 
     try {
       final dir = await getTemporaryDirectory();
@@ -974,19 +956,10 @@ class _ShellPageState extends State<ShellPage> {
       name = name.replaceAll(RegExp('[^A-Za-z0-9._ -]'), '_');
       final file = File('${dir.path}/$name');
 
-      final client = HttpClient();
-      try {
-        // Two different applicant documents can share a filename and size.
-        // Fetch the authenticated URL every time so a prior preview never
-        // appears in place of the document the student just opened.
-        final response = await client.getUrl(uri).then((r) => r.close());
-        if (response.statusCode >= 400) {
-          throw HttpException('HTTP ${response.statusCode}');
-        }
-        await response.pipe(file.openWrite());
-      } finally {
-        client.close();
-      }
+      // Two different applicant documents can share a filename and size.
+      // Fetch the authenticated URL every time so a prior preview never
+      // appears in place of the document the student just opened.
+      await fetchToFile(uri, file);
 
       dismissSpinner();
       if (!mounted) return;
@@ -1027,21 +1000,16 @@ class _ShellPageState extends State<ShellPage> {
       final cookies = await CookieManager.instance().getCookies(url: uri);
       final cookieHeader =
           cookies.map((c) => '${c.name}=${c.value}').join('; ');
-      final client = HttpClient();
-      final request = await client.getUrl(uri);
-      if (cookieHeader.isNotEmpty) request.headers.set('Cookie', cookieHeader);
-      request.headers.set(HttpHeaders.userAgentHeader,
-          '${AppConfig.userAgentProduct}/${_packageInfo?.version ?? ''}');
-      final response = await request.close();
-      if (response.statusCode >= 400) {
-        throw HttpException('HTTP ${response.statusCode}');
-      }
       final dir = await getApplicationDocumentsDirectory();
       final downloads = Directory('${dir.path}/FoorsaDownloads');
       if (!await downloads.exists()) await downloads.create(recursive: true);
       final file = File('${downloads.path}/$name');
-      await response.pipe(file.openWrite());
-      client.close();
+      // Closed whatever happens, and given up when it stalls (file_fetch.dart).
+      await fetchToFile(uri, file, headers: {
+        if (cookieHeader.isNotEmpty) 'Cookie': cookieHeader,
+        HttpHeaders.userAgentHeader:
+            '${AppConfig.userAgentProduct}/${_packageInfo?.version ?? ''}',
+      });
       messenger?.hideCurrentSnackBar();
       final result = await OpenFilex.open(file.path);
       if (result.type != ResultType.done) {
@@ -1273,7 +1241,8 @@ class _ShellPageState extends State<ShellPage> {
     _push.dispose();
     _retryTimer?.cancel();
     _holdTimer?.cancel();
-    _startWatch?.cancel();
+    _startWatch.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
@@ -1363,7 +1332,7 @@ class _ShellPageState extends State<ShellPage> {
                   useOnRenderProcessGone: true,
                 ),
                 onWebViewCreated: (controller) {
-                  _startWatch?.cancel();
+                  _startWatch.created();
                   _controller = controller;
                   PortalHandover.instance.controller = controller;
                   controller.addJavaScriptHandler(

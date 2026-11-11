@@ -56,10 +56,17 @@ void main() {
     final shell = _read('lib/src/shell_page.dart');
     final created = shell.indexOf('onWebViewCreated: (controller) {');
     expect(created, isNonNegative);
-    expect(shell.substring(created, created + 120), contains('_startWatch?.cancel();'));
+    expect(shell.substring(created, created + 120), contains('_startWatch.created();'));
     expect(RegExp(r'_watchWebViewStart\(\);').allMatches(shell).length, 2,
         reason: 'when the first web view is put up, and when one is rebuilt');
-    final watch = shell.substring(shell.indexOf('void _watchWebViewStart() {'));
-    expect(watch.substring(0, 500), contains('_enterOffline();'));
+    expect(shell, contains('void _watchWebViewStart() => _startWatch.start();'));
+    // The watch itself (how long, and only while the app is on screen) is
+    // web_view_recovery.dart's WebViewStartWatch, with its own tests; here,
+    // that running out of time still puts the retry screen up.
+    final watch = shell.substring(shell.indexOf('late final WebViewStartWatch _startWatch'));
+    final stuck = watch.substring(0, watch.indexOf('  );') + 4);
+    expect(stuck, contains('onStuck: () {'));
+    expect(stuck, contains("report('Web view stopped: not created in time')"));
+    expect(stuck, contains('_enterOffline();'));
   });
 }

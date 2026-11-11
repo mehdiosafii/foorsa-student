@@ -52,9 +52,16 @@ class FakePlatform implements PushPlatform {
   @override
   Future<String?> apnsToken() async => apnsAsks++ >= apnsAfter ? apns : null;
 
+  /// Each request for Firebase's token that Google has not answered yet.
+  final unanswered = <Completer<String?>>[];
+
   @override
   Future<String?> fcmToken() async {
-    if (tokenHangs) return Completer<String?>().future;
+    if (tokenHangs) {
+      final request = Completer<String?>();
+      unanswered.add(request);
+      return request.future;
+    }
     if (tokenError != null) throw tokenError!;
     return fcm;
   }
@@ -229,6 +236,52 @@ void main() {
       ..tokenHangs = true;
     final device = await registration(platform).token(requestPermission: true, callsEnabled: false);
     expect(device, {'token': null, 'status': 'error', 'reason': 'token: timeout', 'permission': 'granted'});
+  });
+
+  // The stress test, 11 Nov 2026: the portal asks for the token at every
+  // return to the app and after each failure, and in mainland China each of
+  // those calls waited the whole of Firebase's time again.
+  test('a Google that did not answer is not waited for again, until it answers', () async {
+    final platform = FakePlatform()..tokenHangs = true;
+    final push = registration(platform);
+    final first = Stopwatch()..start();
+    final apple = await push.token(requestPermission: true, callsEnabled: false);
+    expect(first.elapsedMilliseconds, greaterThanOrEqualTo(190), reason: 'the first call gives Google its time');
+    expect(apple['token'], 'apns:apns-token');
+
+    final again = Stopwatch()..start();
+    final second = await push.token(requestPermission: true, callsEnabled: false);
+    expect(again.elapsedMilliseconds, lessThan(100), reason: 'the next call does not wait again');
+    expect(second['token'], 'apns:apns-token');
+    expect(second['status'], 'ready');
+    // One request stays out, however often the portal asks.
+    await push.token(requestPermission: true, callsEnabled: false);
+    expect(platform.unanswered, hasLength(2));
+
+    // Google answers (a VPN turned on): the next call waits for the token and has it.
+    platform.tokenHangs = false;
+    platform.unanswered.last.complete(platform.fcm);
+    await Future<void>.delayed(Duration.zero);
+    final third = await push.token(requestPermission: true, callsEnabled: false);
+    expect(third['token'], platform.fcm);
+    expect(third['apnsToken'], 'apns-token');
+    await settle();
+  });
+
+  test('an Android phone that cannot reach Google is told so at once the second time, and asked again later', () async {
+    final platform = FakePlatform(isIOS: false)..tokenHangs = true;
+    final push = PushRegistration(platform, reporter,
+        fcmWait: const Duration(milliseconds: 200), fcmQuiet: const Duration(milliseconds: 400), now: () => DateTime.now());
+    expect((await push.token(requestPermission: true, callsEnabled: false))['reason'], 'token: timeout');
+    final again = Stopwatch()..start();
+    expect((await push.token(requestPermission: true, callsEnabled: false))['reason'], 'token: timeout');
+    expect(again.elapsedMilliseconds, lessThan(100));
+    // Once the quiet time has passed Google is given its time again.
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    final later = Stopwatch()..start();
+    expect((await push.token(requestPermission: true, callsEnabled: false))['reason'], 'token: timeout');
+    expect(later.elapsedMilliseconds, greaterThanOrEqualTo(190));
+    await settle();
   });
 
   test('an iPhone with a Firebase token also names its Apple token, so the server drops an older Apple-only row', () async {

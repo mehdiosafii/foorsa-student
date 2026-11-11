@@ -169,7 +169,7 @@ class FirstLaunchOnboarding extends StatefulWidget {
 }
 
 class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late final AnimationController _intro = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: (takeoffSeconds * 1000) ~/ 1));
@@ -290,6 +290,8 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
   @override
   void initState() {
     super.initState();
+    // A system prompt that never answers is noticed when the app is back.
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_load());
     _intro.addListener(_introTick);
     _flight.addListener(_flightTick);
@@ -380,6 +382,8 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _lostAnswer?.cancel();
     _intro.dispose();
     _night.dispose();
     _drift.dispose();
@@ -454,12 +458,7 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
     // The scanner takes the page.
     if (step == BoardingStep.camera) widget.sounds.play('shutter');
     if (asks) {
-      AccessState answer;
-      try {
-        answer = await widget.permissions.request(access);
-      } catch (_) {
-        answer = AccessState.unavailable;
-      }
+      final answer = await _answerTo(access);
       if (!mounted) return;
       final on = answer == AccessState.granted;
       _answered[access] = on;
@@ -697,6 +696,60 @@ class FirstLaunchOnboardingState extends State<FirstLaunchOnboarding>
       widget.onBoarded?.call();
     }
     if (_exit.value >= 1 && _beats.add('finished')) widget.onFinished();
+  }
+
+  /// How long the phone's answer may follow the app's return to the screen
+  /// before the prompt is taken for lost.
+  static const _answerWait = Duration(seconds: 1);
+
+  /// Reads where the phone stands when a prompt's answer is owed (set while
+  /// one is; run by the app's return to the screen).
+  Future<void> Function()? _askWhereThingsStand;
+  Timer? _lostAnswer;
+
+  /// The phone's answer to its prompt for [access]. Android gives none when
+  /// the prompt is interrupted (Home, then the app's icon: the request is
+  /// cancelled and never answered) or when another permission request was
+  /// already open: the await then never ended, and the student was left on
+  /// this step for good, its object dead and back refused, until they closed
+  /// the app (the stress test, 11 Nov 2026). So when the app is on screen
+  /// again and a moment has passed without the answer, the phone is asked
+  /// where things stand instead, and the onboarding goes on.
+  Future<AccessState> _answerTo(BoardingAccess access) {
+    final answered = Completer<AccessState>();
+    void settle(AccessState state) {
+      if (!answered.isCompleted) answered.complete(state);
+    }
+
+    _askWhereThingsStand = () async {
+      AccessState now;
+      try {
+        now = await widget.permissions.status(access);
+      } catch (_) {
+        now = AccessState.unavailable;
+      }
+      // Straight after a prompt, "not yet" means it was not allowed.
+      settle(now == AccessState.askable ? AccessState.denied : now);
+    };
+    widget.permissions.request(access).then(settle,
+        onError: (Object _) => settle(AccessState.unavailable));
+    return answered.future.whenComplete(() {
+      _askWhereThingsStand = null;
+      _lostAnswer?.cancel();
+      _lostAnswer = null;
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final ask = _askWhereThingsStand;
+    if (ask == null) return;
+    _lostAnswer?.cancel();
+    _lostAnswer = Timer(_answerWait, () {
+      // Still owed, a moment after the prompt went.
+      if (mounted && identical(_askWhereThingsStand, ask)) unawaited(ask());
+    });
   }
 
   /// Android's back: one step back, out of the app from the welcome.

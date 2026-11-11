@@ -203,12 +203,23 @@ class _GuidedScanPageState extends State<GuidedScanPage>
         // No frame came (the app is in the background): nothing is drawn.
       }
     }
+    // The controller's dispose does not end its frame stream: the stream kept
+    // this page, and the last reading of the paper on it, until the next scan
+    // opened a camera.
+    await _stopImageStream(camera);
     try {
       await camera.dispose().timeout(const Duration(seconds: 3));
     } catch (_) {
       // Camera backends can already have released the device after a pause.
     }
   }
+
+  /// Whether this page is still the one on screen. Android's back button
+  /// closes it while a photo is taken or made ready (the X is off then, the
+  /// button is not), and its State stays mounted while the page slides away:
+  /// handing the photo back at that moment popped the page under it, the
+  /// app's own, and left a blank app (the stress test, 11 Nov 2026).
+  bool get _onScreen => mounted && (ModalRoute.of(context)?.isCurrent ?? false);
 
   Future<void> _discardLateCapture(Future<XFile> capture) async {
     try {
@@ -503,7 +514,12 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       await _stopping?.timeout(const Duration(seconds: 3), onTimeout: () {});
       _framePending = false;
       await _focusOnPage(camera);
-      if (!mounted || _closing || _camera != camera) return;
+      if (!mounted || _closing) return;
+      // The app lost the screen while the camera focused (a call, the
+      // notification shade, the lock) and the camera was let go. Returning
+      // here left the page on "Taking the photo." with no camera and every
+      // button off; as a failed photo it opens the camera again.
+      if (_camera != camera) throw StateError('The camera was released before the photo');
       capture = camera.takePicture();
       var photo = await capture.timeout(
         const Duration(seconds: 15),
@@ -541,7 +557,9 @@ class _GuidedScanPageState extends State<GuidedScanPage>
       // that cannot be done.
       setState(() => _preparing = true);
       final ready = _android ? await _photos.prepare(photo.path) : null;
-      if (!mounted) return;
+      // Closed meanwhile with the back button: nothing is handed back, and
+      // the photo is deleted below.
+      if (!mounted || !_onScreen) return;
       Navigator.of(context).pop(GuidedScanResult.captured(photo,
           liveReading: liveReading, bytes: ready?.bytes));
       delivered = true;
@@ -591,8 +609,13 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     while (wantsAnotherStill(scores) && mounted && !_closing && _camera == camera &&
         camera.value.isInitialized) {
       XFile next;
+      final later = camera.takePicture();
       try {
-        next = await camera.takePicture().timeout(const Duration(seconds: 8));
+        next = await later.timeout(const Duration(seconds: 8));
+      } on TimeoutException {
+        // It may still land: a paper's photo is not left in the camera's cache.
+        unawaited(_discardLateCapture(later));
+        break;
       } catch (_) {
         break;
       }
@@ -630,7 +653,7 @@ class _GuidedScanPageState extends State<GuidedScanPage>
     final previous = _camera;
     _camera = null;
     if (previous != null) await _disposeCamera(previous);
-    if (mounted) {
+    if (mounted && _onScreen) {
       Navigator.of(context).pop(const GuidedScanResult.fallback());
     }
   }
