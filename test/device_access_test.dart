@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:foorsa_student/src/boot_loader_gate.dart';
 import 'package:foorsa_student/src/device_access.dart';
+import 'package:foorsa_student/src/student_calls.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -94,8 +96,31 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pumpAndSettle();
       expect(find.text('Set up your device'), findsOneWidget);
-      // As long as the loader rests waiting for the same web view.
-      expect(DeviceAccess.patience, const Duration(seconds: 1));
+      // As long as the loader may rest waiting for the same web view, and
+      // the moment after it.
+      expect(DeviceAccess.patience,
+          BootLoaderGate.restLimit + BootLoaderGate.settle);
+    });
+
+    testWidgets('a call that comes in while it waits takes its place', (tester) async {
+      addTearDown(() => StudentCalls.instance.invite = null);
+      final made = Completer<void>();
+      await openAfter(tester, made.future);
+      // The adviser rings: the call's screen is what the student sees now.
+      StudentCalls.instance.invite = {'callId': 'ringing'};
+      made.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Set up your device'), findsNothing);
+    });
+
+    testWidgets('gone while it waits, it opens nothing', (tester) async {
+      final made = Completer<void>();
+      await openAfter(tester, made.future);
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Text('Portal'))));
+      made.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Set up your device'), findsNothing);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('a web view already there keeps nothing waiting', (tester) async {

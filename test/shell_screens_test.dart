@@ -60,18 +60,27 @@ void main() {
   group('the loading screen over the web view', () {
     Widget layer(
             {bool showing = true,
+            bool covered = false,
             bool resting = false,
             bool bakeGlass = false,
             VoidCallback? onGone}) =>
         _phone(Stack(children: [
           ShellLoadingLayer(
               showing: showing,
-              covered: false,
+              covered: covered,
               dark: true,
               resting: resting,
               bakeGlass: bakeGlass,
               onGone: onGone ?? () {}),
         ]));
+
+    double clock(WidgetTester tester) => (tester
+            .widget<CustomPaint>(find.descendant(
+                of: find.byType(FlightLoader),
+                matching: find.byType(CustomPaint)))
+            .painter! as FlightLoaderPainter)
+        .clock
+        .value;
 
     testWidgets('rests on the arrow while the web view is made, then plays',
         (tester) async {
@@ -96,6 +105,54 @@ void main() {
       expect(gone, 1);
     });
 
+    // A first launch: the loader does not rest (BootLoaderGate's rests), it
+    // is under the onboarding, and a slow sign-in may still need it when the
+    // onboarding fades onto the shell.
+    testWidgets('uncovered by the onboarding, it plays from its first picture',
+        (tester) async {
+      // As the app builds it: before its first frame, not inside one
+      // (runApp mounts the tree from a timer). A clock started inside a
+      // frame counts from that frame, even while it is not ticking.
+      var up = false;
+      late StateSetter put;
+      await tester.pumpWidget(StatefulBuilder(builder: (context, setState) {
+        put = setState;
+        return up ? layer(covered: true) : const SizedBox();
+      }));
+      put(() => up = true);
+      tester.binding.buildOwner!.buildScope(tester.binding.rootElement!);
+      expect(find.byType(FlightLoader), findsOneWidget);
+      await tester.pump();
+      // The takeoff and the steps.
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 365));
+      }
+      // The onboarding fades onto the shell: the loader is seen.
+      await tester.pumpWidget(StatefulBuilder(
+          builder: (context, setState) => layer()));
+      await tester.pump();
+      expect(clock(tester), 0);
+      await tester.pump(const Duration(milliseconds: 160));
+      expect(clock(tester), closeTo(0.16 / flightLoaderSeconds, 0.001));
+    });
+
+    testWidgets('its rest ended while it was covered, it still plays from its first picture',
+        (tester) async {
+      // Not what a first launch does any more (it does not rest), but a
+      // loader let go of its rest out of sight must not have been counting.
+      await tester.pumpWidget(layer(covered: true, resting: true));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpWidget(layer(covered: true));
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 365));
+      }
+      await tester.pumpWidget(layer());
+      await tester.pump();
+      expect(clock(tester), 0);
+      await tester.pump(const Duration(milliseconds: 160));
+      expect(clock(tester), closeTo(0.16 / flightLoaderSeconds, 0.001));
+    });
+
     testWidgets('on Android its glass is baked while it is up, no longer',
         (tester) async {
       addTearDown(() => GlassBake.enabled = false);
@@ -113,22 +170,48 @@ void main() {
       expect(GlassBake.count, 0);
     });
 
-    testWidgets('the loader and the onboarding each bake for themselves',
+    testWidgets('the shell redrawing it does not hold the pictures twice',
+        (tester) async {
+      addTearDown(() => GlassBake.enabled = false);
+      // The shell rebuilds the layer on every change of its own (the
+      // portal's colour, the loader let go of, the rest ending).
+      await tester.pumpWidget(layer(bakeGlass: true, resting: true));
+      await tester.pumpWidget(layer(bakeGlass: true));
+      await tester.pumpWidget(layer(bakeGlass: true, showing: false));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(GlassBake.enabled, isTrue);
+      await tester.pumpWidget(const SizedBox());
+      expect(GlassBake.enabled, isFalse, reason: 'one hold, one release');
+      expect(GlassBake.count, 0);
+    });
+
+    testWidgets('the loader and the onboarding each keep baking on for themselves',
         (tester) async {
       addTearDown(() => GlassBake.enabled = false);
       // A first launch: the onboarding bakes, the loader under it too.
       GlassBake.enabled = true;
       await tester.pumpWidget(layer(bakeGlass: true));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(GlassBake.count, greaterThan(0));
       // The portal is ready while the onboarding still runs: the loader goes,
       // the onboarding's glass stays baked.
       await tester.pumpWidget(const SizedBox());
       expect(GlassBake.enabled, isTrue);
-      // The other way round: the onboarding ends on a loader still up.
+      expect(GlassBake.count, greaterThan(0));
+
+      // The other way round: the onboarding ends on a loader still up. Its
+      // pictures go with it, all of them, and the loader, still baking,
+      // makes its own few again.
       await tester.pumpWidget(layer(bakeGlass: true));
+      await tester.pump(const Duration(milliseconds: 100));
       GlassBake.enabled = false;
       expect(GlassBake.enabled, isTrue);
+      expect(GlassBake.count, 0);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(GlassBake.count, greaterThan(0));
       await tester.pumpWidget(const SizedBox());
       expect(GlassBake.enabled, isFalse);
+      expect(GlassBake.count, 0);
     });
   });
 }

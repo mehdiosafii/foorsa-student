@@ -226,16 +226,18 @@ abstract final class GlassBake {
   static set enabled(bool value) {
     if (value == _enabled) return;
     _enabled = value;
-    if (!enabled) clear();
+    // The onboarding's pictures go with it, whoever else is baking: a loader
+    // still up makes its own few again on its next frame.
+    if (!value) clear();
   }
 
   static int _holds = 0;
 
-  /// Bakes for a user of its own until [release], whatever the onboarding
-  /// sets [enabled] to: the shell's loader (shell_screens.dart), which is up
-  /// on every start, with or without the onboarding over it, and may be let
-  /// go before the onboarding ends or after. The pictures go with whoever
-  /// leaves last.
+  /// Keeps baking on for a user of its own until [release], whatever the
+  /// onboarding sets [enabled] to: the shell's loader (shell_screens.dart),
+  /// which is up on every start, with or without the onboarding over it, and
+  /// may be let go before the onboarding ends or after. The pictures are
+  /// kept together; they all go when nobody bakes any more.
   static void hold() => _holds++;
 
   static void release() {
@@ -278,14 +280,22 @@ abstract final class GlassBake {
   /// arrow's bevel). Those are drawn as before.
   static bool softEnough(double sigma, double device) => sigma * device >= 1.5;
 
+  /// The screen's pixels per point, for a test that draws for a given phone.
+  /// [deviceScale] reads the engine's own view, and a test's view does not
+  /// change that one's density (it stays 3 whatever `tester.view` is set
+  /// to), so a test that names a phone says its density here.
+  @visibleForTesting
+  static double? debugScreenDensity;
+
   /// How many device pixels a point of [canvas] covers: the transform in
   /// its picture, times the screen's.
   static double deviceScale(Canvas canvas) {
     final m = canvas.getTransform();
     final local = math.max(math.sqrt(m[0] * m[0] + m[1] * m[1]),
         math.sqrt(m[4] * m[4] + m[5] * m[5]));
-    final screen =
-        ui.PlatformDispatcher.instance.implicitView?.devicePixelRatio ?? 1;
+    final screen = debugScreenDensity ??
+        ui.PlatformDispatcher.instance.implicitView?.devicePixelRatio ??
+        1;
     return local * screen;
   }
 

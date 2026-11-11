@@ -84,6 +84,24 @@ void main() {
     }
   });
 
+  // The frames after a web view is made may come late (on Android the one
+  // that first shows it is drawn twice). A clock started inside a frame
+  // counts from that frame, so the loop opened as far in as the next frame
+  // was late.
+  testWidgets('let go of its rest, it opens on its first picture however late the next frame',
+      (tester) async {
+    Widget loader({required bool resting}) =>
+        MaterialApp(home: Center(child: FlightLoader(resting: resting)));
+    await tester.pumpWidget(loader(resting: true));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpWidget(loader(resting: false));
+    // The next frame, 300 ms late.
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(_painter(tester).clock.value, 0);
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(_painter(tester).clock.value, closeTo(0.16 / flightLoaderSeconds, 0.001));
+  });
+
   testWidgets('it plays at once unless told to rest', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: Center(child: FlightLoader())));
     expect(tester.binding.hasScheduledFrame, isTrue);

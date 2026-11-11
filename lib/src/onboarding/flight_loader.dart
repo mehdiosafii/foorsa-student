@@ -119,7 +119,20 @@ class _FlightLoaderState extends State<FlightLoader>
   @override
   void didUpdateWidget(FlightLoader oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.resting != widget.resting) _play();
+    if (oldWidget.resting == widget.resting) return;
+    if (widget.resting) {
+      _play();
+      return;
+    }
+    // Let go of its rest, it plays from its first picture on the next frame
+    // that is drawn, however late that frame comes. A clock started while a
+    // frame is being built counts from that frame (Ticker.start), and the
+    // frames after a web view is made may come late: started here, the loop
+    // would then open part-way through. Started once this frame is built,
+    // it counts from the next one.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !widget.resting && !_clock.isAnimating) _play();
+    });
   }
 
   /// The loop, or its first picture alone while [FlightLoader.resting]: no

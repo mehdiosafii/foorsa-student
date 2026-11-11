@@ -67,7 +67,9 @@ class ShellLoadingScreen extends StatelessWidget {
 /// the arrow's and the plane's are now made once, as the onboarding's are
 /// (GlassBake in onboarding/glass.dart), and let go with the loader. What
 /// changes shape or fades from frame to frame (the arrow becoming the plane,
-/// the next arrow coming up) is drawn as before.
+/// the next arrow coming up) is drawn as before, and so is a blur under a
+/// pixel and a half wide, which on a 720p phone is the light along their
+/// bevels (docs/shell-frame-cost.md has the counts).
 class ShellLoadingLayer extends StatefulWidget {
   const ShellLoadingLayer({
     super.key,

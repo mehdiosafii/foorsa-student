@@ -75,8 +75,23 @@ void main() {
       final gate = BootLoaderGate();
       gate.restExpired();
       expect(gate.resting, isFalse);
-      // Inside the shortest time the loader shows, with room to play.
       expect(BootLoaderGate.restLimit, const Duration(seconds: 1));
+    });
+
+    test('a first launch does not rest: its loader is under the onboarding', () {
+      // Uncovered, that loader plays from its first picture, as it always
+      // did; resting until a timer ended the rest, it came up part-way
+      // through its loop.
+      final gate = BootLoaderGate(rests: false);
+      expect(gate.resting, isFalse);
+      gate.webViewMade();
+      expect(gate.resting, isFalse);
+      // The rest of the gate is as on any start.
+      expect(gate.showing, isTrue);
+      gate
+        ..minimumPassed()
+        ..pageLoaded();
+      expect(gate.showing, isFalse);
     });
 
     test('resting is not what keeps the loader up, nor what lifts it', () {

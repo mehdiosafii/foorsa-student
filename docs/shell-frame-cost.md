@@ -52,8 +52,8 @@ Read from `InAppWebView.java` in `third_party/flutter_inappwebview_android`;
 hwui's `SkiaPipeline::renderLayerImpl` and
 `SkiaGpuPipeline::createOrUpdateLayer` (frameworks/base, libs/hwui); the
 engine's `ImeSyncDeferringInsetsCallback`; and "Hardware acceleration", View
-layers, on developer.android.com. A test fails if an upgrade of the plugin
-gives the setting another meaning.
+layers, on developer.android.com. A test holds the plugin's code to this
+reading: where it reads the setting, and the only layers it ever sets.
 
 ## Both: the web view was made late, in the middle of the loader's first move
 
@@ -79,14 +79,26 @@ Now (`boot_loader_gate.dart`, wired in `shell_page.dart`):
   starts the loop. It rests one second at most (`restLimit`), so a web view
   slow to come, or one that cannot be made (the offline screen takes over
   after 15 s), does not leave the arrow standing.
+- Making the web view is the longest hold, not the only one: on Android the
+  frame that first shows the new view is dropped and drawn again as Flutter
+  moves its drawing to the main thread for it, and Android lays the view out
+  and draws it for the first time. So the loop counts from the first frame
+  drawn after the rest, however late that frame comes (a clock started while
+  a frame is built counts from that frame, `Ticker.start`), and it opens
+  with a tenth of a second of the same still arrow.
 - The "Set up your device" reminder, which opens with the app for a student
   who has not allowed the camera, the microphone and the location, used to
-  come in during those first 300 ms. It now waits for the web view, a second
-  at most (`DeviceAccess.after`, `PortalHandover.webViewMade`), so it does
-  not come in while the thread is held.
+  come in during those first 300 ms. It now waits until the web view has
+  been made and has had 300 ms to be put on the screen, 1.3 s at most
+  (`DeviceAccess.after`, `PortalHandover.webViewSettled`,
+  `BootLoaderGate.settle`), so it comes in neither while the thread is held
+  nor on the frames that first show the view. When the app comes back to
+  the front it opens at once, as before.
 - A first launch is as it was: the web view waits for the onboarding's
-  takeoff (3.6 s), and under the onboarding the loader is neither drawn nor
-  animated.
+  takeoff (3.6 s), and the loader, under the onboarding, is neither drawn
+  nor animated and does not rest (`BootLoaderGate(rests: false)`): should it
+  still be needed when the onboarding fades, it plays from its first
+  picture.
 
 So a start shows the launch image, the arrow, then the loop from its
 beginning, and the portal's first screen comes up to 300 ms sooner.
@@ -109,21 +121,36 @@ pictures made once (`GlassBake`, `onboarding/glass.dart`;
 | blurs through offscreen passes, per frame | arrow | becoming the plane | plane | next arrow coming up | a loop, on average |
 | --- | --- | --- | --- | --- | --- |
 | dark, before | 4 | 5 | 2 | 4 to 6 | 3.5 |
-| dark, Android now | 0 | 5 | 0 | 4 to 5 | 1.7 |
+| dark, now, 1080 x 2400 at 2.625 | 0 | 5 | 0 | 4 to 5 | 1.75 |
+| dark, now, 720 x 1600 at 2 | 1 | 5 | 1 | 4 to 5 | 2.4 |
 | light, before | 3 | 3 | 3 | 3 to 6 | 3.2 |
-| light, Android now | 0 | 3 | 0 | 3 to 4 | 1.2 |
+| light, now, 1080 x 2400 at 2.625 | 0 | 3 | 0, 1 as it leaves | 3 to 4 | 1.3 |
+| light, now, 720 x 1600 at 2 | 1 | 3 | 1 | 3 to 4 | 1.9 |
 
 What changes shape or fades from one frame to the next (the arrow becoming
 the plane, the next arrow coming up) is drawn as before: a picture of it
-would be made again on every frame. The pictures are ten and 2.9 MB on the
-dark ground, eight and 3.8 MB on the light one, on a 1080 x 2400 phone. The
-loader was drawn with and without them at four moments of its loop, on both
-grounds, with Skia and with Impeller: 5 levels of 255 apart at most, 0.005 on
-average. iOS draws as before.
+would be made again on every frame. And a blur under a pixel and a half wide
+on the screen stays a blur, as in the onboarding, so that it stays sharp: on
+a 720p phone that is the light along the arrow's and the plane's bevel, one
+blur a frame. The pictures, on the dark ground and on the light one: 6 and
+0.9 MB, 5 and 1.5 MB at 720 x 1600; 9 and 1.9 MB, 7 and 2.5 MB at
+1080 x 2400; 11 and 4.4 MB, 9 and 5.7 MB at 1440 x 3200. The loader was
+drawn with and without them at four moments of its loop, on both grounds, at
+720 x 1600 and at 1080 x 2400, with Skia and with Impeller: 5 levels of 255
+apart at most, 0.007 on average. iOS draws as before.
 
-The loader and the onboarding each hold the pictures for themselves
+The loader and the onboarding each keep the baking on for themselves
 (`GlassBake.hold` and `release` beside the onboarding's `enabled`): on a
 first launch the loader may be let go before the onboarding ends, or after.
+The pictures are kept together. When the onboarding ends its pictures go,
+and a loader still up makes its own few again; when nobody bakes any more,
+all go.
+
+A test that draws for a given phone says its density to `GlassBake`
+(`debugScreenDensity`): `GlassBake` reads the engine's own view, whose
+density a test's view does not change (it stays 3). The onboarding's own
+cost tests were written before this was known, and bake at 3 while they draw
+at 2.625; their numbers in `first-launch-onboarding.md` are for that.
 
 ## Looked at, and left as it is
 
@@ -171,31 +198,39 @@ first launch the loader may be let go before the onboarding ends, or after.
 - Both: a start with no connection reaches the offline screen as before, and
   its retry brings the portal back.
 - Both, with an access refused: the reminder comes in whole, a moment after
-  the arrow appears, and again after leaving the app and coming back.
-- A first launch is unchanged: the onboarding, then the sign-in.
+  the loop begins, and again, at once, after leaving the app and coming back.
+- A first launch is unchanged: the onboarding, then the sign-in; on a slow
+  connection, the loader still up when the onboarding fades, playing from its
+  first picture.
 
 ## Validation performed locally
 
-- `flutter analyze` and `flutter test` (466 tests).
+- `flutter analyze` and `flutter test` (483 tests).
 - The loader's rest (`test/boot_loader_gate_test.dart`,
   `test/flight_loader_test.dart`, `test/shell_screens_test.dart`): it rests
-  from the start and plays once the web view is made, or after a second; the
-  resting loader is the loop's first picture and asks for no frame; it plays
-  from that picture, under Reduce Motion too; a loader let go of while it
-  rests still fades and says so.
+  from the start and plays once the web view is made, or after a second, and
+  not at all on a first launch; the resting loader is the loop's first
+  picture and asks for no frame; let go, it opens on that picture however
+  late the next frame comes, under Reduce Motion too; uncovered by the
+  onboarding, or let go of its rest while covered, it plays from its first
+  picture; a loader let go of while it rests still fades and says so.
 - When the web view is made: as soon as the first frame is drawn, never later
   than 300 ms, and after the takeoff on a first launch.
 - The reminder (`test/device_access_test.dart`,
   `test/portal_handover_test.dart`): it opens once the web view is made and
-  not before, after a second if none comes, at once when one is there
-  already, and with every access granted nothing waits.
+  settled and not before, after 1.3 s if none comes, at once when one is
+  there already, not at all if a call comes in or the app's screen goes
+  meanwhile, and with every access granted nothing waits.
 - What each frame costs (`test/shell_frame_cost_test.dart`): the shell asks
-  for no layer, and the plugin's code takes that for no layer and has no
-  software layer anywhere; the activity's window is hardware accelerated; the
-  loader's blurs counted over a loop with and without the pictures, each
-  picture made once and all let go with the loader, the pixels the same with
-  and without, and the loader and the onboarding each holding the pictures
-  for themselves.
+  for no layer; in the plugin's code the setting is read in one file, to set
+  a hardware layer or none where the web view is made and where its settings
+  change, and no other layer is set anywhere; the manifest does not turn the
+  window's acceleration off; the shell's start-up steps in their order; the
+  loader's blurs counted over a loop with and without the pictures on three
+  phones, each picture made once and all let go with the loader, the pixels
+  the same with and without; the shell redrawing the loader holding the
+  pictures once; the onboarding's pictures going when it ends, and the
+  loader making its own again.
 
 These do not replace a run on real phones: how the web view draws, how the
 keyboard moves it and how a start looks are native.

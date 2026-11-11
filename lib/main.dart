@@ -94,8 +94,9 @@ class FoorsaStudentApp extends StatelessWidget {
         bakeGlass: Platform.isAndroid,
         child: DeviceAccess(
           suppressed: firstLaunch,
-          // Its reminder comes in once the web view is made, not while.
-          after: PortalHandover.instance.webViewMade,
+          // Its reminder comes in once the web view is on the screen, not
+          // while it is made.
+          after: PortalHandover.instance.webViewSettled,
           child: ShellPage(
             appearance: appearance,
             // After the takeoff, which a platform view's set-up would stall;

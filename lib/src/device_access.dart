@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'app_language.dart';
-import 'boot_loader_gate.dart';
 import 'student_calls.dart';
 
 /// What the reminder says, in the student's language.
@@ -69,13 +68,14 @@ class DeviceAccess extends StatefulWidget {
   final bool suppressed;
 
   /// What the reminder waits for before it opens, [patience] at most: the
-  /// shell's web view (portal_handover.dart). It is made as the app opens,
-  /// on the thread the reminder comes in on, so one opening meanwhile would
-  /// stop half-way in.
+  /// shell's web view, made and on the screen (portal_handover.dart). It is
+  /// made as the app opens, on the thread the reminder comes in on, so one
+  /// opening meanwhile would stop half-way in.
   final Future<void>? after;
 
-  /// As long as the loader waits for the web view (BootLoaderGate.restLimit).
-  static const patience = BootLoaderGate.restLimit;
+  /// As long as the loader may wait for the web view, and the moment after
+  /// it (BootLoaderGate.restLimit and settle).
+  static const patience = Duration(milliseconds: 1300);
   @override
   State<DeviceAccess> createState() => _DeviceAccessState();
 }

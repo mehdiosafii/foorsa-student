@@ -147,8 +147,11 @@ class _ShellPageState extends State<ShellPage> {
   }
   InAppWebViewController? _controller;
   PackageInfo? _packageInfo;
-  /// When the loading screen gives way to the portal (boot_loader_gate.dart).
-  final BootLoaderGate _loader = BootLoaderGate();
+  /// When the loading screen gives way to the portal, and when its loader
+  /// starts to move (boot_loader_gate.dart). On a first launch the loader is
+  /// under the onboarding and does not rest.
+  late final BootLoaderGate _loader =
+      BootLoaderGate(rests: widget.webViewDelay == Duration.zero);
   Timer? _holdTimer;
   Timer? _restTimer;
   /// Gone from the tree once its fade has ended.
@@ -545,9 +548,11 @@ class _ShellPageState extends State<ShellPage> {
     });
     // The loader rests on its first picture until the web view is made
     // (onWebViewCreated), and never for long.
-    _restTimer = Timer(BootLoaderGate.restLimit, () {
-      if (mounted && _loader.resting) setState(_loader.restExpired);
-    });
+    if (_loader.resting) {
+      _restTimer = Timer(BootLoaderGate.restLimit, () {
+        if (mounted && _loader.resting) setState(_loader.restExpired);
+      });
+    }
     // Let the loading screen paint its first frame before the WebView's
     // platform-view init grabs the UI thread.
     unawaited(_prepareBiometrics());
@@ -1383,7 +1388,8 @@ class _ShellPageState extends State<ShellPage> {
                   _startWatch?.cancel();
                   _controller = controller;
                   PortalHandover.instance.controller = controller;
-                  // It is made, and the thread is free: the loader plays.
+                  // It is made, which is what holds the thread longest: the
+                  // loader plays.
                   if (_loader.resting) setState(_loader.webViewMade);
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaStudentBiometrics',

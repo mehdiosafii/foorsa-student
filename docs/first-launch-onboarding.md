@@ -498,8 +498,8 @@ shape, its glass and its size on the screen in quarter octaves (so an arrow
 that grows as it flies is made a handful of times, never every frame): the
 takeoff and the six scenes make 25 together, about 12 MB of textures on a
 1080 x 2400 phone, and they go when the onboarding ends. iOS draws as before.
-(The app's loader is drawn the same way on every Android start, and holds
-its own pictures: `shell-frame-cost.md`.)
+(The app's loader is drawn the same way on every Android start, and keeps
+the baking on for itself: `shell-frame-cost.md`.)
 
 | blurs through offscreen passes, per frame | takeoff arrow | plane | welcome | notifications | mic | location | pass |
 | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -23,38 +23,51 @@
 /// arrow's shine. Now the web view is made as soon as the loading screen's
 /// first frame is drawn ([whenWebViewMayStart]), and until it exists the
 /// loader rests on its first picture, the arrow alone ([resting]): the
-/// thread is free again before anything moves, and the portal starts to load
-/// up to 300 ms sooner.
+/// longest hold is over before anything moves, and the portal starts to load
+/// up to 300 ms sooner. (On Android the frame that first shows the new view
+/// is dropped and drawn again, as Flutter moves its drawing to the main
+/// thread for it: the loop opens with a tenth of a second of that same still
+/// picture, and counts from the first frame drawn after the rest,
+/// flight_loader.dart.)
+///
+/// A first launch does not rest ([BootLoaderGate.new]'s `rests`): its web
+/// view waits for the onboarding's takeoff, and its loader is under the
+/// onboarding, neither drawn nor animated, as before.
 library;
 
-import 'dart:async';
-
 class BootLoaderGate {
+  /// [rests] false for a first launch.
+  BootLoaderGate({bool rests = true}) : _restExpired = !rests;
+
   /// The portal's own loader gives up after 10 s (BOOT_LOADER_MAX_MS).
   static const Duration holdLimit = Duration(seconds: 10);
 
   /// The shortest time the loader shows, so a fast start does not flash it.
   static const Duration minimum = Duration(milliseconds: 800);
 
-  /// The longest the loader rests on its first picture. A web view is made
-  /// well inside it; one that is slow to come, or never does (the shell's
-  /// offline screen takes over after `webViewStartLimit`), does not leave the
-  /// arrow standing still.
+  /// The longest the loader rests on its first picture. A web view that is
+  /// slow to come, or never does (the shell's offline screen takes over after
+  /// `webViewStartLimit`), does not leave the arrow standing still.
   static const Duration restLimit = Duration(seconds: 1);
 
   /// How long an ordinary start waits for the loading screen's first frame
   /// before it makes the web view anyway: the wait every start had before.
   static const Duration firstFrameLimit = Duration(milliseconds: 300);
 
+  /// How long after the web view is made something new may come in over the
+  /// shell (the device access reminder, portal_handover.dart): the first
+  /// frames that show a web view are not the ones to come in on.
+  static const Duration settle = Duration(milliseconds: 300);
+
   bool _webViewMade = false;
-  bool _restExpired = false;
+  bool _restExpired;
 
   /// Whether the loader rests on its first picture: from the start until the
   /// web view is made, [restLimit] at most. Once it moves it never rests
   /// again, not even for a web view made anew.
   bool get resting => !_webViewMade && !_restExpired;
 
-  /// The web view exists: what held the thread to make it is over.
+  /// The web view exists: making it no longer holds the thread.
   void webViewMade() => _webViewMade = true;
 
   void restExpired() => _restExpired = true;
