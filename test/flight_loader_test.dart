@@ -51,4 +51,44 @@ void main() {
     }
     expect(tester.takeException(), isNull);
   });
+
+  // The app's loading screen while its web view is made
+  // (boot_loader_gate.dart): the arrow alone, and nothing asked of the phone.
+  testWidgets('resting, it is the loop\'s first picture and asks for no frame',
+      (tester) async {
+    Widget loader({required bool resting, bool still = false}) => MaterialApp(
+        home: MediaQuery(
+            data: MediaQueryData(disableAnimations: still),
+            child: Center(child: FlightLoader(resting: resting))));
+    for (final still in [false, true]) {
+      await tester.pumpWidget(loader(resting: true, still: still));
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(_painter(tester).clock.value, 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+
+      // It plays from that picture, not from where a clock would have got to.
+      await tester.pumpWidget(loader(resting: false, still: still));
+      expect(_painter(tester).clock.value, 0);
+      expect(tester.binding.hasScheduledFrame, isTrue);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final loop = still ? flightLoaderCalmSeconds : flightLoaderSeconds;
+      expect(_painter(tester).clock.value, closeTo(0.4 / loop, 0.001));
+
+      // And back, should it ever rest again.
+      await tester.pumpWidget(loader(resting: true, still: still));
+      expect(_painter(tester).clock.value, 0);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
+  testWidgets('it plays at once unless told to rest', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Center(child: FlightLoader())));
+    expect(tester.binding.hasScheduledFrame, isTrue);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 320));
+    expect(_painter(tester).clock.value, closeTo(0.1, 0.001));
+  });
 }

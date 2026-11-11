@@ -6,6 +6,8 @@
 /// fades away.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -15,7 +17,18 @@ class PortalHandover {
   static final PortalHandover instance = PortalHandover._();
 
   /// Set by the shell when its web view exists.
-  InAppWebViewController? controller;
+  InAppWebViewController? get controller => _controller;
+  InAppWebViewController? _controller;
+  set controller(InAppWebViewController? value) {
+    _controller = value;
+    if (value != null && !_made.isCompleted) _made.complete();
+  }
+
+  /// Completes when the shell's first web view exists. Making one holds the
+  /// thread the app draws on (boot_loader_gate.dart), so what would come in
+  /// meanwhile waits for this: the device access reminder.
+  Future<void> get webViewMade => _made.future;
+  final Completer<void> _made = Completer<void>();
 
   /// On the safe area the web view fills, so the page's points can be put
   /// on the screen.

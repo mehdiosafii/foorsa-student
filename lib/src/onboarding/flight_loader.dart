@@ -78,9 +78,15 @@ double _inOut(double x) {
 /// plane has room to leave. [dark] is the theme's ground: pearl on the night,
 /// navy on white.
 class FlightLoader extends StatefulWidget {
-  const FlightLoader({super.key, this.size = 64, this.dark = true});
+  const FlightLoader(
+      {super.key, this.size = 64, this.dark = true, this.resting = false});
   final double size;
   final bool dark;
+
+  /// The loop's first picture, the arrow alone, and nothing moving: the
+  /// app's loading screen while its web view is being made
+  /// (boot_loader_gate.dart). The loop plays from there once it is false.
+  final bool resting;
 
   /// The square the loader takes, for a given arrow height.
   static double boxFor(double size) => size * 2.6;
@@ -107,7 +113,23 @@ class _FlightLoaderState extends State<FlightLoader>
         milliseconds:
             ((calm ? flightLoaderCalmSeconds : flightLoaderSeconds) * 1000)
                 .round());
-    _clock.repeat();
+    _play();
+  }
+
+  @override
+  void didUpdateWidget(FlightLoader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.resting != widget.resting) _play();
+  }
+
+  /// The loop, or its first picture alone while [FlightLoader.resting]: no
+  /// frame is asked for until it plays.
+  void _play() {
+    if (widget.resting) {
+      _clock.value = 0;
+    } else {
+      _clock.repeat();
+    }
   }
 
   @override

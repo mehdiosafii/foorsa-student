@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:foorsa_student/src/onboarding/flight_loader.dart';
+import 'package:foorsa_student/src/onboarding/glass.dart';
 import 'package:foorsa_student/src/shell_screens.dart';
 
 Widget _phone(Widget child) => MaterialApp(home: child);
@@ -54,5 +55,80 @@ void main() {
     expect(_ground(tester, ShellLoadingScreen), const Color(0xFF183250));
     await tester.pumpWidget(_phone(const ShellLoadingScreen(dark: false)));
     expect(_ground(tester, ShellLoadingScreen), Colors.white);
+  });
+
+  group('the loading screen over the web view', () {
+    Widget layer(
+            {bool showing = true,
+            bool resting = false,
+            bool bakeGlass = false,
+            VoidCallback? onGone}) =>
+        _phone(Stack(children: [
+          ShellLoadingLayer(
+              showing: showing,
+              covered: false,
+              dark: true,
+              resting: resting,
+              bakeGlass: bakeGlass,
+              onGone: onGone ?? () {}),
+        ]));
+
+    testWidgets('rests on the arrow while the web view is made, then plays',
+        (tester) async {
+      await tester.pumpWidget(layer(resting: true));
+      expect(tester.widget<FlightLoader>(find.byType(FlightLoader)).resting, isTrue);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.binding.hasScheduledFrame, isFalse,
+          reason: 'nothing moves, so nothing is drawn again');
+      await tester.pumpWidget(layer());
+      expect(tester.widget<FlightLoader>(find.byType(FlightLoader)).resting, isFalse);
+      expect(tester.binding.hasScheduledFrame, isTrue);
+    });
+
+    testWidgets('let go of while it still rests, it fades and says so',
+        (tester) async {
+      var gone = 0;
+      await tester.pumpWidget(layer(resting: true));
+      await tester.pumpWidget(
+          layer(resting: true, showing: false, onGone: () => gone++));
+      await tester.pump(const Duration(milliseconds: 240));
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(gone, 1);
+    });
+
+    testWidgets('on Android its glass is baked while it is up, no longer',
+        (tester) async {
+      addTearDown(() => GlassBake.enabled = false);
+      await tester.pumpWidget(layer());
+      expect(GlassBake.enabled, isFalse, reason: 'iOS draws as before');
+      await tester.pumpWidget(const SizedBox());
+
+      await tester.pumpWidget(layer(bakeGlass: true));
+      expect(GlassBake.enabled, isTrue);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(GlassBake.count, greaterThan(0));
+      // The shell takes the loader away once it has faded: its pictures go.
+      await tester.pumpWidget(const SizedBox());
+      expect(GlassBake.enabled, isFalse);
+      expect(GlassBake.count, 0);
+    });
+
+    testWidgets('the loader and the onboarding each bake for themselves',
+        (tester) async {
+      addTearDown(() => GlassBake.enabled = false);
+      // A first launch: the onboarding bakes, the loader under it too.
+      GlassBake.enabled = true;
+      await tester.pumpWidget(layer(bakeGlass: true));
+      // The portal is ready while the onboarding still runs: the loader goes,
+      // the onboarding's glass stays baked.
+      await tester.pumpWidget(const SizedBox());
+      expect(GlassBake.enabled, isTrue);
+      // The other way round: the onboarding ends on a loader still up.
+      await tester.pumpWidget(layer(bakeGlass: true));
+      GlassBake.enabled = false;
+      expect(GlassBake.enabled, isTrue);
+      await tester.pumpWidget(const SizedBox());
+      expect(GlassBake.enabled, isFalse);
+    });
   });
 }
