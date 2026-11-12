@@ -113,7 +113,9 @@ App Privacy is not in Apple's API. A person signed in to App Store Connect with 
 fills it in (App Store Connect › the app › App Privacy), and it has to say what the app collects
 today. The review notes say it was brought up to date on 4 Nov 2026. Since then, from 1.2.40,
 an iPhone sends Foorsa Apple's own push token where it used to send only Firebase's and the one
-for calls (docs/student-push.md); 1.2.41 and 1.2.42 collect nothing new.
+for calls (docs/student-push.md); 1.2.41 to 1.2.43 send nothing of a new kind (more messages on
+the crash report channel, no more). That is read from the app's own code: what the portal's
+pages collect is not in this repository.
 
 ## The demo account
 
