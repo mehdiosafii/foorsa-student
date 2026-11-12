@@ -407,3 +407,35 @@ Run the pure adaptive capture, accepted-angle/stability and incremental quality 
 On the physical iPhone, capture a passport, ID card, CV, diploma and landscape paper with genuinely different views. Confirm capture ends on verified detail, can continue beyond three photos, discards weak shots, and shows no shutter or fixed-direction steps, followed by one field review. Inspect corners, small text, MRZ, portraits, stamps and colored marks at full size. Check lighting movement, cancellation, timeout, interruption, orientation changes and retry bounds. Verify the final PDF against its document sample and confirm one CRM submission.
 
 This describes local work under validation. It does not declare a new TestFlight build released or the physical multi-angle acceptance complete.
+
+## When the phone does something else mid-scan (Android, 11 Nov 2026)
+
+The stress test of 11 Nov 2026 ran the Android page with a camera whose focus
+and stills answer when the test says (`test/guided_scan_lifecycle_test.dart`).
+Three faults, each failing on the page as it was:
+
+- **Back during the photo closed the app's page too.** The X is off while a
+  photo is taken or made ready; Android's back button is not. The page's State
+  stays mounted while it slides away, so the photo, landing in that moment, was
+  handed back with a second pop, which removed the page under the scanner (the
+  portal). Nothing is handed back now unless the scanner is still the page on
+  screen (`_onScreen`), and the photo of a scan closed that way is deleted.
+- **A call, the notification shade or the lock during the focus wait froze the
+  scanner** on "Taking the photo." with no camera and every button off: the
+  camera had been let go, the photo returned early, and nothing cleared the
+  busy state. It is now a failed photo: the page says so and opens the camera
+  again when the app is back.
+- **The frame stream outlived the camera.** The controller's dispose does not
+  end its image stream, so the stream kept the closed page, and the last
+  reading of the paper on it, until the next scan. The stream is stopped
+  before the camera is released. A second still that outlasts its eight
+  seconds is deleted when it lands, as the first already was.
+
+On an iPhone the scan's pages and originals (tens of megabytes) are now turned
+into data URLs off the UI isolate (`bridgeDataUrlOffUi`), as picked files have
+been on Android since 1.2.34.
+
+Still open, and for a phone to show: a camera that opens and then reports an
+error, or never delivers a frame, leaves "Find the page" with a dark preview
+(the shutter and the X still work); nothing steps down from the `max` preset
+then.

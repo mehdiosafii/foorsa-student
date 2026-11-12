@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show AppLifecycleState;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:foorsa_student/src/web_view_recovery.dart';
@@ -77,5 +78,140 @@ void main() {
     final shell = File('lib/src/shell_page.dart').readAsStringSync();
     final retry = RegExp(r'void _retry\(\) \{[\s\S]*?\n  \}').firstMatch(shell)![0]!;
     expect(retry, contains('shouldRetryLoad('));
+  });
+
+  // ── The web view's start, timed only while the app is on screen ──────────
+  // The crash board, 1 to 8 Nov 2026: thirteen `Web view stopped: not created
+  // in time`, in pairs seconds apart, on every build from 1.2.34 to 1.2.40,
+  // none with an error beside it. The fifteen seconds ran while the app drew
+  // nothing (started unseen, or left at once), so no web view had even been
+  // asked for; and a student who came back was shown "No internet connection".
+  group('the web view start watch', () {
+    late DateTime clock;
+    late AppLifecycleState? lifecycle;
+    late int stuck;
+    late WebViewStartWatch watch;
+
+    setUp(() {
+      clock = DateTime.utc(2026, 11, 11, 20);
+      lifecycle = AppLifecycleState.resumed;
+      stuck = 0;
+      watch = WebViewStartWatch(onStuck: () => stuck++, now: () => clock, lifecycle: () => lifecycle);
+    });
+    tearDown(() => watch.dispose());
+
+    /// Time passes for the app and for the phone's clock alike.
+    Future<void> pass(WidgetTester tester, Duration time) async {
+      clock = clock.add(time);
+      await tester.pump(time);
+    }
+
+    void turn(AppLifecycleState state) {
+      lifecycle = state;
+      watch.lifecycleChanged(state);
+    }
+
+    test('the app can draw when resumed, inactive or not yet told; not hidden, paused or detached', () {
+      expect(appCanDraw(null), isTrue);
+      expect(appCanDraw(AppLifecycleState.resumed), isTrue);
+      expect(appCanDraw(AppLifecycleState.inactive), isTrue);
+      expect(appCanDraw(AppLifecycleState.hidden), isFalse);
+      expect(appCanDraw(AppLifecycleState.paused), isFalse);
+      expect(appCanDraw(AppLifecycleState.detached), isFalse);
+    });
+
+    testWidgets('on screen and never created: stuck after the limit, once', (tester) async {
+      watch.start();
+      await pass(tester, webViewStartLimit - const Duration(seconds: 1));
+      expect(stuck, 0);
+      await pass(tester, const Duration(seconds: 1));
+      expect(stuck, 1);
+      await pass(tester, const Duration(minutes: 5));
+      expect(stuck, 1);
+    });
+
+    testWidgets('created in time: never stuck', (tester) async {
+      watch.start();
+      await pass(tester, const Duration(seconds: 2));
+      watch.created();
+      await pass(tester, const Duration(minutes: 5));
+      expect(stuck, 0);
+      expect(watch.waiting, isFalse);
+    });
+
+    testWidgets('started unseen, the app is not timed until it is on screen', (tester) async {
+      lifecycle = AppLifecycleState.paused;
+      watch.start();
+      await pass(tester, const Duration(hours: 2));
+      expect(stuck, 0, reason: 'no frame was drawn, so no web view was asked for');
+      expect(watch.startedAt, isNull);
+      turn(AppLifecycleState.resumed);
+      await pass(tester, const Duration(seconds: 3));
+      watch.created(); // its first frames make the web view, as on any start
+      await pass(tester, const Duration(minutes: 1));
+      expect(stuck, 0);
+    });
+
+    testWidgets('left in its first seconds and reopened later: the time starts again', (tester) async {
+      watch.start();
+      await pass(tester, const Duration(seconds: 5));
+      turn(AppLifecycleState.inactive); // still drawn
+      turn(AppLifecycleState.hidden);
+      turn(AppLifecycleState.paused);
+      await pass(tester, const Duration(minutes: 10));
+      expect(stuck, 0);
+      turn(AppLifecycleState.resumed);
+      await pass(tester, webViewStartLimit - const Duration(seconds: 1));
+      expect(stuck, 0, reason: 'not the ten seconds left over from before it left');
+      await pass(tester, const Duration(seconds: 1));
+      expect(stuck, 1, reason: 'a web view that truly cannot be made is still caught');
+    });
+
+    testWidgets('a watch that ends late by the clock did not have its time', (tester) async {
+      watch.start();
+      // The phone suspends the app without telling it: no timer runs, the
+      // clock goes on, and the timer ends as the app wakes.
+      clock = clock.add(const Duration(minutes: 30));
+      await tester.pump(webViewStartLimit);
+      expect(stuck, 0);
+      // Awake and on screen for the whole limit, with no web view: stuck.
+      await pass(tester, webViewStartLimit);
+      expect(stuck, 1);
+    });
+
+    testWidgets('the retry leaves a web view being made its time, and waits for the app to be on screen', (tester) async {
+      expect(watch.mayRebuild(), isTrue, reason: 'none is being made');
+      watch.start();
+      // The offline screen's retry ticks every six seconds.
+      await pass(tester, const Duration(seconds: 6));
+      expect(watch.mayRebuild(), isFalse);
+      await pass(tester, const Duration(seconds: 6));
+      expect(watch.mayRebuild(), isFalse);
+      await pass(tester, const Duration(seconds: 6));
+      expect(stuck, 1);
+      expect(watch.mayRebuild(), isTrue);
+      // A new one, as the retry makes it: timed afresh.
+      watch.start();
+      await pass(tester, const Duration(seconds: 6));
+      expect(watch.mayRebuild(), isFalse);
+      turn(AppLifecycleState.paused);
+      await pass(tester, const Duration(minutes: 3));
+      expect(watch.mayRebuild(), isFalse, reason: 'no web view can be made while the app is away');
+      turn(AppLifecycleState.resumed);
+      expect(watch.mayRebuild(), isFalse, reason: 'the one put on screen as it left is being made now');
+      watch.dispose();
+    });
+
+    test('the shell page times the start through the watch and tells it where the app is', () {
+      final shell = File('lib/src/shell_page.dart').readAsStringSync();
+      expect(shell, contains('with WidgetsBindingObserver'));
+      expect(shell, contains('WidgetsBinding.instance.addObserver(this);'));
+      expect(shell, contains('WidgetsBinding.instance.removeObserver(this);'));
+      expect(shell, contains('_startWatch.lifecycleChanged(state)'));
+      expect(shell, contains('_startWatch.created();'));
+      final retry = RegExp(r'void _retry\(\) \{[\s\S]*?\n  \}').firstMatch(shell)![0]!;
+      expect(retry, contains('if (!_startWatch.mayRebuild()) return;'));
+      expect(retry.indexOf('_startWatch.mayRebuild()'), lessThan(retry.indexOf('_rebuildWebView();')));
+    });
   });
 }

@@ -699,3 +699,10 @@ first time Chromium loads, can still hold the welcome for a moment there.
 
 These do not replace a run on real phones: the prompts, the haptics, the
 audio session and the WebView loading underneath are native.
+
+A system prompt that never answers does not hold the onboarding (11 Nov 2026):
+Android answers nothing when a prompt is interrupted (Home, then the app's
+icon), and the step then waited for good, its object dead and back refused.
+A second after the app is back on screen with the answer still owed, the
+phone is asked where the access stands and the next step follows
+(`_answerTo` in `onboarding_page.dart`; `test/onboarding_page_test.dart`).

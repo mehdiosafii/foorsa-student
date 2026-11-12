@@ -173,9 +173,18 @@ class StudentPush {
     required this.openCalendar,
     PushPlatform? platform,
     PushProblems? problems,
-  }) : _problems = problems ?? PushProblems() {
-    _registration = PushRegistration(platform ?? FirebasePushPlatform(), _problems);
+    Future<Directory> Function()? directory,
+    Duration? fcmWait,
+  })  : _problems = problems ?? PushProblems(),
+        _directory = directory ?? getApplicationSupportDirectory {
+    final phone = platform ?? FirebasePushPlatform();
+    _registration = fcmWait == null
+        ? PushRegistration(phone, _problems)
+        : PushRegistration(phone, _problems, fcmWait: fcmWait);
   }
+
+  /// Where the calendar's and the adhan's state is kept (tests name a folder).
+  final Future<Directory> Function() _directory;
   final Future<void> Function(String route) openUpdate;
   final Future<void> Function() openCalendar;
   final Future<void> Function() openChat;
@@ -331,14 +340,28 @@ class StudentPush {
     }
   }
 
+  /// Registrations wait on one another, not on the queue above: a
+  /// registration can wait on the student (the notification prompt), on
+  /// Apple (ten seconds) and on Google (twenty, and for good in mainland
+  /// China). Run inside the queue, each `getPushToken` held the adhan, the
+  /// calendar, the Settings row and sign-out behind it for that long (the
+  /// stress test, 11 Nov 2026: `adhanStatus` answered after 20 s, each time).
+  Future<void> _registrations = Future<void>.value();
+
   /// What the portal registers (`getPushToken`), or why there is nothing to
   /// register (push_registration.dart names each reason).
-  Future<Map<String, dynamic>> token({bool requestPermission = true}) =>
-      _serial(() async {
+  Future<Map<String, dynamic>> token({bool requestPermission = true}) {
+    final next = _registrations.then((_) async {
+      // Starting touches the same plugins as the queue's work: in the queue.
+      await _serial(() async {
         await start();
         await _ensureMessaging();
-        return _registration.token(requestPermission: requestPermission, callsEnabled: nativeAdviserCalls);
       });
+      return _registration.token(requestPermission: requestPermission, callsEnabled: nativeAdviserCalls);
+    });
+    _registrations = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return next;
+  }
 
   /// Where this phone stands, without asking anything (`pushStatus`).
   Future<Map<String, dynamic>> status() => _serial(() async {
@@ -396,12 +419,15 @@ class StudentPush {
     }
   }
 
-  Future<File> _calendarFile() async => File('${(await getApplicationSupportDirectory()).path}/calendar-reminders.json');
+  Future<File> _calendarFile() async => File('${(await _directory()).path}/calendar-reminders.json');
   Future<void> _saveCalendarState() async {
     await (await _calendarFile()).writeAsString(jsonEncode(_calendarState));
   }
-  Future<void> _clearCalendar() async {
+  Future<void> _cancelCalendar() async {
     for (var i = 0; i < 60; i++) { await _local.cancel(id: 1900000000 + i); }
+  }
+  Future<void> _clearCalendar() async {
+    await _cancelCalendar();
     _calendarState = {'enabled': false};
     await _saveCalendarState();
   }
@@ -415,8 +441,12 @@ class StudentPush {
       try { _calendarState = Map<String, dynamic>.from(jsonDecode(await (await _calendarFile()).readAsString()) as Map); }
       catch (_) { _calendarState = {'enabled': false}; }
     }
-    if (_calendarState!['owner'] != owner) await _clearCalendar();
+    // Another student's reminders go. A phone with none (no owner kept) has
+    // nothing to cancel: this used to cancel sixty notifications on every
+    // call, each a write of Android's whole schedule, the adhan's included.
+    final kept = _calendarState!['owner'];
     if (action == 'calendarClear') { await _clearCalendar(); return {'supported': true, 'enabled': false, 'count': 0}; }
+    if (kept != owner && (kept != null || _calendarState!['enabled'] == true)) await _clearCalendar();
     if (action == 'calendarEnable') {
       final ios = await _local.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.requestPermissions(alert: true, badge: false, sound: true);
       final android = await _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestNotificationsPermission();
@@ -434,16 +464,29 @@ class StudentPush {
           : '${language.code}:${jsonEncode(raw)}';
       if (_calendarState!['fingerprint'] != fingerprint) {
         final enabled = _calendarState!['enabled'];
-        await _clearCalendar();
+        // The old reminders go and the new ones are written; "off" is never
+        // kept in between, and one reminder the phone refuses (its time came
+        // while the others were being written) does not stop the rest. Through
+        // 1.2.40 (71) either left the student's reminders off for good.
+        await _cancelCalendar();
         final times = validCalendarTimes(raw, DateTime.now()).take(60).toList();
+        final written = <DateTime>[];
         for (var i = 0; i < times.length; i++) {
-          await _local.zonedSchedule(id: 1900000000 + i, title: pushTitle.of(language), body: pushCalendarBody.of(language),
-            scheduledDate: tz.TZDateTime.from(times[i].toUtc(), tz.UTC),
-            notificationDetails: NotificationDetails(android: AndroidNotificationDetails('student_calendar', calendarChannel.of(language), importance: Importance.high, icon: 'ic_stat_message'), iOS: const DarwinNotificationDetails()),
-            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle, payload: '/calendar');
+          try {
+            await _local.zonedSchedule(id: 1900000000 + i, title: pushTitle.of(language), body: pushCalendarBody.of(language),
+              scheduledDate: tz.TZDateTime.from(times[i].toUtc(), tz.UTC),
+              notificationDetails: NotificationDetails(android: AndroidNotificationDetails('student_calendar', calendarChannel.of(language), importance: Importance.high, icon: 'ic_stat_message'), iOS: const DarwinNotificationDetails()),
+              androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle, payload: '/calendar');
+            written.add(times[i]);
+          } catch (error) {
+            unawaited(_problems.report('push: calendar reminder not scheduled: ${describePushError(error)}'));
+          }
         }
-        _calendarState = {'owner': owner, 'enabled': enabled, 'fingerprint': fingerprint, 'count': times.length,
-          'through': times.isEmpty ? null : times.last.toUtc().toIso8601String()};
+        // The fingerprint is kept only for a schedule written whole: one with
+        // a reminder missing is written again at the next sync.
+        _calendarState = {'owner': owner, 'enabled': enabled,
+          'fingerprint': written.length == times.length ? fingerprint : null, 'count': written.length,
+          'through': written.isEmpty ? null : written.last.toUtc().toIso8601String()};
         await _saveCalendarState();
       }
     }
@@ -472,7 +515,7 @@ class StudentPush {
     ));
   }
 
-  Future<File> _adhanFile() async => File('${(await getApplicationSupportDirectory()).path}/adhan-calls.json');
+  Future<File> _adhanFile() async => File('${(await _directory()).path}/adhan-calls.json');
   Future<void> _saveAdhanState() async {
     try {
       await (await _adhanFile()).writeAsString(jsonEncode(_adhanState));
@@ -574,8 +617,12 @@ class StudentPush {
           await _cancelAdhan();
           final soundReady = await _installIosAdhanSound();
           final language = _language;
+          // A call the phone refuses (its time came while the others were
+          // being written) must not leave every later prayer silent.
+          final written = <AdhanCall>[];
           for (var i = 0; i < calls.length; i++) {
             final call = calls[i];
+            try {
             await _local.zonedSchedule(
               id: adhanNotificationBase + i,
               title: call.title,
@@ -602,10 +649,17 @@ class StudentPush {
               androidScheduleMode: exact ? AndroidScheduleMode.exactAllowWhileIdle : AndroidScheduleMode.inexactAllowWhileIdle,
               payload: '/prayer',
             );
+              written.add(call);
+            } catch (error) {
+              unawaited(_problems.report('push: adhan call not scheduled: ${describePushError(error)}'));
+            }
           }
           _adhanState = {
-            'owner': owner, 'enabled': calls.isNotEmpty, 'fingerprint': fingerprint, 'count': calls.length,
-            'through': calls.isEmpty ? null : calls.last.at.toIso8601String(),
+            // Kept only for a schedule written whole: one with a call
+            // missing is written again at the next sync.
+            'owner': owner, 'enabled': written.isNotEmpty,
+            'fingerprint': written.length == calls.length ? fingerprint : null, 'count': written.length,
+            'through': written.isEmpty ? null : written.last.at.toIso8601String(),
           };
           await _saveAdhanState();
         }

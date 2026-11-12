@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -173,6 +174,14 @@ void main() {
       isNot(contains('outputMode')));
     expect((await scanner.scan())['error'], isA<String>());
   });
+  // A scan with its originals is tens of megabytes: turned into data URLs on
+  // the UI isolate it held the app's frames as the scanner closed.
+  test('the scan is encoded off the UI isolate, as picked files are', () {
+    final source = File('lib/src/guided_scanner/native_document_scanner.dart').readAsStringSync();
+    expect(source, isNot(contains('base64Encode(')));
+    expect('bridgeDataUrlOffUi('.allMatches(source).length, 2);
+  });
+
   test('imagegen rejects missing, malformed, oversized or excessive originals', () async {
     for (final originals in [null, [], [Uint8List(0)], [Uint8List.fromList([1, 2, 3])],
       [jpeg(NativeDocumentScanner.maximumOriginalBytes + 1)],

@@ -105,6 +105,9 @@ class QuickSignInOffer extends StatelessWidget {
         ),
       ),
       child: AlertDialog(
+        // With the phone's text at its largest the question is taller than
+        // a small phone; it scrolls then, and the two answers stay in reach.
+        scrollable: true,
         title: question,
         actions: [
           TextButton(

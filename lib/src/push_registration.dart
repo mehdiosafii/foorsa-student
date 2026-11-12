@@ -156,6 +156,7 @@ class PushRegistration {
     this.apnsPoll = const Duration(milliseconds: 500),
     this.retryInitAfter = const Duration(seconds: 30),
     this.fcmWait = const Duration(seconds: 20),
+    this.fcmQuiet = const Duration(minutes: 10),
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
@@ -175,7 +176,18 @@ class PushRegistration {
   /// servers, which do not answer in mainland China: without a limit the
   /// request hung, and the calendar, the adhan and sign-out queued behind it.
   final Duration fcmWait;
+
+  /// After Firebase's token did not come in [fcmWait], it is not waited for
+  /// again for this long. The portal asks for the token at every return to
+  /// the app and again after each failure: in mainland China every one of
+  /// those calls waited the full twenty seconds (the stress test, 11 Nov
+  /// 2026). Firebase is still asked, without being waited for, and says
+  /// itself when a token comes (`onTokenRefresh`), so a phone that finds
+  /// Google again (a VPN turned on) registers at once.
+  final Duration fcmQuiet;
   final DateTime Function() _now;
+  DateTime? _fcmTimedOutAt;
+  Future<void>? _fcmProbe;
 
   bool _ready = false;
   String? _error;
@@ -269,13 +281,25 @@ class PushRegistration {
     at('token');
     String? token;
     String? failure;
-    try {
-      token = await platform.fcmToken().timeout(fcmWait);
-      if (token == null || token.isEmpty) failure = 'empty';
-    } on TimeoutException {
+    final timedOutAt = _fcmTimedOutAt;
+    if (timedOutAt != null && _now().difference(timedOutAt) < fcmQuiet) {
+      // Google did not answer a moment ago: not waited for again. One request
+      // stays out; when it is answered the next call waits for the token.
       failure = 'timeout';
-    } catch (error) {
-      failure = describePushError(error);
+      _fcmProbe ??= platform.fcmToken().then<void>((found) {
+        if (found != null && found.isNotEmpty) _fcmTimedOutAt = null;
+      }, onError: (Object _) {}).whenComplete(() => _fcmProbe = null);
+    } else {
+      try {
+        token = await platform.fcmToken().timeout(fcmWait);
+        _fcmTimedOutAt = null;
+        if (token == null || token.isEmpty) failure = 'empty';
+      } on TimeoutException {
+        failure = 'timeout';
+        _fcmTimedOutAt = _now();
+      } catch (error) {
+        failure = describePushError(error);
+      }
     }
     String? voip;
     if (failure == null || (platform.isIOS && apns != null)) {
