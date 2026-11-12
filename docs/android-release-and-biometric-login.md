@@ -221,8 +221,9 @@ password is stored to work around expiry.
   notifications, adviser calls, and keyboard/back navigation after the Android
   activity change. The first session after a fresh install runs its web view
   as a texture rather than in the window (`lib/src/web_view_composition.dart`,
-  docs/first-launch-onboarding.md, "Android"): sign in, paste (the web view
-  plugin's own copy and paste bar in that session), autofill and type in the
+  docs/first-launch-onboarding.md, "Android"): sign in, paste (Android's own
+  copy and paste bar from 1.2.43; the web view plugin's own in that session
+  through 1.2.42, docs/web-view-touch.md), autofill and type in the
   chat in that session too. Hardware prompts and store delivery
   cannot be proven by unit tests alone.
 
