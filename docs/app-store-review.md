@@ -19,6 +19,13 @@ and no version had been approved yet; 1.2.40 (71) and 1.2.41 (72) went to TestFl
 **submit-latest** cancels the submission waiting, and the wait starts again with the new one: say
 so, and ask, before putting a newer build in a waiting one's place.
 
+Asked that day, the owner kept it: "keep same for apple review when accepted we will push an
+update". So the newest build then goes up as an update once 1.2.39 is approved. **submit-latest**
+cannot do that yet: it renames the one version being prepared, and an approved version can no
+longer be edited, so an update needs a new App Store version made first, and its "What's New"
+text, which a first version does not have. Until that is written, a run against an approved
+version waits four minutes and changes nothing.
+
 ## The workflow
 
 **Actions › App Store listing › Run workflow** (`.github/workflows/app-store-listing.yml`, which
