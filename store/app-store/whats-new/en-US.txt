@@ -1,0 +1,1 @@
+Fixes to pasting your sign-in code, the keyboard and scrolling. In mainland China, notifications now arrive. The app opens a little faster, and a slow connection no longer shows “No internet connection”. A download that stalls no longer holds up the app. The app’s own screens fit small phones and large text.

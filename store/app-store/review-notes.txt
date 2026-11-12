@@ -1,4 +1,4 @@
-Foorsa Student is the app for students of Foorsa, an education agency in Morocco and Tunisia that handles their applications to universities in China. Foorsa staff create each account after the student signs a contract, so there is no public sign-up. We have requested Unlisted App Distribution.
+Foorsa Student is the app for students of Foorsa, an education agency in Morocco and Tunisia that handles their applications to universities in China. Foorsa staff create each account after the student signs a contract, so there is no public sign-up. Apple Developer Support approved Unlisted App Distribution on November 4, 2026 (email from Andy at unlisted_app_requests@apple.com). Pricing and Availability now confirms unlisted distribution: https://apps.apple.com/us/app/foorsa-student/id6816127081.
 
 Build {version} ({build}) is iPhone-only; on iPad it runs in iPhone compatibility mode.
 
