@@ -261,6 +261,15 @@ abstract final class GlassBake {
   /// arrow's bevel). Those are drawn as before.
   static bool softEnough(double sigma, double device) => sigma * device >= 1.5;
 
+  /// The same for the shadows a piece of glass casts, which are drawn from a
+  /// picture down to a pixel wide. A shadow has no edge of its own to keep:
+  /// where it meets the glass it is cut in vector, every frame. The locate
+  /// arrow's, 19 pt tall, are 1.5 px wide at 2.625 pixels per point and 1.1
+  /// at 2: on the map's button their picture is within 4 levels of 255 of
+  /// the shadows drawn.
+  static bool shadowSoftEnough(double sigma, double device) =>
+      sigma * device >= 1;
+
   /// How many device pixels a point of [canvas] covers: the transform in
   /// its picture, times the screen's.
   ///
@@ -430,7 +439,7 @@ void paintGlassBody(Canvas canvas, GlassShape shape, Glass glass,
         s.blur * scale * (0.7 + 0.3 * lift) / 2;
     final sigma =
         baked ? cast.map(sigmaOf).reduce(math.min) : double.infinity;
-    if (baked && !shape.isRRect && GlassBake.softEnough(sigma, device)) {
+    if (baked && !shape.isRRect && GlassBake.shadowSoftEnough(sigma, device)) {
       // Everything the blurs reach, as far as the clip lets them.
       var region = Rect.zero;
       for (final s in cast) {
@@ -475,14 +484,21 @@ void paintGlassBody(Canvas canvas, GlassShape shape, Glass glass,
     final paint = Paint()
       ..color = _fade(s.color, opacity)
       ..maskFilter = _blur(s.blur * scale);
+    final sigma = s.blur * scale / 2;
     if (baked &&
         paint.maskFilter != null &&
-        GlassBake.softEnough(s.blur * scale / 2, device)) {
+        GlassBake.softEnough(sigma, device)) {
       // Baked unclipped, a field with no edge in it: the shape's own clip
-      // above still cuts it, in vector, every frame.
+      // above still cuts it, in vector, every frame. The picture reaches two
+      // widths of the blur beyond the glass, further than Impeller reads a
+      // blur's source (the square root of 3 of them,
+      // impeller/geometry/sigma.h). From a picture that ended at the glass,
+      // a light whose source lies outside it, as the smoked panes' in their
+      // lower bevel does, came out dimmer along the edge with Impeller: 8
+      // levels of 255 on a 720p screen.
       GlassBake.draw(canvas, (bake, glass, part),
-          region: bounds.inflate(1),
-          sigma: s.blur * scale / 2,
+          region: bounds.inflate(1 + 2 * sigma),
+          sigma: sigma,
           device: device,
           paint: (c) => c.drawPath(path, paint));
     } else {
