@@ -55,6 +55,14 @@ public class FlutterWebView implements PlatformWebView {
 
     InAppWebViewSettings customSettings = new InAppWebViewSettings();
     customSettings.parse(initialSettings);
+    // Foorsa patch (third_party/README.md): the view is always in the activity's window. The
+    // Dart side shows it by Hybrid Composition or, with useHybridComposition false, in a texture
+    // (initSurfaceAndroidView), never in a virtual display. Left false here, the plugin takes its
+    // virtual-display paths: it swaps Android's own selection menu (Paste) for one of its own,
+    // tells the web view its window lost focus each time that menu starts, and hands the keyboard
+    // to a proxy on the Flutter view. In a view that is really in the window, that left no Paste,
+    // a page that stopped answering the keyboard, and a keyboard that stayed up or would not come.
+    customSettings.useHybridComposition = true;
 
     List<UserScript> userScripts = new ArrayList<>();
     if (initialUserScripts != null) {

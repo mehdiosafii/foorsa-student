@@ -131,6 +131,36 @@ cannot read a signature rather than reading it as none). A build whose
 its summary and still uploaded: holding it back would hold back every other
 fix it carries, and push on it is no worse than on the build before.
 
+## What waits on what (the stress test of 11 Nov 2026)
+
+- **A registration no longer holds the queue.** `getPushToken` can wait on
+  the student (the notification prompt), on Apple (ten seconds) and on Google
+  (twenty, and every time in mainland China). It ran inside the one queue that
+  also serves the adhan, the calendar, the Settings row and sign-out, so each
+  of them answered twenty seconds late, at every return to the app.
+  Registrations now wait on one another only (`StudentPush.token`).
+- **A Google that did not answer is not waited for again** for ten minutes
+  (`PushRegistration.fcmQuiet`): the next calls answer at once (an iPhone with
+  Apple's token, an Android phone with `token: timeout`). One request stays
+  out meanwhile; when it is answered the next call waits for the token, and
+  Firebase's own `onTokenRefresh` tells the portal to register.
+- **The calendar cancelled sixty notifications on every call** for a student
+  with no reminders (the cleared state has no owner, and "no owner" read as
+  "another student"); on Android each cancel rewrites the phone's whole
+  schedule, the adhan's included. Only another student's reminders are
+  cleared now, and turning reminders off clears once, not twice.
+- **One reminder or adhan call the phone refuses** (its time came while the
+  others were being written) no longer stops the rest, and a calendar sync no
+  longer keeps "off" on disk in between, which left the reminders off for good
+  when the sync was cut short.
+
+`test/student_push_queue_test.dart` runs the service as a phone that cannot
+reach Google.
+
+Still open: on Android, a prayer missed while the phone was off sounds when it
+is switched on (the notifications plugin re-arms past alarms at boot); it
+needs a receiver of the app's own, and a phone to check it on.
+
 ## What only a real phone can confirm
 
 - Apple's answer to the registration: the crash board shows `push: APNs

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:ui' show AppLifecycleState;
+
 /// What the shell does when the portal's page dies or a load fails (the owner,
 /// 31 Oct 2026: "after uploading one file or two the app is a bit sluggish ...
 /// without sudden crashes or freezing or going back to home screen").
@@ -71,6 +74,126 @@ bool isLoadFailure({required int? code, required String description, required bo
 /// takes well under a second; on 1 Nov 2026 some phones' WebView refused a
 /// settings call while it was being made, and the student sat on the loader.
 const webViewStartLimit = Duration(seconds: 15);
+
+/// How late the start watch may end, by the phone's clock, and still be
+/// believed. A watch that ends later than this did not run for the whole of
+/// its time: the app was suspended, or its thread was held.
+const webViewStartSlack = Duration(seconds: 5);
+
+/// Whether the app can draw. Flutter builds no frame while the app is hidden
+/// or paused (`SchedulerBinding.framesEnabled`), and a web view is made by a
+/// frame: until the app is back on screen none can be created, however long
+/// it waits. Unknown (before the phone has said) counts as on screen.
+bool appCanDraw(AppLifecycleState? state) =>
+    state == null ||
+    state == AppLifecycleState.resumed ||
+    state == AppLifecycleState.inactive;
+
+/// Times a web view's creation, while the app can draw.
+///
+/// Through 1.2.40 (71) the fifteen seconds ran whatever the app was doing. An app
+/// started without being shown (a device farm that runs each new build with
+/// its screen off, an iPhone woken in the background), or left within its
+/// first seconds, drew no frame, so no web view was even asked for; the
+/// watch still ended, reported `Web view stopped: not created in time` and
+/// put the offline screen up for a student who had a connection (13 such
+/// reports from 1 to 8 Nov 2026, in pairs seconds apart, on every build from
+/// 1.2.34 to 1.2.40, none with an error). Now the time only counts while the
+/// app is on screen, and starts again when it comes back.
+///
+/// And the offline screen's retry made a new web view every six seconds
+/// while there was none: one that needed longer than that was thrown away
+/// before it could finish, each time. [mayRebuild] leaves a web view being
+/// made its [limit] first, as `shouldRetryLoad` does for a page.
+class WebViewStartWatch {
+  WebViewStartWatch({
+    required this.onStuck,
+    this.limit = webViewStartLimit,
+    this.slack = webViewStartSlack,
+    DateTime Function()? now,
+    AppLifecycleState? Function()? lifecycle,
+  })  : _now = now ?? DateTime.now,
+        _lifecycle = lifecycle ?? (() => null);
+
+  /// The web view had its time, on screen, and never said it was created.
+  final void Function() onStuck;
+  final Duration limit;
+  final Duration slack;
+  final DateTime Function() _now;
+  final AppLifecycleState? Function() _lifecycle;
+
+  Timer? _timer;
+  DateTime? _startedAt;
+  bool _waiting = false;
+
+  /// When the web view now being made started to be timed; null when none is
+  /// being made, or the app cannot draw.
+  DateTime? get startedAt => _startedAt;
+
+  /// Whether a web view is being waited for.
+  bool get waiting => _waiting;
+
+  /// A web view was put on the screen.
+  void start() {
+    _waiting = true;
+    _arm();
+  }
+
+  /// It said it was created.
+  void created() {
+    _waiting = false;
+    _disarm();
+  }
+
+  /// The app went away or came back.
+  void lifecycleChanged(AppLifecycleState state) {
+    if (!_waiting) return;
+    if (!appCanDraw(state)) {
+      _disarm();
+    } else if (_timer == null) {
+      _arm();
+    }
+  }
+
+  /// Whether the retry may make a new web view now: none is being made, or
+  /// the one being made has had its time. Never while the app cannot draw: a
+  /// new one could not be made either.
+  bool mayRebuild() {
+    if (!appCanDraw(_lifecycle())) return false;
+    final started = _startedAt;
+    return started == null || _now().difference(started) >= limit;
+  }
+
+  void dispose() {
+    _waiting = false;
+    _disarm();
+  }
+
+  void _disarm() {
+    _timer?.cancel();
+    _timer = null;
+    _startedAt = null;
+  }
+
+  void _arm() {
+    _disarm();
+    if (!appCanDraw(_lifecycle())) return;
+    final armedAt = _now();
+    _startedAt = armedAt;
+    _timer = Timer(limit, () {
+      _timer = null;
+      if (!_waiting) return;
+      // Ended late by the phone's clock, or with the app away: it did not
+      // have its time. Counted again from now, if the app can draw.
+      if (!appCanDraw(_lifecycle()) ||
+          _now().difference(armedAt) > limit + slack) {
+        _arm();
+        return;
+      }
+      onStuck();
+    });
+  }
+}
 
 /// How long a load started by the offline screen's retry is left to finish
 /// before the next retry may start another (shell_page.dart). The retry ticks

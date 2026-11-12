@@ -1,8 +1,7 @@
-import 'dart:convert';
-
 import 'package:flutter/services.dart';
 
 import '../app_language.dart';
+import '../bridge_files.dart';
 import 'scan_document_profile.dart';
 import 'scan_text_reading.dart';
 
@@ -79,13 +78,25 @@ class NativeDocumentScanner {
       // What the camera read while the page was in view. Checked and bounded;
       // a malformed reading is dropped, never the scan.
       final liveReading = sanitizeLiveReading(response?['liveReading']);
+      // Off the UI isolate (bridge_files.dart): a scan with its originals is
+      // tens of megabytes, and encoding them here held the app's frames just
+      // as the scanner closed, as picked photos did on Android.
+      final originalUrls = <String>[
+        if (imagegen)
+          for (final photo in originals as List)
+            await bridgeDataUrlOffUi('image/jpeg', photo as Uint8List),
+      ];
+      final pageUrls = <String>[
+        for (final page in pages)
+          await bridgeDataUrlOffUi('image/jpeg', page as Uint8List),
+      ];
       return {
         if (imagegen) 'processing': 'imagegen',
         if (imagegen) 'originals': [
-          for (var i = 0; i < (originals as List).length; i++)
+          for (var i = 0; i < originalUrls.length; i++)
             {
               'name': 'scan-original-${i + 1}.jpg',
-              'dataUrl': 'data:image/jpeg;base64,${base64Encode(originals[i] as Uint8List)}',
+              'dataUrl': originalUrls[i],
             },
         ],
         'processed': true,
@@ -106,12 +117,11 @@ class NativeDocumentScanner {
               )
             : const <String, dynamic>{},
         'files': [
-          for (var i = 0; i < pages.length; i++)
+          for (var i = 0; i < pageUrls.length; i++)
             {
               'name': 'scan-page-${i + 1}.jpg',
               'mime': 'image/jpeg',
-              'dataUrl':
-                  'data:image/jpeg;base64,${base64Encode(pages[i] as Uint8List)}',
+              'dataUrl': pageUrls[i],
             },
         ],
         if (liveReading != null) 'liveReading': liveReading,

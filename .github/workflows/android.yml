@@ -53,7 +53,7 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
-      - run: node --test test/biometric_session_test.cjs
+      - run: node --test test/biometric_session_test.cjs test/web_back_test.cjs
       - name: Build Google Play bundle from the same shared source as iOS
         run: flutter build appbundle --release
       - name: Save unsigned Play validation bundle

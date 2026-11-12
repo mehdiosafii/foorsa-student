@@ -34,20 +34,21 @@ String bridgeMime(String name) {
 /// The data URL of [bytes], as the portal reads it.
 String bridgeDataUrl(String mime, List<int> bytes) => 'data:$mime;base64,${base64Encode(bytes)}';
 
+/// The data URL of [bytes], made off the UI isolate when they are large; a
+/// phone that cannot start an isolate encodes them here, as before.
+Future<String> bridgeDataUrlOffUi(String mime, List<int> bytes) async {
+  if (bytes.length <= bridgeInlineLimit) return bridgeDataUrl(mime, bytes);
+  final data = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+  try {
+    return await Isolate.run(() => bridgeDataUrl(mime, data), debugName: 'bridge-file');
+  } catch (_) {
+    return bridgeDataUrl(mime, data);
+  }
+}
+
 /// The entry the portal reads for one file. Large files are encoded off the
-/// UI isolate; a phone that cannot start one encodes it here, as before.
+/// UI isolate ([bridgeDataUrlOffUi]).
 Future<Map<String, dynamic>> bridgeFileEntry(String name, List<int> bytes) async {
   final mime = bridgeMime(name);
-  String dataUrl;
-  if (bytes.length <= bridgeInlineLimit) {
-    dataUrl = bridgeDataUrl(mime, bytes);
-  } else {
-    final data = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
-    try {
-      dataUrl = await Isolate.run(() => bridgeDataUrl(mime, data), debugName: 'bridge-file');
-    } catch (_) {
-      dataUrl = bridgeDataUrl(mime, data);
-    }
-  }
-  return {'name': name, 'mime': mime, 'dataUrl': dataUrl};
+  return {'name': name, 'mime': mime, 'dataUrl': await bridgeDataUrlOffUi(mime, bytes)};
 }

@@ -97,6 +97,25 @@ void main() {
         }),
         isFalse);
   });
+  // An empty name threw inside the app's own frame (`''.substring(0, 1)`) and
+  // the whole app went grey for the length of the call.
+  test('a call that names nobody still has a letter in its circle and a name under it', () {
+    expect(callerNameOf({'callerName': 'Salma'}), 'Salma');
+    expect(callerNameOf({'callerName': ''}), isNull);
+    expect(callerNameOf({'callerName': '   '}), isNull);
+    expect(callerNameOf({'callerName': 42}), isNull);
+    expect(callerNameOf(const {}), isNull);
+    expect(callerInitial(callerNameOf({'callerName': ''})), 'F');
+    expect(callerInitial(callerNameOf(const {})), 'F');
+    expect(callerInitial('Salma'), 'S');
+    // A whole character, never half of one.
+    expect(callerInitial('Élodie'), 'É');
+    expect(callerInitial('سلمى'), 'س');
+    expect(callerInitial('👩‍🏫 Adviser'), '👩‍🏫');
+    final source = File('lib/src/student_calls.dart').readAsStringSync();
+    expect(source, isNot(contains(".substring(0, 1)")));
+  });
+
   test('each answering device receives its own UUID', () {
     final first = callDeviceId(), second = callDeviceId();
     expect(

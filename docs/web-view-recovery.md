@@ -76,3 +76,151 @@ no load ever finished and the student sat on "No internet connection" with a
 network that worked. `_retry()` now leaves a load under way alone for
 `retryLoadPatience` (45 s, `shouldRetryLoad`), counted from `onLoadStart` and
 cleared by `onLoadStop` or a main-frame error.
+
+## The stress test of 11 Nov 2026
+
+The owner, 11 Nov 2026: "stress test the app, so we can detect all the
+crashes, and all possible failures". What it found in the shell's own part,
+each pinned by a test that fails on the code as it was:
+
+- **The start watch counted time the app could not draw.** The fifteen
+  seconds of `webViewStartLimit` ran whatever the app was doing. An app started
+  without being shown, or left in its first seconds, draws no frame, so no web
+  view is even asked for; the watch still ended, reported `Web view stopped:
+  not created in time` and put "No internet connection" up for a student who
+  had one. The crash board's thirteen such reports of 1 to 8 Nov (every build
+  from 1.2.34 to 1.2.40, in pairs seconds apart, none with an error beside it)
+  have that shape: a device farm starting each new build unseen. Now
+  `WebViewStartWatch` (`web_view_recovery.dart`) counts only while the app is
+  on screen (`appCanDraw`), starts again when it comes back, and does not
+  believe a watch that ended late by the phone's clock (the app was
+  suspended).
+- **The retry made a new web view every six seconds while there was none.**
+  One that needed longer than that was thrown away before it finished, each
+  time. `_retry()` now leaves a web view being made its fifteen seconds
+  (`WebViewStartWatch.mayRebuild`), as `shouldRetryLoad` does for a page, and
+  makes none while the app is away.
+- **A download or a preview had no time limit.** `shell_page.dart` fetched
+  the file with a bare `HttpClient`: on a connection that stalls mid-file the
+  loader stayed over the app for good, and an iPhone has no back button.
+  `fetchToFile` (`file_fetch.dart`) gives the server 15 s to connect and 30 s
+  without a byte, closes the connection whatever happens and removes a
+  half-written file. The portal already falls back to the phone's browser
+  when the app does not answer `{ ok: true }`.
+- **The loader was taken away with `Navigator.pop()`.** On Android a student
+  who pressed back while it showed had closed it already; when the file
+  arrived the pop took the app's own page and left a blank app. `ShellSpinner`
+  removes its own route and no other. The "Set up your device" reminder had
+  the same fault (`device_access.dart`): Allow's answer and the resume after
+  the system prompt both found every access granted and both popped. It now
+  closes once, its Continue is never off, and a system prompt that never
+  answers (Android, when one is interrupted) no longer leaves its buttons
+  dead.
+
+`test/web_view_recovery_test.dart`, `test/file_fetch_test.dart`,
+`test/shell_spinner_test.dart` and `test/device_access_test.dart` pin them.
+What only a phone can confirm: that a real slow phone's first web view now
+finishes, and the loader and the reminder under the phone's own back button
+and prompts.
+
+### The same day, every control tapped
+
+A second pass tapped every control of the portal's screens (40 screens, 535
+taps, the sheets and unfolded sections included; by the next morning ten such
+passes, 3,784 taps, with other students, French and Arabic, the dark theme and
+phones from 320 to 412 points wide, none of which crashed a screen) and found
+two faults that are the app's own, not the page's:
+
+- **Android's back button left the screen instead of closing the sheet.**
+  Back was always the web view's history (`_handleBack`). With a sheet open
+  (the upload chooser, a paper's help, "Share with parents", a city list, the
+  privacy notice) it took the student off the screen under the sheet, sheet
+  and all; on a screen with nothing behind it the sheet stayed while the app
+  said "Press back again to exit". All 33 sheets tried behaved so. The
+  portal's layers already close on Escape, the topmost first, so the press is
+  now offered to the page as that key before the history is touched
+  (`web_back.dart`): `webLayerAsk` finds the topmost layer on screen and
+  presses Escape in it, `webLayerAnswered` says whether it went. A native
+  `<dialog>` (the calendar's event, a recipe's video, the journey's player,
+  the admission letter) is deaf to a scripted key and is told by a `cancel`
+  event, as the browser tells it; one that takes the `cancel` has taken the
+  press, even when it closes over a second or two. A layer that does not
+  answer (the contract to sign is locked on purpose) leaves back as it was.
+  A second press while the first is being answered is the same press.
+  Run against the live portal: twelve kinds of sheet and two native dialogs
+  close and stay on their screen; the locked contract falls through.
+- **"Tap the sample to view it full size" replaced the whole app with a
+  picture.** Every paper's help shows Foorsa's sample as a link that opens in
+  a new window. `onCreateWindow` loaded any address of the portal's own into
+  the web view itself, so the app became a bare image with nothing to close
+  it, and an iPhone has no back button (only the edge swipe, if the student
+  knows it). A picture or a PDF of the portal's own now opens in the app's
+  viewer (`previewableFile`, `embedded_navigation.dart`, then `_previewFile`);
+  a page of the portal still loads in the web view, and another site's
+  address still leaves the app.
+
+`test/web_back_test.dart`, `test/web_back_test.cjs` (the two scripts against a
+page with layers, run by the Android workflow beside the biometric script's
+test) and `test/embedded_navigation_test.dart` pin them. Not done, and why: on
+an iPhone the edge swipe is the web view's own back gesture
+(`allowsBackForwardNavigationGestures`) and never reaches `_handleBack`, so a
+swipe with a sheet open still leaves the screen. Closing the sheet there needs
+the page to tell the app that a layer is open, which is a change in both
+repositories. What only a phone can confirm: the back button itself over each
+kind of sheet, and the viewer opening a sample.
+
+### The next day, the app's own screens on every phone
+
+The screens that are not the portal's page (no connection, the loader, "Set up
+your device", the Face ID question, a call, the guided camera, the onboarding)
+had been laid out on an upright phone, the onboarding also on the smallest one
+and with text a third larger. The app rotates (`Info.plist` allows both
+landscapes, the Android manifest locks nothing), and a student may set the
+phone's text much larger. So each was drawn on seven phones (320 x 568 to a
+tablet, two of them on their side), at the phone's text x1, x1.3 and x2, in
+English, French and Arabic, with the fonts a phone draws with. Four of them did
+not fit:
+
+- **No connection** was a column as tall as what it says, with no way to
+  scroll. On a phone on its side it was cut off at both ends at ordinary text
+  (62 points on a 568 x 320 phone), "Try again" included; the same at x1.3 on
+  a 320-point phone and at x2 on most. It scrolls now, and on a screen under
+  480 points high it is the card alone, drawn closer, so "Try again" is on the
+  screen as it opens. Upright, with room, not a pixel has moved
+  (`shell_screens.dart`).
+- **A call** was one column of fixed heights. On its side it ran 85 to 134
+  points past the bottom, taking Mute, Speaker and End with it; a long name
+  did the same on a small phone at x1.3, and at x2 the French labels ran off
+  the side. The three controls now keep the foot of the screen whatever the
+  room; what is above them gives up its gaps and the size of its circle on a
+  short screen and scrolls if that is not enough; a long name takes two lines
+  (`_CallScreen`, `student_calls.dart`).
+- **The guided camera.** The row under the guidance (Auto, the shutter, and
+  "Camera app" when the camera will not open) ran off the side in French on a
+  360-point phone at ordinary text, and "Appli Appareil photo", the only way
+  on when the camera cannot open, was the part cut off; at x1.3 it did on
+  every phone up to 412 points. The two sides now wrap. And the words at the
+  top were a layer of their own over the guidance: on its side at x2 (or with
+  a long instruction from the portal, which may be 200 characters) they ran 45
+  to 85 points into the guidance panel. The screen is one column now: the
+  instruction has the room between the title and the guidance and fades out
+  at its foot when that is not enough, and at the largest text on a short
+  screen the footnote under the shutter gives way (`guided_scan_page.dart`).
+- **The Face ID question on Android** did not fit a small phone at x2; it
+  scrolls (`quick_sign_in_offer.dart`). The iPhone's is the system's alert and
+  always did.
+
+"Set up your device", the loader and every step of the onboarding fit
+everywhere they were drawn.
+
+`test/native_layout_sweep_test.dart`, `test/scanner_layout_sweep_test.dart`
+and `test/onboarding_layout_sweep_test.dart` are the sweep: they fail when
+Flutter reports that something does not fit, when the control a screen exists
+for is not wholly on it, or when the scanner's instruction is given room over
+its guidance. They load Roboto from the SDK's cache and an Arabic face from its
+source tree, because the test framework's stand-in font draws every letter as
+a square about twice as wide as text is and calls most of these screens too
+narrow; where the SDK has no such fonts they are skipped, Arabic alone where
+only its face is missing. What only a phone can confirm: the screens as the
+phone itself draws them when it is turned, and iOS's own largest text sizes,
+which go past x2.

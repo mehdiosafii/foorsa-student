@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -13,9 +14,12 @@ import 'package:foorsa_student/src/onboarding/scene_scan.dart';
 import 'package:foorsa_student/src/onboarding/stage_forms.dart';
 
 class _Phone implements BoardingPermissions {
-  _Phone({this.answers = const {}, this.start = const {}});
+  _Phone({this.answers = const {}, this.start = const {}, this.silent = const {}});
   final Map<BoardingAccess, AccessState> answers;
   final Map<BoardingAccess, AccessState> start;
+
+  /// Prompts the phone never answers (Android, when one is interrupted).
+  final Set<BoardingAccess> silent;
   final asked = <BoardingAccess>[];
 
   @override
@@ -23,9 +27,10 @@ class _Phone implements BoardingPermissions {
       start[access] ?? AccessState.askable;
 
   @override
-  Future<AccessState> request(BoardingAccess access) async {
+  Future<AccessState> request(BoardingAccess access) {
     asked.add(access);
-    return answers[access] ?? AccessState.granted;
+    if (silent.contains(access)) return Completer<AccessState>().future;
+    return Future.value(answers[access] ?? AccessState.granted);
   }
 }
 
@@ -101,6 +106,47 @@ Future<void> _frames(WidgetTester tester, Duration length) async {
 }
 
 void main() {
+  // The stress test, 11 Nov 2026. Android answers nothing when a prompt is
+  // interrupted (Home, then the app's icon): the step waited for good, its
+  // object dead and back refused, until the student closed the app.
+  testWidgets(
+      'a prompt the phone never answers does not hold the onboarding: back in the app, it goes on',
+      (tester) async {
+    _screen(tester, const Size(390, 844));
+    final phone = _Phone(silent: {BoardingAccess.notifications});
+    final key = GlobalKey<FirstLaunchOnboardingState>();
+    await tester.pumpWidget(_phone(FirstLaunchOnboarding(
+      key: key,
+      permissions: phone,
+      feel: (_, [__ = 1]) {},
+      onFinished: () {},
+      isIOS: false,
+      asksToTrack: false,
+    )));
+    await _settle(tester);
+    await _act(tester, 'English');
+    await _act(tester, 'Get started');
+    expect(key.currentState!.currentStep, BoardingStep.notifications);
+    await tester.tap(_object('Continue'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(phone.asked, [BoardingAccess.notifications]);
+
+    // The student leaves during the prompt and comes back by the app's icon.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(seconds: 5));
+    expect(key.currentState!.currentStep, BoardingStep.notifications,
+        reason: 'nothing is decided while the app is away');
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 1100));
+    await _settle(tester);
+    await _settle(tester);
+    expect(key.currentState!.currentStep, BoardingStep.camera,
+        reason: 'the phone was asked where things stand, and the next step came');
+    expect(phone.asked, [BoardingAccess.notifications],
+        reason: 'the prompt is not shown a second time');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
       'the onboarding walks a new phone through every access, one gesture on '
       'each object', (tester) async {

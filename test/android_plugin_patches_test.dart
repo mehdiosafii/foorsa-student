@@ -41,6 +41,43 @@ void main() {
     expect(guarded, greaterThanOrEqualTo(compat), reason: 'every compat call has its catch');
   });
 
+  test('the web view keeps Android\'s own Paste menu and keyboard, however it is drawn', () {
+    // On a first launch the web view is made in a texture under the onboarding
+    // (web_view_composition.dart: useHybridComposition false). The plugin read
+    // that as its virtual-display mode: its own floating menu in place of
+    // Android's (Paste), the window's focus taken from the web view each time
+    // the menu started, and the keyboard handed to a proxy on the Flutter
+    // view. The student then signs in in that very web view (the owner,
+    // 12 Nov 2026: "when pasting the otp ... no paste button is there it
+    // freezes, also many times the scrolling and keyboard are stuck").
+    const dir = 'third_party/flutter_inappwebview_android/android/src/main/java/com/pichillilorenzo/'
+        'flutter_inappwebview_android/webview/in_app_webview';
+    final view = _read('$dir/FlutterWebView.java');
+    final parsed = view.indexOf('customSettings.parse(initialSettings);');
+    final forced = view.indexOf('customSettings.useHybridComposition = true;');
+    final made = view.indexOf('webView = new InAppWebView(');
+    expect(parsed, isNonNegative);
+    expect(forced, greaterThan(parsed), reason: 'after what the Dart side sent is read');
+    expect(made, greaterThan(forced), reason: 'before the web view is made from it');
+    // What the patch keeps the web view out of: each is still behind the flag.
+    final web = _read('$dir/InAppWebView.java');
+    expect(web, contains('if (customSettings.useHybridComposition && !customSettings.disableContextMenu && '
+        '(contextMenu == null || contextMenu.keySet().size() == 0)) {\n      return super.startActionMode(callback, type);'));
+    expect(web, contains('if (!customSettings.useHybridComposition && containerView != null) {\n      onWindowFocusChanged(containerView.isFocused());'));
+    final input = _read('$dir/InputAwareWebView.java');
+    expect(input, contains('public boolean checkInputConnectionProxy(final View view) {\n    if (useHybridComposition) {\n      return super.checkInputConnectionProxy(view);'));
+    expect(input, contains('super.clearFocus();\n\n    if (useHybridComposition) {\n      return;'));
+    // The Dart side still decides how the view is drawn: in a texture, or in the window.
+    final widget = _read('third_party/flutter_inappwebview_android/lib/src/in_app_webview/in_app_webview.dart');
+    expect(widget, contains('return PlatformViewsService.initSurfaceAndroidView('));
+    expect(widget, isNot(contains('initAndroidView(')), reason: 'a virtual display is never asked for');
+    // And the shell asks for nothing that would bring the plugin's own menu back.
+    final shell = _read('lib/src/shell_page.dart');
+    expect(shell, isNot(contains('contextMenu:')));
+    expect(shell, isNot(contains('disableContextMenu')));
+    expect(shell, isNot(contains('.setSettings(')));
+  });
+
   test('the camera takes its still in CameraX quality mode', () {
     final capture = _read('third_party/camera_android_camerax/android/src/main/java/io/flutter/plugins/camerax/'
         'ImageCaptureProxyApi.java');
@@ -56,10 +93,17 @@ void main() {
     final shell = _read('lib/src/shell_page.dart');
     final created = shell.indexOf('onWebViewCreated: (controller) {');
     expect(created, isNonNegative);
-    expect(shell.substring(created, created + 120), contains('_startWatch?.cancel();'));
+    expect(shell.substring(created, created + 120), contains('_startWatch.created();'));
     expect(RegExp(r'_watchWebViewStart\(\);').allMatches(shell).length, 2,
         reason: 'when the first web view is put up, and when one is rebuilt');
-    final watch = shell.substring(shell.indexOf('void _watchWebViewStart() {'));
-    expect(watch.substring(0, 500), contains('_enterOffline();'));
+    expect(shell, contains('void _watchWebViewStart() => _startWatch.start();'));
+    // The watch itself (how long, and only while the app is on screen) is
+    // web_view_recovery.dart's WebViewStartWatch, with its own tests; here,
+    // that running out of time still puts the retry screen up.
+    final watch = shell.substring(shell.indexOf('late final WebViewStartWatch _startWatch'));
+    final stuck = watch.substring(0, watch.indexOf('  );') + 4);
+    expect(stuck, contains('onStuck: () {'));
+    expect(stuck, contains("report('Web view stopped: not created in time')"));
+    expect(stuck, contains('_enterOffline();'));
   });
 }
