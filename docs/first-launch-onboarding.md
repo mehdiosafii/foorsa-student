@@ -436,7 +436,7 @@ welcome's first moment). Now (`lib/src/web_view_composition.dart`):
   started, and replaced Android's copy and paste bar with one of its own
   (`InAppWebView.rebuildActionMode`). That is the session the owner met on
   12 Nov 2026 ("when pasting the otp ... no paste button is there it freezes,
-  also many times the scrolling and keyboard are stuck"). From 1.2.43 (74) the
+  also many times the scrolling and keyboard are stuck"). From 1.2.43 the
   patched plugin's Java side always takes its in-window paths
   (`third_party/README.md`, [touch, Paste and the keyboard](web-view-touch.md)):
   Android's own bar and Android's own keyboard, in the texture as in the

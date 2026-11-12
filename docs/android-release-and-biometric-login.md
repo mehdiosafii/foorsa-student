@@ -108,6 +108,15 @@ details), Play will not send an edit for review by itself: the script then
 commits it with `changesNotSentForReview`, and the run's summary says to press
 **Send changes for review** in Publishing overview.
 
+The script gives Google ten minutes to answer each request
+(`PLAY_ANSWER_SECONDS`). Google answers a bundle upload only once it has read
+the bundle through, which for this app takes about a minute, and the client's
+own default is to give up after 60 s: 1.2.42's publish step took 59 s, and
+1.2.43 (74)'s stopped there with "The read operation timed out" (12 Nov 2026),
+the bundle sent and the edit thrown away. A run that stops like that has put
+nothing in Play. This session could neither run the workflow again nor re-run
+its job (GitHub answered 403 to both), so the same app went out as build 75.
+
 **Sending a version already in Play to another track.** Write the track's
 name (`production`, `beta`, `alpha` or `internal`) in
 `.github/google-play-promote.txt` and merge: the Google Play workflow's
