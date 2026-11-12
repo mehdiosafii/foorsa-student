@@ -46,6 +46,20 @@ onboarding's is. It went out without a check on a phone (the owner, 12 Nov
 2026: "push live", straight to the stores), so what a phone still has to
 confirm is listed in [what the shell costs](docs/shell-frame-cost.md).
 
+## The onboarding's glass on Android (1.2.42)
+
+The first-launch onboarding's Android cost tests drew for a 1080 x 2400 phone
+at 2.625 pixels per point and baked its glass for a screen at 3. Measured for
+the phones they name, two things showed, and from 1.2.42 (73) both are
+changed, on Android only: a shadow is drawn from a picture down to one pixel
+wide, so the location scene asks for two blurs a frame, not four; and the
+picture of a light inside the glass reaches beyond the glass, so the light
+along the smoked panes' lower edge is no dimmer from its picture than drawn.
+It went to TestFlight and to Google Play's internal track without a check on
+a phone (the owner, 12 Nov 2026: "release now as 1.2.42"), so what a phone
+still has to confirm is listed in
+[the first-launch onboarding](docs/first-launch-onboarding.md).
+
 ## The adhan
 
 From 1.2.39 (70) the app sounds a recorded adhan at the prayer times the
