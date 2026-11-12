@@ -6,16 +6,36 @@
 /// fades away.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+
+import 'boot_loader_gate.dart';
 
 class PortalHandover {
   PortalHandover._();
   static final PortalHandover instance = PortalHandover._();
 
   /// Set by the shell when its web view exists.
-  InAppWebViewController? controller;
+  InAppWebViewController? get controller => _controller;
+  InAppWebViewController? _controller;
+  set controller(InAppWebViewController? value) {
+    _controller = value;
+    if (value == null || _made) return;
+    _made = true;
+    Timer(BootLoaderGate.settle, _settled.complete);
+  }
+
+  /// Completes a moment ([BootLoaderGate.settle]) after the shell's first web
+  /// view was made. Making one holds the thread the app draws on, and on
+  /// Android the frame that first shows it is drawn twice
+  /// (boot_loader_gate.dart): what would come in over the shell as the app
+  /// opens, the device access reminder, waits for this.
+  Future<void> get webViewSettled => _settled.future;
+  final Completer<void> _settled = Completer<void>();
+  bool _made = false;
 
   /// On the safe area the web view fills, so the page's points can be put
   /// on the screen.

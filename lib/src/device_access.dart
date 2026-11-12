@@ -61,12 +61,23 @@ const studentPermissions = [
 
 /// Reminds once per opening, not on every inactive/resumed system prompt.
 class DeviceAccess extends StatefulWidget {
-  const DeviceAccess({super.key, required this.child, this.suppressed = false});
+  const DeviceAccess(
+      {super.key, required this.child, this.suppressed = false, this.after});
   final Widget child;
 
   /// The first-launch onboarding has just asked for the same access, so the
   /// reminder waits for the next opening.
   final bool suppressed;
+
+  /// What the reminder waits for before it opens, [patience] at most: the
+  /// shell's web view, made and on the screen (portal_handover.dart). It is
+  /// made as the app opens, on the thread the reminder comes in on, so one
+  /// opening meanwhile would stop half-way in.
+  final Future<void>? after;
+
+  /// As long as the loader may wait for the web view, and the moment after
+  /// it (BootLoaderGate.restLimit and settle).
+  static const patience = Duration(milliseconds: 1300);
   @override
   State<DeviceAccess> createState() => _DeviceAccessState();
 }
@@ -102,6 +113,11 @@ class _DeviceAccessState extends State<DeviceAccess>
       if (!mounted ||
           statuses.every((s) => s.isGranted) ||
           StudentCalls.instance.invite != null) { return; }
+      final after = widget.after;
+      if (after != null) {
+        await after.timeout(DeviceAccess.patience, onTimeout: () {});
+        if (!mounted || StudentCalls.instance.invite != null) return;
+      }
       await showDialog<void>(
         context: context,
         builder: (_) => const _AccessDialog(),

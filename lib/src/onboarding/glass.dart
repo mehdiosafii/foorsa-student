@@ -201,8 +201,9 @@ class GlassShape {
   Path grown(double d) => d == 0 ? path : _grow(d);
 }
 
-/// Android's low-cost glass, for the first-launch onboarding: the glass's
-/// blurs, rastered once and drawn as pictures from then on.
+/// Android's low-cost glass, for the first-launch onboarding and the app's
+/// loader: the glass's blurs, rastered once and drawn as pictures from then
+/// on.
 ///
 /// A blur on a rounded rectangle is drawn in one pass by Impeller, Flutter's
 /// renderer. A blur on any other shape (the arrow, the plane, and the light
@@ -218,20 +219,40 @@ class GlassShape {
 /// glass that changes as it moves (the touch, an object turning into the
 /// arrow) is drawn as before. iOS draws it all as before.
 abstract final class GlassBake {
-  /// On while the onboarding runs on Android (onboarding_gate.dart).
-  static bool get enabled => _enabled;
+  /// On while the onboarding runs on Android (onboarding_gate.dart), and
+  /// while something else there holds it ([hold]): the shell's loader.
+  static bool get enabled => _enabled || _holds > 0;
   static bool _enabled = false;
   static set enabled(bool value) {
     if (value == _enabled) return;
     _enabled = value;
+    // The onboarding's pictures go with it, whoever else is baking: a loader
+    // still up makes its own few again on its next frame.
     if (!value) clear();
+  }
+
+  static int _holds = 0;
+
+  /// Keeps baking on for a user of its own until [release], whatever the
+  /// onboarding sets [enabled] to: the shell's loader (shell_screens.dart),
+  /// which is up on every start, with or without the onboarding over it, and
+  /// may be let go before the onboarding ends or after. The pictures are
+  /// kept together; they all go when nobody bakes any more.
+  static void hold() => _holds++;
+
+  static void release() {
+    if (_holds == 0) return;
+    _holds--;
+    if (!enabled) clear();
   }
 
   static final LinkedHashMap<Object, ui.Image> _images =
       LinkedHashMap<Object, ui.Image>();
 
   /// Enough for every baked piece of glass of the onboarding at a few sizes
-  /// (the arrow grows as it flies); the oldest go first.
+  /// (the arrow grows as it flies) on a 1080p phone, where a first launch
+  /// makes 47. A denser screen makes a few more, and the oldest go first:
+  /// the takeoff's, which are not drawn again.
   static const _limit = 48;
 
   /// Lets every picture go.
@@ -261,14 +282,30 @@ abstract final class GlassBake {
   /// arrow's bevel). Those are drawn as before.
   static bool softEnough(double sigma, double device) => sigma * device >= 1.5;
 
+  /// The same for the shadows a piece of glass casts, which are drawn from a
+  /// picture down to a pixel wide. A shadow has no edge of its own to keep:
+  /// where it meets the glass it is cut in vector, every frame. The locate
+  /// arrow's, 19 pt tall, are 1.5 px wide at 2.625 pixels per point and 1.1
+  /// at 2: on the map's button their picture is within 4 levels of 255 of
+  /// the shadows drawn.
+  static bool shadowSoftEnough(double sigma, double device) =>
+      sigma * device >= 1;
+
   /// How many device pixels a point of [canvas] covers: the transform in
   /// its picture, times the screen's.
+  ///
+  /// The screen's density is read from the binding's dispatcher: on a phone,
+  /// `ui.PlatformDispatcher.instance` itself; in a test, the one whose view
+  /// the test sets (`tester.view.devicePixelRatio`), so a test that names a
+  /// phone bakes at the density it draws at. The engine's own view stays at
+  /// 3 there, whatever the test sets.
   static double deviceScale(Canvas canvas) {
     final m = canvas.getTransform();
     final local = math.max(math.sqrt(m[0] * m[0] + m[1] * m[1]),
         math.sqrt(m[4] * m[4] + m[5] * m[5]));
-    final screen =
-        ui.PlatformDispatcher.instance.implicitView?.devicePixelRatio ?? 1;
+    final screen = WidgetsBinding
+            .instance.platformDispatcher.implicitView?.devicePixelRatio ??
+        1;
     return local * screen;
   }
 
@@ -423,7 +460,7 @@ void paintGlassBody(Canvas canvas, GlassShape shape, Glass glass,
         s.blur * scale * (0.7 + 0.3 * lift) / 2;
     final sigma =
         baked ? cast.map(sigmaOf).reduce(math.min) : double.infinity;
-    if (baked && !shape.isRRect && GlassBake.softEnough(sigma, device)) {
+    if (baked && !shape.isRRect && GlassBake.shadowSoftEnough(sigma, device)) {
       // Everything the blurs reach, as far as the clip lets them.
       var region = Rect.zero;
       for (final s in cast) {
@@ -468,14 +505,21 @@ void paintGlassBody(Canvas canvas, GlassShape shape, Glass glass,
     final paint = Paint()
       ..color = _fade(s.color, opacity)
       ..maskFilter = _blur(s.blur * scale);
+    final sigma = s.blur * scale / 2;
     if (baked &&
         paint.maskFilter != null &&
-        GlassBake.softEnough(s.blur * scale / 2, device)) {
+        GlassBake.softEnough(sigma, device)) {
       // Baked unclipped, a field with no edge in it: the shape's own clip
-      // above still cuts it, in vector, every frame.
+      // above still cuts it, in vector, every frame. The picture reaches two
+      // widths of the blur beyond the glass, further than Impeller reads a
+      // blur's source (the square root of 3 of them,
+      // impeller/geometry/sigma.h). From a picture that ended at the glass,
+      // a light whose source lies outside it, as the smoked panes' in their
+      // lower bevel does, came out dimmer along the edge with Impeller: 8
+      // levels of 255 on a 720p screen.
       GlassBake.draw(canvas, (bake, glass, part),
-          region: bounds.inflate(1),
-          sigma: s.blur * scale / 2,
+          region: bounds.inflate(1 + 2 * sigma),
+          sigma: sigma,
           device: device,
           paint: (c) => c.drawPath(path, paint));
     } else {

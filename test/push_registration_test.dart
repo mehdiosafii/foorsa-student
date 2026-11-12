@@ -95,6 +95,11 @@ void main() {
 
   late PushProblems reporter;
   setUp(() => reporter = problems());
+  // A report is sent in its own time, after a file is read. One still on its
+  // way when its test ended was sent into the next test's list, and written
+  // into its folder: on a busy runner, a test that did not wait failed the
+  // one after it. Every test's reports are done before it ends.
+  tearDown(() => reporter.idle());
 
   PushRegistration registration(FakePlatform platform) => PushRegistration(
         platform,

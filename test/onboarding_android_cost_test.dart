@@ -4,8 +4,12 @@
 // the shell's loader asleep under it, no offscreen layer where none shows,
 // the glass's blurs rastered once on Android, and render objects repainted
 // only where something moves.
+//
+// Every count here is for the screen its test names: the test draws at that
+// screen's pixels per point, and the glass is baked at the same.
 
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -21,6 +25,7 @@ import 'package:foorsa_student/src/onboarding/onboarding_gate.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_page.dart';
 import 'package:foorsa_student/src/onboarding/onboarding_store.dart';
 import 'package:foorsa_student/src/onboarding/scene_notifications.dart';
+import 'package:foorsa_student/src/onboarding/takeoff_intro.dart';
 import 'package:foorsa_student/src/shell_screens.dart';
 import 'package:foorsa_student/src/web_view_composition.dart';
 
@@ -39,11 +44,33 @@ class _Phone implements BoardingPermissions {
       AccessState.granted;
 }
 
-/// A common Android phone: 1080 x 2400 at 2.625.
-void _android(WidgetTester tester) {
-  tester.view.devicePixelRatio = 2.625;
-  tester.view.physicalSize = const Size(1080, 2400);
-  tester.view.padding = const FakeViewPadding(top: 63);
+/// A phone's screen: its pixels, and how many of them a point covers.
+class _Screen {
+  const _Screen(this.name, this.pixels, this.density);
+  final String name;
+  final Size pixels;
+  final double density;
+
+  Size get points => pixels / density;
+}
+
+/// A common Android phone, the one the doc's numbers are for.
+const _fullHd = _Screen('1080 x 2400 at 2.625', Size(1080, 2400), 2.625);
+
+/// A 720p one. A light under a pixel and a half wide is not baked, nor a
+/// shadow under a pixel (GlassBake.softEnough, shadowSoftEnough), and with
+/// fewer pixels to a point more of the narrow ones are.
+const _hd = _Screen('720 x 1600 at 2', Size(720, 1600), 2);
+
+/// And a 1440p one, for the pixels.
+const _quadHd = _Screen('1440 x 3200 at 3.5', Size(1440, 3200), 3.5);
+
+/// Draws for [screen], under a 24 pt status bar. The glass is baked for it
+/// too: GlassBake reads the density of the view this sets.
+void _android(WidgetTester tester, [_Screen screen = _fullHd]) {
+  tester.view.devicePixelRatio = screen.density;
+  tester.view.physicalSize = screen.pixels;
+  tester.view.padding = FakeViewPadding(top: 24 * screen.density);
   addTearDown(tester.view.reset);
 }
 
@@ -55,11 +82,11 @@ Future<void> _frames(WidgetTester tester, Duration length,
 }
 
 Widget _onboarding(GlobalKey<FirstLaunchOnboardingState> key,
-        {bool still = false}) =>
+        {bool still = false, _Screen screen = _fullHd}) =>
     MediaQuery(
       data: MediaQueryData(
-          size: const Size(1080 / 2.625, 2400 / 2.625),
-          devicePixelRatio: 2.625,
+          size: screen.points,
+          devicePixelRatio: screen.density,
           padding: const EdgeInsets.only(top: 24),
           disableAnimations: still),
       child: MaterialApp(
@@ -98,17 +125,20 @@ Future<void> _goTo(WidgetTester tester,
   expect(key.currentState!.armed, isTrue, reason: step.name);
 }
 
+/// An object by its name for a screen reader, whose tap does what the
+/// object's own gesture does.
+Finder _object(String name) => find
+    .byWidgetPredicate((w) =>
+        w is Semantics &&
+        (w.properties.label ?? w.properties.attributedLabel?.string) == name &&
+        w.properties.button == true)
+    .last;
+
 /// The first step is the languages' pane: English, the default, is tapped.
 Future<void> _pastLanguage(
     WidgetTester tester, GlobalKey<FirstLaunchOnboardingState> key) async {
   if (key.currentState!.currentStep != BoardingStep.language) return;
-  await tester.tap(find
-      .byWidgetPredicate((w) =>
-          w is Semantics &&
-          (w.properties.label ?? w.properties.attributedLabel?.string) ==
-              'English' &&
-          w.properties.button == true)
-      .last);
+  await tester.tap(_object('English'));
   await _frames(tester, const Duration(milliseconds: 1600));
 }
 
@@ -345,6 +375,53 @@ void main() {
     });
   });
 
+  testWidgets('the glass is baked for the screen a test draws on',
+      (tester) async {
+    // The engine's own view keeps its density in a test (3, whatever the
+    // test sets), and GlassBake read that one: these tests drew for a phone
+    // at 2.625 and baked for one at 3. What is baked and what is not depends
+    // on the density, so the counts were another phone's.
+    for (final screen in [_fullHd, _hd]) {
+      _android(tester, screen);
+      expect(tester.binding.renderViews.first.configuration.devicePixelRatio,
+          screen.density,
+          reason: screen.name);
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      expect(GlassBake.deviceScale(canvas), screen.density,
+          reason: screen.name);
+      // A 40 pt arrow, drawn at four tenths of its 100.
+      canvas.scale(0.4);
+      expect(GlassBake.deviceScale(canvas), closeTo(0.4 * screen.density, 1e-6),
+          reason: screen.name);
+      recorder.endRecording().dispose();
+    }
+  });
+
+  testWidgets(
+      'the picture of a light inside the glass reaches two of its blur\'s '
+      'widths beyond the glass', (tester) async {
+    // The light in a smoked pane's lower bevel is a blur 12 pt wide whose
+    // source lies outside the pane. From a picture that ended at the pane,
+    // Impeller drew it dimmer along the pane's edge: the pixel tests below,
+    // run with --enable-impeller, were 8 levels of 255 apart on this screen.
+    // Skia, which the tests run with, draws the two alike, so the reach is
+    // held here.
+    _android(tester, _hd);
+    addTearDown(() => GlassBake.enabled = false);
+    GlassBake.enabled = true;
+    await tester.pumpWidget(const Center(
+        child: SizedBox(width: 200, height: 100, child: GlassPane())));
+    // Its one picture: the pane, with a point and two widths more on every
+    // side, on a grid a third as fine as this screen's.
+    const reach = 1 + 2 * 12;
+    expect(GlassBake.count, 1);
+    expect(
+        GlassBake.pixels,
+        ((200 + 2 * reach) * 2 / 3).ceil() *
+            ((100 + 2 * reach) * 2 / 3).ceil());
+  });
+
   group('one frame of each scene', () {
     tearDown(() => GlassBake.enabled = false);
 
@@ -370,71 +447,169 @@ void main() {
       }
     });
 
-    testWidgets('on Android, draws the glass\'s blurs from pictures',
-        (tester) async {
-      _android(tester);
-      final key = GlobalKey<FirstLaunchOnboardingState>();
-      final baked = <BoardingStep, FrameCost>{};
-      final drawn = <BoardingStep, FrameCost>{};
-      await tester.pumpWidget(_onboarding(key));
-      for (final step in _scenes) {
-        await _goTo(tester, key, step);
-        // Its objects all in (the map fades in over its first second).
-        await _frames(tester, const Duration(milliseconds: 1000));
-        GlassBake.enabled = false;
-        drawn[step] = frameCost(tester);
-        GlassBake.enabled = true;
-        baked[step] = frameCost(tester);
-      }
-      // Each scene's glass that keeps its shape drew its blurs through
-      // offscreen passes every frame: the arrow (its shadows and its lights),
-      // the board's case, the cards, the mic's orb, the lens, the locate
-      // button, the pass's shadows. The same frame, baked:
-      const removed = {
-        BoardingStep.welcome: 4,
-        BoardingStep.notifications: 1,
-        BoardingStep.microphone: 2,
-        BoardingStep.location: 6,
-        BoardingStep.boarding: 1,
-      };
-      for (final step in _scenes) {
-        final before = drawn[step]!.gaussianBlurs;
-        final after = baked[step]!.gaussianBlurs;
-        expect(before - after, greaterThanOrEqualTo(removed[step] ?? 0),
-            reason: '${step.name}: ${drawn[step]} / ${baked[step]}');
-        // What is left changes every frame it is drawn (the touch showing
-        // what to do, and its trail), or is a light under a pixel and a half
-        // wide (the small arrows' bevels), drawn as before so that it stays
-        // sharp.
-        expect(after, lessThanOrEqualTo(5),
-            reason: '${step.name}: ${baked[step]}');
-      }
-    });
+    // Each scene's glass that keeps its shape drew its blurs through
+    // offscreen passes every frame: the arrow (its shadows and its lights),
+    // the board's case, the languages' pane, the cards, the mic's orb, the
+    // lens, the locate button, the pass's shadows. For each scene: what its
+    // own glass asked for at rest, the touch away; what it asks for now,
+    // from pictures; and the most a frame asks for now, while the touch
+    // shows what to do. What is left is a blur under a pixel and a half
+    // wide, drawn as before so that it stays sharp, or one that changes
+    // every frame it is drawn: the touch (the two lights in it, and two
+    // more for its trail as it moves) is never baked.
+    const blursOf = {
+      // Its arrow is 40 pt tall: the light along its bevel is 1.05 px wide
+      // at 2.625 (0.8 at 2).
+      BoardingStep.welcome: (5, 1, 5),
+      BoardingStep.language: (1, 0, 2),
+      // One for each card on the screen; the first is alone.
+      BoardingStep.notifications: (1, 0, 2),
+      // The scanner has no glass that bakes: only the touch.
+      BoardingStep.camera: (0, 0, 4),
+      BoardingStep.microphone: (2, 0, 2),
+      // The locate arrow is 19 pt tall. Its two lights are 0.5 and 1.1 px
+      // wide at 2.625, under the pixel and a half, and are drawn as before.
+      // Its two shadows are baked: the narrower is 1.496 px wide there and
+      // 1.14 at 2, over the pixel a shadow needs. Held to the pixel and a
+      // half of a light, they were drawn as before too, four in all.
+      BoardingStep.location: (8, 2, 4),
+      BoardingStep.boarding: (1, 0, 4),
+    };
 
-    testWidgets('makes each picture once, and holds little', (tester) async {
-      _android(tester);
-      final key = GlobalKey<FirstLaunchOnboardingState>();
-      // As the gate does on Android, from the takeoff on.
-      GlassBake.enabled = true;
-      GlassBake.made = 0;
-      await tester.pumpWidget(_onboarding(key));
-      for (final step in _scenes) {
-        await _goTo(tester, key, step);
-        // Its objects all in, and a whole demonstration: what comes on the
-        // screen is pictured as it comes.
-        await _frames(tester, const Duration(milliseconds: 1000 + 220 * 16));
-        // The demonstration again pictures nothing: every frame draws what
-        // was made (a piece of glass whose key changed every frame would be
-        // made again every frame, and cost more than it saves).
-        final made = GlassBake.made;
-        await _frames(tester, const Duration(milliseconds: 220 * 16));
-        expect(GlassBake.made, made, reason: step.name);
-      }
-      // Nothing was let go and made again, and the whole onboarding holds a
-      // few textures: measured 25 pictures, 11.8 MB, on 1080 x 2400.
-      expect(GlassBake.made, GlassBake.count);
-      expect(GlassBake.pixels * 4, lessThan(24e6));
-    });
+    // The scenes are the same on the two screens. What fewer pixels change
+    // is in motion: [leaving], the plane's bevel as it climbs away.
+    for (final (screen, leaving) in [(_fullHd, 0), (_hd, 1)]) {
+      testWidgets(
+          'on Android, draws the glass\'s blurs from pictures: '
+          '${screen.name}', (tester) async {
+        _android(tester, screen);
+        final key = GlobalKey<FirstLaunchOnboardingState>();
+        await tester.pumpWidget(_onboarding(key, screen: screen));
+
+        // The blurs through offscreen passes in the frame last drawn: as it
+        // was drawn before, and from pictures.
+        (int, int) blurs() {
+          GlassBake.enabled = false;
+          final drawn = frameCost(tester).gaussianBlurs;
+          GlassBake.enabled = true;
+          return (drawn, frameCost(tester).gaussianBlurs);
+        }
+
+        var seconds = 0.0;
+        Future<(int, int)> takeoffAt(double at) async {
+          for (; seconds < at; seconds += 0.016) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          return blurs();
+        }
+
+        // The takeoff's arrow: its two shadows and its two lights.
+        expect(await takeoffAt(morphStarts / 2), (4, 0), reason: 'the arrow');
+        // The plane at rest: its two lights.
+        expect(await takeoffAt((morphEnds + climbStarts) / 2), (2, 0),
+            reason: 'the plane');
+        // The plane as it leaves, at five eighths of its size, over the
+        // languages' pane coming in (one blur of its own, baked). On the
+        // 720p screen the light along its bevel is 1.4 px wide by then.
+        expect(await takeoffAt(takeoffSeconds - 0.1), (3, leaving),
+            reason: 'the plane leaving');
+
+        for (final step in _scenes) {
+          if (step == BoardingStep.welcome) {
+            await _goTo(tester, key, step);
+          } else {
+            key.currentState!.debugJumpTo(step);
+            // The change between objects is glass that turns as it goes, so
+            // none of it is baked: four to six blurs a frame, on any screen,
+            // from a quarter of a second in until the new object is there.
+            for (var frame = 1; frame <= 100; frame++) {
+              await tester.pump(const Duration(milliseconds: 16));
+              if (frame < 15 || frame > 54) continue;
+              final (drawn, baked) = blurs();
+              expect(drawn, inInclusiveRange(4, 6),
+                  reason: 'into ${step.name}, frame $frame');
+              expect(baked, drawn, reason: 'into ${step.name}, frame $frame');
+            }
+            expect(key.currentState!.armed, isTrue, reason: step.name);
+          }
+          // Its objects all in (the map fades in over its first second).
+          await _frames(tester, const Duration(milliseconds: 1000));
+          // A whole demonstration and the rest after it.
+          var drawnAtRest = 99, bakedAtRest = 99, bakedAtMost = 0;
+          for (var frame = 0; frame < 220; frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+            final (drawn, baked) = blurs();
+            drawnAtRest = math.min(drawnAtRest, drawn);
+            bakedAtRest = math.min(bakedAtRest, baked);
+            bakedAtMost = math.max(bakedAtMost, baked);
+          }
+          expect((drawnAtRest, bakedAtRest, bakedAtMost), blursOf[step],
+              reason: step.name);
+        }
+      });
+    }
+
+    // A whole first launch, gone through as a student does, acting on each
+    // object: so the arrows really fly (up from the welcome into the board,
+    // in from the map's button), and are pictured at each size they pass.
+    // What a phone holds by the time the pass is on the screen, measured:
+    // the pictures made, those held, and their megabytes. The cache keeps
+    // 48, then lets the oldest go. A denser screen bakes more of the narrow
+    // lights and reaches that: the oldest are the takeoff's, which are not
+    // drawn again.
+    for (final (screen, made, held, megabytes) in [
+      (_fullHd, 47, 47, 16.14),
+      (_hd, 45, 45, 10.41),
+      (_quadHd, 51, 48, 23.20),
+    ]) {
+      testWidgets('makes each picture once, and holds little: ${screen.name}',
+          (tester) async {
+        _android(tester, screen);
+        final key = GlobalKey<FirstLaunchOnboardingState>();
+        // As the gate does on Android, from the takeoff on.
+        GlassBake.enabled = true;
+        GlassBake.made = 0;
+        await tester.pumpWidget(_onboarding(key, screen: screen));
+        await _frames(tester, const Duration(milliseconds: 4200));
+        final state = key.currentState!;
+        // The objects by their names for a screen reader, whose tap does
+        // what the gesture does; the pass is left on the screen.
+        for (final object in const [
+          'English',
+          'Get started',
+          'Continue',
+          'Continue',
+          'Continue',
+          'Continue',
+          null,
+        ]) {
+          final step = state.currentStep;
+          // Its objects all in, and a whole demonstration: what comes on the
+          // screen is pictured as it comes.
+          await _frames(tester, const Duration(milliseconds: 1000 + 220 * 16));
+          // The demonstration again pictures nothing: every frame draws what
+          // was made (a piece of glass whose key changed every frame would
+          // be made again every frame, and cost more than it saves).
+          final madeSoFar = GlassBake.made;
+          await _frames(tester, const Duration(milliseconds: 220 * 16));
+          expect(GlassBake.made, madeSoFar, reason: step.name);
+          if (object == null) break;
+          await tester.tap(_object(object));
+          // The arrow flies, or the object folds into it, and the next
+          // object is there.
+          for (var frame = 0;
+              frame < 600 && (state.currentStep == step || !state.armed);
+              frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          expect(state.currentStep, isNot(step), reason: step.name);
+        }
+        expect(state.currentStep, BoardingStep.boarding);
+        expect(GlassBake.made, made);
+        expect(GlassBake.count, held);
+        expect(GlassBake.pixels * 4 / 1e6, closeTo(megabytes, 0.05));
+      });
+    }
 
     testWidgets('repaints only what moves', (tester) async {
       _android(tester);
@@ -463,8 +638,8 @@ void main() {
       // render objects a frame, and 64.9 on the pass, whose clock nothing
       // read; a builder inside a LayoutBuilder laid the map's whole scene out
       // again every frame.
-      // Measured: 3.0, 5.6, 2.5, 2.5, 3.5 and 8.3 (the stub, as the guide's
-      // touch pulls it).
+      // Measured: 3.3, 5.6, 2.5, 2.5, 3.5 and 8.3 (the stub, as the guide's
+      // touch pulls it), and 1.5 on the languages' pane.
       for (final step in _scenes) {
         expect(
             perFrame[step]!, lessThan(step == BoardingStep.boarding ? 12 : 8),
@@ -473,93 +648,103 @@ void main() {
     });
   });
 
-  testWidgets('every scene baked draws what it draws unbaked', (tester) async {
-    _android(tester);
-    addTearDown(() => GlassBake.enabled = false);
-    Future<Uint8List> shot() async {
-      final layer = tester.binding.renderViews.first.debugLayer! as OffsetLayer;
-      late Uint8List bytes;
-      await tester.runAsync(() async {
-        // The root layer applies the screen's pixel ratio itself.
-        final image = await layer
-            .toImage(Offset.zero & tester.view.physicalSize, pixelRatio: 1);
-        bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-            .buffer
-            .asUint8List();
-        image.dispose();
-      });
-      return bytes;
-    }
-
-    // Reduce Motion: every scene stands still, so two sessions draw the same
-    // frame.
-    Future<Uint8List> scene(BoardingStep step, {required bool bake}) async {
-      GlassBake.enabled = bake;
-      final key = GlobalKey<FirstLaunchOnboardingState>();
-      await tester.pumpWidget(_onboarding(key, still: true));
-      await _frames(tester, const Duration(milliseconds: 160));
-      if (step != BoardingStep.welcome) key.currentState!.debugJumpTo(step);
-      await _frames(tester, const Duration(milliseconds: 480));
-      final frame = await shot();
-      if (bake && step != BoardingStep.camera) {
-        expect(GlassBake.count, greaterThan(0), reason: step.name);
+  // The frames' pixels, with and without: on three screens, each drawn and
+  // baked at its own density.
+  for (final screen in [_hd, _fullHd, _quadHd]) {
+    testWidgets('every scene baked draws what it draws unbaked: ${screen.name}',
+        (tester) async {
+      _android(tester, screen);
+      addTearDown(() => GlassBake.enabled = false);
+      Future<Uint8List> shot() async {
+        final layer =
+            tester.binding.renderViews.first.debugLayer! as OffsetLayer;
+        late Uint8List bytes;
+        await tester.runAsync(() async {
+          // The root layer applies the screen's pixel ratio itself.
+          final image = await layer
+              .toImage(Offset.zero & tester.view.physicalSize, pixelRatio: 1);
+          bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+              .buffer
+              .asUint8List();
+          image.dispose();
+        });
+        return bytes;
       }
-      await tester.pumpWidget(const SizedBox());
-      GlassBake.enabled = false;
-      return frame;
-    }
 
-    for (final step in _scenes) {
-      final drawn = await scene(step, bake: false);
-      final baked = await scene(step, bake: true);
+      // Reduce Motion: every scene stands still, so two sessions draw the
+      // same frame.
+      Future<Uint8List> scene(BoardingStep step, {required bool bake}) async {
+        GlassBake.enabled = bake;
+        final key = GlobalKey<FirstLaunchOnboardingState>();
+        await tester.pumpWidget(_onboarding(key, still: true, screen: screen));
+        await _frames(tester, const Duration(milliseconds: 160));
+        // The welcome too: the first step is the languages' pane.
+        key.currentState!.debugJumpTo(step);
+        await _frames(tester, const Duration(milliseconds: 480));
+        expect(key.currentState!.currentStep, step);
+        final frame = await shot();
+        if (bake && step != BoardingStep.camera) {
+          expect(GlassBake.count, greaterThan(0), reason: step.name);
+        }
+        await tester.pumpWidget(const SizedBox());
+        GlassBake.enabled = false;
+        return frame;
+      }
+
+      for (final step in _scenes) {
+        final drawn = await scene(step, bake: false);
+        final baked = await scene(step, bake: true);
+        var worst = 0, total = 0;
+        for (var i = 0; i < drawn.length; i++) {
+          final d = (drawn[i] - baked[i]).abs();
+          if (d > worst) worst = d;
+          total += d;
+        }
+        // Measured, each screen's pictures made at its own density: 4
+        // levels of 255 at worst and 0.014 on average with Skia; 5 and 0.022
+        // with Impeller (flutter test --enable-impeller).
+        expect(worst, lessThanOrEqualTo(6), reason: step.name);
+        expect(total / drawn.length, lessThan(0.05), reason: step.name);
+      }
+    });
+
+    testWidgets(
+        'the takeoff\'s arrow and plane, and the flying arrows, baked, '
+        'draw what they draw unbaked: ${screen.name}', (tester) async {
+      _android(tester, screen);
+      addTearDown(() => GlassBake.enabled = false);
+      Future<Uint8List> shot(bool bake) async {
+        GlassBake.enabled = bake;
+        await tester
+            .pumpWidget(CustomPaint(painter: _Glasses(), size: Size.infinite));
+        final layer =
+            tester.binding.renderViews.first.debugLayer! as OffsetLayer;
+        late Uint8List bytes;
+        await tester.runAsync(() async {
+          final image = await layer
+              .toImage(Offset.zero & tester.view.physicalSize, pixelRatio: 1);
+          bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+              .buffer
+              .asUint8List();
+          image.dispose();
+        });
+        await tester.pumpWidget(const SizedBox());
+        GlassBake.enabled = false;
+        return bytes;
+      }
+
+      final drawn = await shot(false);
+      final baked = await shot(true);
       var worst = 0, total = 0;
       for (var i = 0; i < drawn.length; i++) {
         final d = (drawn[i] - baked[i]).abs();
         if (d > worst) worst = d;
         total += d;
       }
-      // Measured on 1080 x 2400: 4 levels of 255 at worst, 0.015 on average,
-      // with Skia and with Impeller.
-      expect(worst, lessThanOrEqualTo(6), reason: step.name);
-      expect(total / drawn.length, lessThan(0.05), reason: step.name);
-    }
-  });
-
-  testWidgets(
-      'the takeoff\'s arrow and plane, and the flying arrow, baked, '
-      'draw what they draw unbaked', (tester) async {
-    _android(tester);
-    addTearDown(() => GlassBake.enabled = false);
-    Future<Uint8List> shot(bool bake) async {
-      GlassBake.enabled = bake;
-      await tester
-          .pumpWidget(CustomPaint(painter: _Glasses(), size: Size.infinite));
-      final layer = tester.binding.renderViews.first.debugLayer! as OffsetLayer;
-      late Uint8List bytes;
-      await tester.runAsync(() async {
-        final image = await layer
-            .toImage(Offset.zero & tester.view.physicalSize, pixelRatio: 1);
-        bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-            .buffer
-            .asUint8List();
-        image.dispose();
-      });
-      await tester.pumpWidget(const SizedBox());
-      GlassBake.enabled = false;
-      return bytes;
-    }
-
-    final drawn = await shot(false);
-    final baked = await shot(true);
-    var worst = 0, total = 0;
-    for (var i = 0; i < drawn.length; i++) {
-      final d = (drawn[i] - baked[i]).abs();
-      if (d > worst) worst = d;
-      total += d;
-    }
-    expect(worst, lessThanOrEqualTo(6));
-    expect(total / drawn.length, lessThan(0.05));
-  });
+      expect(worst, lessThanOrEqualTo(6));
+      expect(total / drawn.length, lessThan(0.05));
+    });
+  }
 
   testWidgets('a 120 Hz screen sees the same flight as a 60 Hz one',
       (tester) async {
@@ -635,7 +820,9 @@ class _Counting extends CustomPainter {
   bool shouldRepaint(_Counting old) => false;
 }
 
-/// The glass that bakes: the arrow at three sizes, turned, and the plane.
+/// The glass that bakes: the arrow at four sizes, turned, and the plane.
+/// The smallest is the map's, whose shadows are a pixel and a half wide or
+/// less on these screens.
 class _Glasses extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -645,6 +832,7 @@ class _Glasses extends CustomPainter {
       (Offset(80, 90), 40.0),
       (Offset(220, 120), 84.0),
       (Offset(120, 300), 100.0),
+      (Offset(320, 250), 19.0),
     ]) {
       canvas.save();
       canvas.translate(at.dx, at.dy);

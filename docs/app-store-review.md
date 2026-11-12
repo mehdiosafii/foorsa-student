@@ -3,15 +3,28 @@
 Foorsa Student is app 6816127081 in App Store Connect (bundle `ma.foorsa.foorsaStudent`,
 iPhone only). Its listing (name, subtitle, description, keywords, screenshots, age rating,
 category, price and availability) and its App Privacy answers were filled in on 20 Oct 2026,
-when 1.2.18 (45) was submitted. Unlisted App Distribution has been requested, and the version
-is released by hand (`releaseType: MANUAL`): an approved version reaches nobody until someone
-presses Release in App Store Connect.
+when 1.2.18 (45) was submitted. Unlisted App Distribution has been requested. The version was
+set to be released by hand then (`releaseType: MANUAL`); on 12 Nov 2026 `state` read
+`AFTER_APPROVAL`, so an approved version now goes out by itself. Read `state` before saying
+which it is.
 
 On 2 Nov 2026, 1.2.18 (45) had been waiting for review since 20 Oct. It predates the iPhone
 microphone permission (build 46), so on today's portal a reviewer opening the live chat's voice
 note or the video studio would have crashed the app or been refused. The demo account it named
 had stopped signing in too. The waiting submission was cancelled, and 1.2.38 (69) went up for
 review in its place with the notes in `store/app-store/review-notes.txt`.
+
+On 12 Nov 2026, 1.2.39 (70) had been waiting for review since 6 Nov (submitted at 15:50 UTC),
+and no version had been approved yet; 1.2.40 (71) and 1.2.41 (72) went to TestFlight only.
+**submit-latest** cancels the submission waiting, and the wait starts again with the new one: say
+so, and ask, before putting a newer build in a waiting one's place.
+
+Asked that day, the owner kept it: "keep same for apple review when accepted we will push an
+update". So the newest build then goes up as an update once 1.2.39 is approved. **submit-latest**
+cannot do that yet: it renames the one version being prepared, and an approved version can no
+longer be edited, so an update needs a new App Store version made first, and its "What's New"
+text, which a first version does not have. Until that is written, a run against an approved
+version waits four minutes and changes nothing.
 
 ## The workflow
 
@@ -29,6 +42,15 @@ runs `scripts/app_store_listing.py` with the team key the TestFlight workflow us
   writes `store/app-store/review-notes.txt` into the review details (`{version}` and `{build}`
   are filled in) and submits. The listing text, screenshots, age rating, demo account and manual
   release stay as they are.
+
+**Without the button.** A session that cannot start a workflow by hand asks through
+`.github/app-store-request.txt`, as `.github/google-play-promote.txt` does for Google Play: a
+push to `main` that changes the file runs what its one line names, `state`, `review-check` or
+`submit-latest 1.2.41+72` (12 Nov 2026, for 1.2.41 (72), when GitHub refused such a session the
+button). A submission asked for this way names its version and changes nothing unless the newest
+valid build is exactly that one, so a line left in the file can never send up a later build; and
+it runs **review-check** first and stops there if the demo account no longer signs in. Wait for
+the TestFlight run of that version to be green before asking: only then is the build valid.
 
 App Privacy is not in Apple's API. A person signed in to App Store Connect with an Apple ID
 fills it in (App Store Connect › the app › App Privacy), and it has to say what the app collects

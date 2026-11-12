@@ -105,7 +105,7 @@ class ShellPage extends StatefulWidget {
   const ShellPage({
     super.key,
     this.appearance,
-    this.webViewDelay = const Duration(milliseconds: 300),
+    this.webViewDelay = Duration.zero,
   });
 
   /// The theme the portal last said the student chose (read before the first
@@ -114,7 +114,9 @@ class ShellPage extends StatefulWidget {
 
   /// When the WebView is created. Its platform-view set-up holds the UI
   /// thread for a moment, so a first launch waits until the onboarding's
-  /// takeoff has flown (onboarding/onboarding_gate.dart).
+  /// takeoff has flown (onboarding/onboarding_gate.dart). With none, it is
+  /// created as soon as the loading screen's first frame is drawn
+  /// (boot_loader_gate.dart).
   final Duration webViewDelay;
 
   @override
@@ -147,9 +149,13 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
   }
   InAppWebViewController? _controller;
   PackageInfo? _packageInfo;
-  /// When the loading screen gives way to the portal (boot_loader_gate.dart).
-  final BootLoaderGate _loader = BootLoaderGate();
+  /// When the loading screen gives way to the portal, and when its loader
+  /// starts to move (boot_loader_gate.dart). On a first launch the loader is
+  /// under the onboarding and does not rest.
+  late final BootLoaderGate _loader =
+      BootLoaderGate(rests: widget.webViewDelay == Duration.zero);
   Timer? _holdTimer;
+  Timer? _restTimer;
   /// Gone from the tree once its fade has ended.
   bool _loaderRemoved = false;
   late ShellAppearance? _appearance = widget.appearance;
@@ -199,14 +205,14 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
   int _biometricGeneration = 0;
 
   Future<void> _prepareBiometrics() async {
-    // Nothing here prompts or reads a credential. The first frame always draws.
-    await Future<void>.delayed(widget.webViewDelay);
-    try {
-      _biometricScript = await rootBundle.loadString('assets/biometric_session.js');
-      await _biometrics.initialize();
-    } catch (_) {
-      // Never let unavailable preferences prevent ordinary password sign-in.
-    }
+    // Nothing here prompts or reads a credential. The first frame always
+    // draws, and what the web view needs is read while the app waits for it
+    // (on a first launch, for the takeoff), not after.
+    final session = _readSession();
+    await whenWebViewMayStart(
+        delay: widget.webViewDelay,
+        firstFrame: WidgetsBinding.instance.waitUntilFirstFrameRasterized);
+    await session;
     if (!mounted) return;
     // The portal always opens, on the student's session when they have one:
     // it lasts across launches. Quick sign-in is for after a sign-out: the
@@ -218,6 +224,15 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
       _decideComposition();
     });
     _watchWebViewStart();
+  }
+
+  Future<void> _readSession() async {
+    try {
+      _biometricScript = await rootBundle.loadString('assets/biometric_session.js');
+      await _biometrics.initialize();
+    } catch (_) {
+      // Never let unavailable preferences prevent ordinary password sign-in.
+    }
   }
 
   UserScript _sessionScript() => UserScript(
@@ -542,6 +557,13 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     Timer(BootLoaderGate.minimum, () {
       if (mounted) setState(_loader.minimumPassed);
     });
+    // The loader rests on its first picture until the web view is made
+    // (onWebViewCreated), and never for long.
+    if (_loader.resting) {
+      _restTimer = Timer(BootLoaderGate.restLimit, () {
+        if (mounted && _loader.resting) setState(_loader.restExpired);
+      });
+    }
     // Let the loading screen paint its first frame before the WebView's
     // platform-view init grabs the UI thread.
     unawaited(_prepareBiometrics());
@@ -1263,6 +1285,7 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     _push.dispose();
     _retryTimer?.cancel();
     _holdTimer?.cancel();
+    _restTimer?.cancel();
     _startWatch.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -1329,11 +1352,10 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
                   allowsBackForwardNavigationGestures: true,
                   applicationNameForUserAgent: AppConfig.userAgentProduct,
                   transparentBackground: true,
-                  // Heavy-animation support: keep the web content on the GPU
-                  // path so CSS transforms/filters composite at the display's
-                  // full rate (60/90/120Hz) instead of falling back to
-                  // software rasterisation.
-                  hardwareAcceleration: true,
+                  // Android: drawn by the GPU straight into the window, with
+                  // no offscreen layer of its own in between
+                  // (web_view_composition.dart).
+                  hardwareAcceleration: webViewOffscreenLayer,
                   // Android: in the window, as always, except while the
                   // first-launch onboarding is drawn over it
                   // (web_view_composition.dart).
@@ -1357,6 +1379,9 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
                   _startWatch.created();
                   _controller = controller;
                   PortalHandover.instance.controller = controller;
+                  // It is made, which is what holds the thread longest: the
+                  // loader plays.
+                  if (_loader.resting) setState(_loader.webViewMade);
                   controller.addJavaScriptHandler(
                     handlerName: 'FoorsaStudentBiometrics',
                     callback: _handleBiometrics,
@@ -1627,6 +1652,10 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
                 showing: _loader.showing,
                 covered: _covered,
                 dark: _isDark(context),
+                // Still until the web view is made (boot_loader_gate.dart).
+                resting: _loader.resting,
+                // Android's GPUs draw its glass's blurs from pictures.
+                bakeGlass: Platform.isAndroid,
                 onGone: () {
                   if (mounted) setState(() => _loaderRemoved = true);
                 },
