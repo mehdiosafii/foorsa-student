@@ -1,1 +1,1 @@
-Chine : les notifications arrivent sur iPhone sans passer par Google, les appels de votre conseiller sonnent, et une connexion lente n’affiche plus « Pas de connexion ». Corrections.
+Une application plus fluide : les écrans défilent et s’animent plus légèrement, et l’application s’ouvre un peu plus vite. Une connexion lente n’affiche plus « Pas de connexion ». Corrections.

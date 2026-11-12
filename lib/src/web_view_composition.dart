@@ -33,6 +33,38 @@ library;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
+/// Whether the Android web view is given an offscreen layer of its own: the
+/// plugin's `hardwareAcceleration` setting. Never.
+///
+/// The setting's name says more than it does. Under Hybrid Composition it
+/// only chooses the view's layer type (`InAppWebView.prepare` in
+/// third_party/flutter_inappwebview_android): true is
+/// `View.LAYER_TYPE_HARDWARE`, false `View.LAYER_TYPE_NONE`; in a texture
+/// (TLHC) the plugin leaves the view without one either way. What makes
+/// Android draw with the GPU is the window (`android:hardwareAccelerated` on
+/// the activity, on by default since API 14): a view with no layer in such a
+/// window is drawn by the GPU straight into it, which is how every app that
+/// shows a WebView draws it, and CSS transforms and animations are composited
+/// by Chromium on the GPU the same.
+///
+/// With a hardware layer, Android keeps a texture the size of the view
+/// (about 10 MB for a 1080 x 2400 phone), draws the web view into it again on
+/// every frame the page changes (a scroll, an animation), then draws that
+/// texture into the window (`SkiaPipeline::renderLayerImpl` in Android's
+/// hwui). It allocates a new texture each time the view's size passes
+/// another 64 px (`SkiaGpuPipeline::createOrUpdateLayer`), and from Android
+/// 11 the keyboard resizes the web view on every frame of its way up or
+/// down (`ImeSyncDeferringInsetsCallback` in the engine). Android's own
+/// guide keeps hardware layers for a view that is itself being moved or
+/// faded, "only for the duration of the animation". The shell asked for one
+/// through 1.2.40 (71), taking `false` for software rendering: an extra
+/// full-screen pass on every frame of the portal, and that much less memory
+/// in an app whose web view Android closes when it grows too large
+/// (docs/web-view-recovery.md).
+///
+/// iOS ignores the setting.
+const webViewOffscreenLayer = false;
+
 /// Whether a web view made now uses Hybrid Composition: on Android, every
 /// time but while the first-launch onboarding covers the shell.
 bool webViewUsesHybridComposition(

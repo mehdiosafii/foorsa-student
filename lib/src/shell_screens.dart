@@ -9,12 +9,16 @@ import 'package:flutter/services.dart';
 import 'app_language.dart';
 import 'config.dart';
 import 'onboarding/flight_loader.dart';
+import 'onboarding/glass.dart';
 import 'web_view_composition.dart';
 
 /// Foorsa's arrow turning into the plane, on the theme's ground.
 class ShellLoadingScreen extends StatelessWidget {
-  const ShellLoadingScreen({super.key, required this.dark});
+  const ShellLoadingScreen({super.key, required this.dark, this.resting = false});
   final bool dark;
+
+  /// The arrow alone, not yet moving ([FlightLoader.resting]).
+  final bool resting;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +37,7 @@ class ShellLoadingScreen extends StatelessWidget {
             // shows the branded logo splash (flutter_native_splash, same
             // #183250 ground) before Flutter's first frame: logo, then the
             // loader.
-            child: FlightLoader(size: 64, dark: dark),
+            child: FlightLoader(size: 64, dark: dark, resting: resting),
           ),
         ),
       ),
@@ -50,24 +54,80 @@ class ShellLoadingScreen extends StatelessWidget {
 /// then. Its fade still runs, so a loader the portal let go of meanwhile is
 /// gone by the time the onboarding fades onto the sign-in; one still needed
 /// is drawn and animated again from that moment.
-class ShellLoadingLayer extends StatelessWidget {
+///
+/// It rests on its first picture while the web view is made ([resting],
+/// boot_loader_gate.dart).
+///
+/// On Android its glass is drawn from pictures ([bakeGlass]). The loader is
+/// over the web view from the app's icon to the portal's first screen, and
+/// while an Android web view is in the window Flutter rasters every frame on
+/// the phone's main thread, the one the page is loading on
+/// (web_view_composition.dart). Each frame of the loop asked for two to six
+/// blurs Impeller can only draw through an offscreen picture and two passes:
+/// the arrow's and the plane's are now made once, as the onboarding's are
+/// (GlassBake in onboarding/glass.dart), and let go with the loader. What
+/// changes shape or fades from frame to frame (the arrow becoming the plane,
+/// the next arrow coming up) is drawn as before, and so is a blur under a
+/// pixel and a half wide, which on a 720p phone is the light along their
+/// bevels (docs/shell-frame-cost.md has the counts).
+class ShellLoadingLayer extends StatefulWidget {
   const ShellLoadingLayer({
     super.key,
     required this.showing,
     required this.covered,
     required this.dark,
     required this.onGone,
+    this.resting = false,
+    this.bakeGlass = false,
   });
 
   final bool showing;
   final bool covered;
   final bool dark;
   final VoidCallback onGone;
+  final bool resting;
+  final bool bakeGlass;
+
+  @override
+  State<ShellLoadingLayer> createState() => _ShellLoadingLayerState();
+}
+
+class _ShellLoadingLayerState extends State<ShellLoadingLayer> {
+  bool _baking = false;
+
+  void _bake(bool on) {
+    if (on == _baking) return;
+    _baking = on;
+    if (on) {
+      GlassBake.hold();
+    } else {
+      GlassBake.release();
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _bake(widget.bakeGlass);
+  }
+
+  @override
+  void didUpdateWidget(ShellLoadingLayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _bake(widget.bakeGlass);
+  }
+
+  @override
+  void dispose() {
+    _bake(false);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final showing = widget.showing;
     return CoveredByOnboarding(
-      covered: covered,
+      covered: widget.covered,
       child: IgnorePointer(
         ignoring: !showing,
         child: AnimatedOpacity(
@@ -76,11 +136,12 @@ class ShellLoadingLayer extends StatelessWidget {
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
           onEnd: () {
-            if (!showing) onGone();
+            if (!widget.showing) widget.onGone();
           },
           child: TickerMode(
-            enabled: !covered,
-            child: ShellLoadingScreen(dark: dark),
+            enabled: !widget.covered,
+            child: ShellLoadingScreen(
+                dark: widget.dark, resting: widget.resting),
           ),
         ),
       ),

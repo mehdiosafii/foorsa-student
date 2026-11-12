@@ -11,6 +11,7 @@ import 'src/device_access.dart';
 import 'src/onboarding/onboarding_gate.dart';
 import 'src/onboarding/onboarding_sound.dart';
 import 'src/onboarding/onboarding_store.dart';
+import 'src/portal_handover.dart';
 import 'src/student_calls.dart';
 import 'src/shell_appearance.dart';
 import 'src/shell_page.dart';
@@ -93,12 +94,16 @@ class FoorsaStudentApp extends StatelessWidget {
         bakeGlass: Platform.isAndroid,
         child: DeviceAccess(
           suppressed: firstLaunch,
+          // Its reminder comes in once the web view is on the screen, not
+          // while it is made.
+          after: PortalHandover.instance.webViewSettled,
           child: ShellPage(
             appearance: appearance,
-            // After the takeoff, which a platform view's set-up would stall.
-            webViewDelay: firstLaunch
-                ? FirstLaunchGate.webViewDelay
-                : const Duration(milliseconds: 300),
+            // After the takeoff, which a platform view's set-up would stall;
+            // on any other start, as soon as the loader's first frame is
+            // drawn (boot_loader_gate.dart).
+            webViewDelay:
+                firstLaunch ? FirstLaunchGate.webViewDelay : Duration.zero,
           ),
         ),
       ),

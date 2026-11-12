@@ -201,8 +201,9 @@ class GlassShape {
   Path grown(double d) => d == 0 ? path : _grow(d);
 }
 
-/// Android's low-cost glass, for the first-launch onboarding: the glass's
-/// blurs, rastered once and drawn as pictures from then on.
+/// Android's low-cost glass, for the first-launch onboarding and the app's
+/// loader: the glass's blurs, rastered once and drawn as pictures from then
+/// on.
 ///
 /// A blur on a rounded rectangle is drawn in one pass by Impeller, Flutter's
 /// renderer. A blur on any other shape (the arrow, the plane, and the light
@@ -218,13 +219,31 @@ class GlassShape {
 /// glass that changes as it moves (the touch, an object turning into the
 /// arrow) is drawn as before. iOS draws it all as before.
 abstract final class GlassBake {
-  /// On while the onboarding runs on Android (onboarding_gate.dart).
-  static bool get enabled => _enabled;
+  /// On while the onboarding runs on Android (onboarding_gate.dart), and
+  /// while something else there holds it ([hold]): the shell's loader.
+  static bool get enabled => _enabled || _holds > 0;
   static bool _enabled = false;
   static set enabled(bool value) {
     if (value == _enabled) return;
     _enabled = value;
+    // The onboarding's pictures go with it, whoever else is baking: a loader
+    // still up makes its own few again on its next frame.
     if (!value) clear();
+  }
+
+  static int _holds = 0;
+
+  /// Keeps baking on for a user of its own until [release], whatever the
+  /// onboarding sets [enabled] to: the shell's loader (shell_screens.dart),
+  /// which is up on every start, with or without the onboarding over it, and
+  /// may be let go before the onboarding ends or after. The pictures are
+  /// kept together; they all go when nobody bakes any more.
+  static void hold() => _holds++;
+
+  static void release() {
+    if (_holds == 0) return;
+    _holds--;
+    if (!enabled) clear();
   }
 
   static final LinkedHashMap<Object, ui.Image> _images =

@@ -506,6 +506,8 @@ point, and 45 and 10.4 MB on a 720 x 1600 one at 2. The cache keeps 48, then
 lets the oldest go, which are the takeoff's and are not drawn again: a
 1440 x 3200 phone at 3.5 makes 51 and holds 23.2 MB. They all go when the
 onboarding ends. iOS draws as before.
+(The app's loader is drawn the same way on every Android start, and keeps
+the baking on for itself: `shell-frame-cost.md`.)
 
 What is baked depends on how many pixels a point covers, so each count is for
 the phone it names, drawn and baked at that phone's density. At rest, the
@@ -545,7 +547,8 @@ Impeller; 0.02 on average.
 tests drew at 2.625 pixels per point and baked for a screen at 3: `GlassBake`
 read the engine's own view, whose density a test cannot set. They bake at the
 density they draw at now, and two things showed that the numbers for a screen
-at 3 had hidden. Both are changed, on Android only:
+at 3 had hidden. Both are changed, on Android only, after 1.2.41 (72), which
+went out that day without them:
 
 - The location kept four blurs a frame, not the two this table said. A shadow
   was held to the pixel and a half of a light, and the locate arrow's are
