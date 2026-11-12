@@ -39,8 +39,8 @@ runs `scripts/app_store_listing.py` with the team key the TestFlight workflow us
   the newest one's text, how many screenshots of each size, the build attached, the review
   details (whether each is filled, never their values) and whether its review notes are the
   ones the repository writes; what would stop an update's "What's New"; the builds, and the
-  newest valid one as a submission names it (`1.2.42+73`); availability; and every review
-  submission with its items.
+  newest valid one as a submission names it (`1.2.42+73`); availability; the latest review
+  submissions with what each holds, and how many are still open.
 - **review-check** signs in to the portal with the demo account App Store Connect gives App
   Review, and prints what a reviewer meets: a password to change, the contract popup, the step of
   the file. It prints the review notes with the account's name and password masked.
@@ -49,25 +49,24 @@ runs `scripts/app_store_listing.py` with the team key the TestFlight workflow us
 
   | The newest version is | submit-latest |
   | --- | --- |
-  | on sale (`READY_FOR_SALE`) | makes the update: a new version named after the build, with the release the version on sale has (by itself once approved, or by hand) and its copyright; writes "What's New" in each locale; then the row below. Apple copies the listing's text and screenshots into the new version. |
-  | being prepared, or sent back (`PREPARE_FOR_SUBMISSION`, `REJECTED`, `METADATA_REJECTED`, `DEVELOPER_REJECTED`, `INVALID_BINARY`) | names the version after the build, attaches the build, writes `store/app-store/review-notes.txt` into the review details (`{version}` and `{build}` are filled in; the contact and the demo account stay as they are) and submits. When an earlier version is on sale it is an update, and "What's New" is written too. |
-  | waiting for review | changes nothing, unless **replace-waiting** is asked for (the box of the button, or the word after the version in the request file). Then the waiting submission is cancelled and the row above follows. The wait for review starts again: ask the owner each time. |
+  | on sale (`READY_FOR_SALE`) | makes the update: a new version named after the build, with the release the version on sale has (by itself once approved, or by hand) and its copyright; writes "What's New" in each locale; then the row below. The new version takes the listing's text and screenshots from the one on sale. |
+  | being prepared, or taken back (`PREPARE_FOR_SUBMISSION`, `DEVELOPER_REJECTED`, `INVALID_BINARY`, or rejected with its submission since withdrawn) | names the version after the build, attaches the build, writes `store/app-store/review-notes.txt` into the review details (`{version}` and `{build}` are filled in; the contact and the demo account stay as they are) and submits. When an earlier version is on sale it is an update, and "What's New" is written too. |
+  | waiting for review | changes nothing, unless **replace-waiting** is asked for (the box of the button, or the word after the version in the request file). Then the waiting submission is read once more, cancelled if it is still waiting, and the row above follows. The wait for review starts again: ask the owner each time. |
   | in review | changes nothing, ever. |
+  | sent back by App Review and not answered (`REJECTED`, `METADATA_REJECTED`; its submission is `UNRESOLVED_ISSUES`) | changes nothing: how to answer is decided in App Store Connect (App Review), where Apple's messages are. Reply there, or change the version there and resubmit it, as was done on 4 Nov 2026. |
   | approved and not yet on sale (`PENDING_DEVELOPER_RELEASE`, `PROCESSING_FOR_APP_STORE`, …) | changes nothing: Apple makes no new version until the one before it is on sale. Release it, or wait, then ask again. |
 
-  It also changes nothing when the build is the one already on sale or already waiting. All it
-  reads from the repository is checked before the first write, and a refusal says what to do.
-  The listing's text, screenshots, age rating and categories stay as they are. **state** is
-  printed after it, whether it went through or stopped part-way; a run that stopped part-way
-  (Apple's answer is in the log) is finished by asking again.
+  It also changes nothing when the build is the one already on sale or already waiting. What it
+  reads from the repository is checked against the listing before the first write, and a
+  refusal says what to do. The listing's text, screenshots, age rating and categories stay as
+  they are. **state** is printed after it, whether it went through or stopped part-way; a run
+  that stopped part-way (Apple's answer is in the log) is finished by asking again.
 
   A review submission that was made and never submitted cannot be cancelled (a run that
   stopped at its last step leaves one, and so does "Add for Review" in App Store Connect). An
   empty one is taken up; the version is taken out of one that holds only it, then put up again;
   one that holds anything else stops the run before it writes, since that is someone's work in
-  App Store Connect. A version App Review sent back is prepared like any other, but whether
-  Apple lets a new submission be opened beside the one it sent back has never been tried: if it
-  refuses, the version is ready, and is resubmitted in App Store Connect (App Review).
+  App Store Connect.
 
 **Without the button.** A session that cannot start a workflow by hand asks through
 `.github/app-store-request.txt`, as `.github/google-play-promote.txt` does for Google Play: a
@@ -127,9 +126,12 @@ off the contract popup: today it opens straight on Home.
 The demo signs in with a password, which the portal still offers under the email field ("Sign in
 with a password"); students sign in with a link or a code sent to their card's email.
 
-A new version takes the review details of the one before it: Apple copies the contact, the demo
-account and the notes into it, and where it has not, **submit-latest** copies the contact and
-the demo account itself, and **review-check** tries the account of the version before.
+A new version takes the review details of the one before it. App Store Connect's site copies
+the contact, the demo account and the notes into it; whether its API does has not been seen
+yet, so where it has not after a minute, **submit-latest** copies the contact and the demo
+account itself, and **review-check** tries the account of the version before. Nothing of them
+is printed: **review-check** masks them in the notes, and they are taken out of any answer of
+Apple's that the log shows.
 
 ## The tests
 
@@ -154,4 +156,6 @@ ASC_OPENAPI=/path/to/openapi.oas.json python3 -m unittest discover -s scripts/te
 The stand-in is a reading of Apple's documentation, not Apple. Until the first update has gone
 up, these have only ever been tried against it: making a version, writing "What's New", copying
 review details into a version that has none, taking up an empty submission, and taking a version
-out of one. Read the log of the first real run with that in mind.
+out of one. Whether a new version has its locales and review details at once, or a moment
+later, is not known either: the run waits up to a minute for each. Read the log of the first
+real run with that in mind.

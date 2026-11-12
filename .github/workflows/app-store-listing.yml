@@ -8,8 +8,9 @@ name: App Store listing
 #   review-check   whether App Review's demo account still signs in to the app as it is today
 #   submit-latest  the newest valid build up for review, with store/app-store/review-notes.txt
 #                  as its notes. When the newest App Store version is on sale it goes up as an
-#                  update: a new version, with "What's New" from store/app-store/whats-new/. A
-#                  version in review is never touched, and one waiting for review is replaced
+#                  update: a new version, with "What's New" from store/app-store/whats-new/.
+#                  What is in review is never touched; a version App Review sent back is left
+#                  to be answered in App Store Connect; and one waiting for review is replaced
 #                  only with the box "replace_waiting" ticked: its wait starts again, which is
 #                  the owner's decision each time. Then state is printed, whether the
 #                  submission went through or stopped part-way.
@@ -94,6 +95,8 @@ jobs:
           status=0
           python3 scripts/app_store_listing.py "$ACTION" $version $word || status=$?
           # What App Store Connect holds after a submission, whether it went through or stopped
-          # part-way: the step still ends as the submission did.
-          if [ "$ACTION" = submit-latest ]; then python3 scripts/app_store_listing.py state || status=$?; fi
+          # part-way. The step ends as the submission did, whatever becomes of this reading.
+          if [ "$ACTION" = submit-latest ]; then
+            python3 scripts/app_store_listing.py state || echo "::warning::state could not be read after the submission"
+          fi
           exit "$status"

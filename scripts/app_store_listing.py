@@ -24,7 +24,7 @@ never the key, a token, a contact's details or a demo account's password.
                        "What's New" is written in each of its locales from
                        store/app-store/whats-new/<locale>.txt (Apple refuses an update
                        without it); then as below.
-        being prepared, or sent back
+        being prepared, or taken back
                        the version is named after the build, the build attached,
                        store/app-store/review-notes.txt written into the review details (the
                        contact and the demo account are kept as they are), and it is submitted.
@@ -35,18 +35,20 @@ never the key, a token, a contact's details or a demo account's password.
                        starts again, and that is the owner's decision each time. With the
                        word, the submission waiting is cancelled and the version goes up again
                        with the build, as above.
-        in review, or approved and not yet on sale
-                       nothing: a version in review is never touched, and no update can be
-                       made until the one before it is on sale.
-      Text, screenshots, age rating and categories stay as they are. Everything read from the
-      repository is checked before anything is written. Given a version (1.2.42+73), it
-      changes nothing unless the newest valid build is that one:
+        in review, sent back by App Review and not answered, or approved and not yet on sale
+                       nothing: what is in review is never touched, how to answer App Review
+                       is decided in App Store Connect, and no update can be made until the
+                       version before it is on sale.
+      Text, screenshots, age rating and categories stay as they are. What is read from the
+      repository is checked against the listing before anything is written. Given a version
+      (1.2.42+73), it changes nothing unless the newest valid build is that one:
       .github/app-store-request.txt always names one.
 """
 import contextlib
 import datetime
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -96,6 +98,19 @@ def pages(path: str, query=None):
     return found
 
 
+# What a version's review details hold of the review contact and the demo account. Nothing of
+# them is printed: each value is remembered as it is read, and taken out of whatever is said
+# of Apple's answers, which could repeat one back.
+PRIVATE_FIELDS = ("contactFirstName", "contactLastName", "contactPhone", "contactEmail", "demoAccountName", "demoAccountPassword")
+PRIVATE = set()
+
+
+def scrub(text: str) -> str:
+    for value in sorted(PRIVATE, key=len, reverse=True):
+        text = re.sub(re.escape(value), lambda _: "<private>", text, flags=re.IGNORECASE)
+    return text
+
+
 def explain(err: AscError, details: bool = True) -> str:
     """Apple's answer in a line: each error's code, what it says and the field it points at,
     with the errors under it (what a version still lacks to be submitted comes that way).
@@ -128,7 +143,7 @@ def explain(err: AscError, details: bool = True) -> str:
                         add(one, under=f"{path} ")
     if not said and details:
         said = [err.body[:300].strip()]
-    return " ".join(part for part in (str(err.status), "; ".join(said)) if part)
+    return scrub(" ".join(part for part in (str(err.status), "; ".join(said)) if part))
 
 
 class Refused(Exception):
@@ -249,11 +264,16 @@ def localizations(version_id: str):
 def review_detail(version_id: str):
     """A version's review details (contact, demo account, notes), or None when it has none yet."""
     try:
-        return (get(f"/v1/appStoreVersions/{version_id}/appStoreReviewDetail") or {}).get("data")
+        detail = (get(f"/v1/appStoreVersions/{version_id}/appStoreReviewDetail") or {}).get("data")
     except AscError as err:
         if err.status == 404:
             return None
         raise
+    for field in PRIVATE_FIELDS:
+        value = ((detail or {}).get("attributes") or {}).get(field)
+        if isinstance(value, str) and len(value.strip()) >= 3:
+            PRIVATE.add(value.strip())
+    return detail
 
 
 def attached_build(version_id: str):
@@ -267,14 +287,17 @@ def attached_build(version_id: str):
 
 
 def open_submissions(app_id: str):
-    """The review submissions waiting for review, and those made but not submitted."""
-    return pages("/v1/reviewSubmissions", {"filter[app]": app_id, "filter[platform]": "IOS",
-                                           "filter[state]": "WAITING_FOR_REVIEW,READY_FOR_REVIEW", "limit": 200})
+    """The review submissions still open: made and not submitted, waiting for review, in review,
+    or sent back by App Review and not yet answered."""
+    return pages("/v1/reviewSubmissions", {"filter[app]": app_id, "filter[platform]": "IOS", "limit": 200,
+                                           "filter[state]": "READY_FOR_REVIEW,WAITING_FOR_REVIEW,IN_REVIEW,UNRESOLVED_ISSUES"})
 
 
 def submission_items(submission_id: str):
-    """What a review submission holds, each item with the version it is for, if it is for one."""
-    return pages(f"/v1/reviewSubmissions/{submission_id}/items", {"include": "appStoreVersion", "limit": 200})
+    """What a review submission holds, each item with the version it is for, if it is for one.
+    An item taken out of it may stay listed as REMOVED: it holds that no more."""
+    items = pages(f"/v1/reviewSubmissions/{submission_id}/items", {"include": "appStoreVersion", "limit": 200})
+    return [item for item in items if (item.get("attributes") or {}).get("state") != "REMOVED"]
 
 
 def item_version(item):
@@ -418,19 +441,27 @@ def state() -> int:
     print(f"  price schedule: {'set' if price and price.get('data') else 'not set'}")
 
     section("Review submissions")
-    subs = try_get("review submissions", "/v1/reviewSubmissions", {"filter[app]": app_id, "limit": 5})
-    for s in (subs or {}).get("data", []):
+    try:
+        # The API names no order for them: one not submitted yet first, then the latest submitted.
+        subs = sorted(pages("/v1/reviewSubmissions", {"filter[app]": app_id, "limit": 200}),
+                      key=lambda sub: sub["attributes"].get("submittedDate") or "9", reverse=True)
+    except AscError as err:
+        print(f"  review submissions: App Store Connect answered {err.status} ({err.body[:200].strip()})")
+        subs = []
+    for s in subs[:8]:
         print(f"  {s['id']}: {s['attributes'].get('state')} submitted {s['attributes'].get('submittedDate')}, platform {s['attributes'].get('platform')}")
         items = try_get("submission items", f"/v1/reviewSubmissions/{s['id']}/items", {"include": "appStoreVersion"})
         for item in (items or {}).get("data", []):
             rel = item.get("relationships", {})
             what = [f"{k} {v['data'].get('id')}" for k, v in rel.items() if isinstance(v, dict) and isinstance(v.get("data"), dict)]
             print(f"    item {item['id']}: {item['attributes'].get('state')} ({', '.join(what) or 'no linked object shown'})")
-    if not (subs or {}).get("data"):
+    if len(subs) > 8:
+        print(f"  and {len(subs) - 8} older")
+    if not subs:
         print("  none")
     try:
         still_open = open_submissions(app_id)
-        print(f"  waiting for review or not yet submitted: {len(still_open)}"
+        print(f"  still open (not submitted, waiting, in review, or sent back): {len(still_open)}"
               + (f" ({', '.join(str(s['attributes'].get('state')) for s in still_open)})" if still_open else ""))
     except AscError as err:
         print(f"  open submissions: App Store Connect answered {err.status} ({err.body[:200].strip()})")
@@ -491,9 +522,14 @@ def review_check() -> int:
     name = (review.get("demoAccountName") or "").strip()
     password = review.get("demoAccountPassword") or ""
     notes = review.get("notes") or ""
-    for secret, mask in ((password, "<demo password>"), (name, "<demo name>")):
-        if secret:
-            notes = notes.replace(secret, mask)
+    # The notes are written by hand as well: whatever of the account or the contact is in them is masked.
+    masks = [(password, "<demo password>"), (name, "<demo name>")]
+    masks += [(value.strip(), mask) for value, mask in ((review.get("contactEmail"), "<contact email>"), (review.get("contactPhone"), "<contact phone>"),
+                                                      (review.get("contactFirstName"), "<contact first name>"),
+                                                      (review.get("contactLastName"), "<contact last name>"))
+              if isinstance(value, str) and len(value.strip()) >= 3]
+    for secret, mask in sorted((pair for pair in masks if pair[0]), key=lambda pair: len(pair[0]), reverse=True):
+        notes = re.sub(re.escape(secret), lambda _, mask=mask: mask, notes, flags=re.IGNORECASE)
     print(f"Demo account: name sha256 {hashlib.sha256(name.lower().encode()).hexdigest()[:16]}, password {'set' if password else 'empty'}")
     print("Review notes, as App Review reads them (account masked):")
     for paragraph in notes.splitlines():
@@ -541,15 +577,14 @@ def version_state(version_id: str) -> str:
 
 
 # What a version's review details keep from the version before, when Apple has not copied them.
-KEPT_FOR_REVIEW = ("contactFirstName", "contactLastName", "contactPhone", "contactEmail",
-                   "demoAccountName", "demoAccountPassword", "demoAccountRequired")
+KEPT_FOR_REVIEW = PRIVATE_FIELDS + ("demoAccountRequired",)
 
 
 def submit_latest(expected: str = "", replace_waiting: bool = False) -> int:
     try:
         return put_up_for_review(expected, replace_waiting)
     except Refused as err:
-        print(f"::error::{err}")
+        print(f"::error::{scrub(str(err))}")
     except AscError as err:
         print(f"::error::App Store Connect answered {explain(err)}")
     print("What was written before that stays written. state shows it, and asking again goes on from there.")
@@ -594,6 +629,15 @@ def put_up_for_review(expected: str, replace_waiting: bool) -> int:
               "an update takes a version above the one on sale. Nothing was changed.")
         return 1
     still_open = open_submissions(app_id)
+    for sub in still_open:
+        if sub["attributes"].get("state") == "IN_REVIEW":
+            print(f"::error::Review submission {sub['id']} is in review, and what is in review is never touched. Nothing was changed.")
+            return 1
+        if sub["attributes"].get("state") == "UNRESOLVED_ISSUES":
+            print(f"::error::App Review sent review submission {sub['id']} back and it is not answered yet (UNRESOLVED_ISSUES). "
+                  "How to answer is decided in App Store Connect (App Review), where its messages are: reply there, or change the "
+                  "version there and resubmit it. Nothing was changed.")
+            return 1
     waiting = [sub for sub in still_open if sub["attributes"].get("state") == "WAITING_FOR_REVIEW"]
     if (waiting or state_now == "WAITING_FOR_REVIEW") and not replace_waiting:
         since = f" since {waiting[0]['attributes'].get('submittedDate')}" if waiting else ""
@@ -643,6 +687,11 @@ def put_up_for_review(expected: str, replace_waiting: bool) -> int:
     # 1. With the owner's word, the submission waiting goes back to the developer, so the version
     #    can change; and the version comes out of a submission it was put in and not submitted with.
     for sub in waiting:
+        # Read again at the last moment: App Review may have taken it up since the list was read.
+        now = get(f"/v1/reviewSubmissions/{sub['id']}")["data"]["attributes"].get("state")
+        if now != "WAITING_FOR_REVIEW":
+            print(f"::error::Review submission {sub['id']} is no longer waiting for review but {now}: it is left alone.")
+            return 1
         with doing(f"Cancelling review submission {sub['id']}"):
             patch(f"/v1/reviewSubmissions/{sub['id']}", "reviewSubmissions", sub["id"], {"canceled": True})
         print(f"Cancelled review submission {sub['id']} (WAITING_FOR_REVIEW)")
@@ -670,7 +719,12 @@ def put_up_for_review(expected: str, replace_waiting: bool) -> int:
             print(f"::warning::Version {marketing} was asked for with the release {name} has, {release}, and App Store Connect says {got}.")
         previous, version, vid = version, new, new["id"]
     for _ in range(40):
-        state_now = version_state(vid)
+        try:
+            state_now = version_state(vid)
+        except AscError as err:
+            if not (on_sale and err.status == 404):
+                raise
+            state_now = "not readable yet"      # a version just made is not always there at once
         if state_now in EDITABLE:
             break
         time.sleep(6)
@@ -678,6 +732,17 @@ def put_up_for_review(expected: str, replace_waiting: bool) -> int:
         print(f"::error::The version is still {state_now}; nothing was changed on it.")
         return 1
     print(f"Version is now {state_now}")
+
+    def once_copied(read):
+        """What `read` gives; for a version just made, asked again for a minute while it gives
+        nothing, since what Apple copies from the version on sale is not always there at once."""
+        found = read()
+        for _ in range(10 if on_sale else 0):
+            if found:
+                break
+            time.sleep(6)
+            found = read()
+        return found
 
     # 3. The version takes the build's number and the build.
     if version["attributes"].get("versionString") != marketing:
@@ -690,7 +755,7 @@ def put_up_for_review(expected: str, replace_waiting: bool) -> int:
 
     # 4. What's New, in each locale the version has.
     if update:
-        mine = localizations(vid)
+        mine = once_copied(lambda: localizations(vid))
         if not mine:
             raise Refused(f"Version {marketing} has no locale, so nowhere to write What's New: the listing has to be filled in App Store Connect")
         for loc in mine:
@@ -701,26 +766,33 @@ def put_up_for_review(expected: str, replace_waiting: bool) -> int:
                 patch(f"/v1/appStoreVersionLocalizations/{loc['id']}", "appStoreVersionLocalizations", loc["id"], {"whatsNew": texts[locale]})
             print(f"What's New written for {locale} ({len(texts[locale])} characters)")
 
-    # 5. Review notes for this build. The contact and the demo account stay as they are: Apple
-    #    copies them into a new version, and if it has not, they are copied from the one before.
-    detail = review_detail(vid)
-    if detail:
-        with doing("Writing the review notes"):
-            patch(f"/v1/appStoreReviewDetails/{detail['id']}", "appStoreReviewDetails", detail["id"], {"notes": notes})
-        print(f"Review notes written ({len(notes)} characters)")
-    else:
+    # 5. Review notes for this build. The contact and the demo account stay as they are. Apple's
+    #    site copies them into a new version; where the API has not, they are copied from the
+    #    version before.
+    detail = once_copied(lambda: review_detail(vid))
+    if not detail:
         source = review_detail(previous["id"]) if previous else None
         if not source:
             raise Refused(f"Version {marketing} has no review details and no version before it to copy the contact and the demo account from: "
                           "fill App Review Information in App Store Connect, then ask again")
         attributes = {key: source["attributes"][key] for key in KEPT_FOR_REVIEW if source["attributes"].get(key) is not None}
         attributes["notes"] = notes
-        with doing(f"Making the review details of version {marketing}", details=False):
+        try:
             request("POST", "/v1/appStoreReviewDetails", body={"data": {
                 "type": "appStoreReviewDetails", "attributes": attributes,
                 "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": vid}}}}})
-        print(f"Review details made: the contact and the demo account as {previous['attributes'].get('versionString')} has them, "
-              f"and the review notes ({len(notes)} characters)")
+        except AscError as err:
+            # Refused because Apple's own copy came in meanwhile: then the notes go into that.
+            detail = review_detail(vid) if err.status == 409 else None
+            if not detail:
+                raise Refused(f"Making the review details of version {marketing}: App Store Connect answered {explain(err, details=False)}") from None
+        else:
+            print(f"Review details made: the contact and the demo account as {previous['attributes'].get('versionString')} has them, "
+                  f"and the review notes ({len(notes)} characters)")
+    if detail:
+        with doing("Writing the review notes"):
+            patch(f"/v1/appStoreReviewDetails/{detail['id']}", "appStoreReviewDetails", detail["id"], {"notes": notes})
+        print(f"Review notes written ({len(notes)} characters)")
 
     # 6. A submission with this version, submitted once App Store Connect shows the version in it.
     #    Apple keeps one open submission for a platform: one made earlier and holding nothing
@@ -745,7 +817,10 @@ def put_up_for_review(expected: str, replace_waiting: bool) -> int:
     with doing(f"Submitting {marketing} ({number}) for review"):
         done = patch(f"/v1/reviewSubmissions/{sub['id']}", "reviewSubmissions", sub["id"], {"submitted": True})["data"]
     print(f"Submitted {marketing} ({number}) for review: submission {done['id']} is {done['attributes'].get('state')}")
-    print(f"Version is now {version_state(vid)}")
+    try:
+        print(f"Version is now {version_state(vid)}")
+    except AscError as err:
+        print(f"The version's state could not be read after that ({err.status}); state shows it.")
     return 0
 
 

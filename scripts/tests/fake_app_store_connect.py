@@ -10,9 +10,13 @@ the rules of Apple's that decide the order of a submission's writes:
   - "What's New" is refused on an app's first version, and a later version is refused for
     review without it in every locale;
   - a version goes up for review with a build and review details, through a review submission,
-    and a platform has one open submission at a time;
-  - a submission that was never submitted cannot be cancelled (a developer's report of
-    12 Nov 2026: 409, "not in cancellable state"): what it holds is taken out item by item.
+    and a platform has one open submission at a time: one not submitted, waiting, in review, or
+    sent back by App Review and not answered (UNRESOLVED_ISSUES) keeps another from being made;
+  - only a submission waiting for review is cancelled here. One never submitted cannot be (a
+    developer's report of 12 Nov 2026: 409, "not in cancellable state"): what it holds is taken
+    out item by item. A cancelled one is CANCELING until the version is the developer's again;
+  - what a new version takes from the one on sale (its locales, its review details) may come a
+    moment after it is made, and it may not be readable at once.
 
 Every request is kept in `requests`, and the writes among them in `writes`, as
 (method, path, body): what would have gone over the wire.
@@ -76,8 +80,16 @@ class FakeAppStoreConnect:
         self.page_size = None               # lists answer in pages of this many, when set
         self.cancel_takes = 0       # reads of a version before a cancelled submission lets go of it
         self.ready_takes = 0        # reads of a version before it shows as added to a submission
+        self.readable_takes = 0     # reads of a version just made that are answered 404
+        self.copy_takes = 0         # reads of a new version's locales, and of its review details, that find nothing yet
+        self.details_take = None    # the same for the review details alone, when it differs
+        self.removed_items_stay = False     # an item taken out of a submission stays listed, as REMOVED
         self.refuse_once = []       # (method, path pattern, Refusal): answered to the next such request
+        self.before = []            # (method, path pattern, what to do first): something that happens meanwhile
         self.later = {}             # version id -> [reads left, state it then takes]
+        self.finishing = {}         # version id -> the cancelled submission that is COMPLETE once the version has changed
+        self.unreadable = {}        # version id -> reads still answered 404
+        self.uncopied = {}          # (version id, "locales" or "details") -> reads that still find nothing
         self.counters = {}
 
     # ---- what the tests put in it ---------------------------------------------------------
@@ -176,6 +188,11 @@ class FakeAppStoreConnect:
         self.requests.append((method, path, query, body))
         if method != "GET":
             self.writes.append((method, path, body))
+        for index, (meanwhile_method, pattern, happen) in enumerate(self.before):
+            if method == meanwhile_method and re.fullmatch(pattern, path):
+                del self.before[index]
+                happen()
+                break
         for index, (refused_method, pattern, refusal) in enumerate(self.refuse_once):
             if method == refused_method and re.fullmatch(pattern, path):
                 del self.refuse_once[index]
@@ -200,6 +217,7 @@ class FakeAppStoreConnect:
             ("GET", r"/v1/builds", self.get_builds),
             ("GET", rf"/v1/builds/{one}/preReleaseVersion", self.get_build_version),
             ("GET", r"/v1/reviewSubmissions", self.get_submissions),
+            ("GET", rf"/v1/reviewSubmissions/{one}", lambda sid, query, body: {"data": self.submission_resource(sid)}),
             ("GET", rf"/v1/reviewSubmissions/{one}/items", self.get_items),
             ("POST", r"/v1/appStoreVersions", self.post_version),
             ("PATCH", rf"/v1/appStoreVersions/{one}", self.patch_version),
@@ -226,22 +244,35 @@ class FakeAppStoreConnect:
         assert app == APP and query.get("filter[platform]") == "IOS", (app, query)
         return self.listing(f"/v1/apps/{app}/appStoreVersions", query, [self.version_resource(vid) for vid in self.listed])
 
+    def not_yet(self, counts, key):
+        """Whether a read comes too early: `counts` says how many reads of `key` still do."""
+        if counts.get(key, 0) > 0:
+            counts[key] -= 1
+            return True
+        return False
+
     def get_version(self, vid, query, body):
+        if self.not_yet(self.unreadable, vid):
+            raise Refusal(404, [error(404, "NOT_FOUND", "There is no resource of type 'appStoreVersions' with that id")])
         waiting = self.later.get(vid)
         if waiting:
             if waiting[0] <= 0:
                 self.versions[vid]["state"] = waiting[1]
                 del self.later[vid]
+                if vid in self.finishing:
+                    self.submissions[self.finishing.pop(vid)]["state"] = "COMPLETE"
             else:
                 waiting[0] -= 1
         return {"data": self.version_resource(vid)}
 
     def get_locales(self, vid, query, body):
         mine = [self.locale_resource(lid) for lid, loc in self.locales.items() if loc["version"] == vid]
+        if self.not_yet(self.uncopied, (vid, "locales")):
+            mine = []
         return self.listing(f"/v1/appStoreVersions/{vid}/appStoreVersionLocalizations", query, mine)
 
     def get_details(self, vid, query, body):
-        if vid not in self.details:
+        if vid not in self.details or self.not_yet(self.uncopied, (vid, "details")):
             raise Refusal(404, [error(404, "NOT_FOUND", "The specified resource does not exist")])
         return {"data": {"type": "appStoreReviewDetails", "id": self.details[vid]["id"],
                          "attributes": dict(self.details[vid]["attributes"])}}
@@ -320,6 +351,9 @@ class FakeAppStoreConnect:
             self.locales[self.new_id("loc")] = dict(loc, version=vid, whatsNew=None)
         if self.copies_review_details and on_sale in self.details:
             self.details[vid] = {"id": self.new_id("detail"), "attributes": dict(self.details[on_sale]["attributes"])}
+        self.unreadable[vid] = self.readable_takes
+        self.uncopied[(vid, "locales")] = self.copy_takes
+        self.uncopied[(vid, "details")] = self.copy_takes if self.details_take is None else self.details_take
         return {"data": self.version_resource(vid)}
 
     def patch_version(self, vid, query, body):
@@ -370,7 +404,7 @@ class FakeAppStoreConnect:
         data = body["data"]
         assert data == {"type": "reviewSubmissions", "attributes": {"platform": "IOS"},
                         "relationships": {"app": {"data": {"type": "apps", "id": APP}}}}, data
-        if any(s["state"] != "COMPLETE" for s in self.submissions.values()):
+        if any(s["state"] in ("READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES") for s in self.submissions.values()):
             raise Refusal(409, [error(409, "ENTITY_ERROR.RELATIONSHIP.INVALID",
                                       "There is another reviewSubmission still open for this platform.")])
         sid = self.new_id("sub")
@@ -417,7 +451,12 @@ class FakeAppStoreConnect:
         if submission["state"] != "READY_FOR_REVIEW":
             raise Refusal(409, [error(409, "STATE_ERROR.ENTITY_STATE_INVALID", "An item of a submission that was submitted cannot be removed.")])
         item = next(item for item in submission["items"] if item["id"] == iid)
-        submission["items"].remove(item)       # the submission stays, open and empty
+        if item["state"] == "REMOVED":
+            raise Refusal(409, [error(409, "STATE_ERROR.ENTITY_STATE_INVALID", "The item was removed already.")])
+        if self.removed_items_stay:
+            item["state"] = "REMOVED"
+        else:
+            submission["items"].remove(item)   # either way the submission stays, open and holding nothing
         if item["version"]:
             self.later[item["version"]] = [self.cancel_takes, "PREPARE_FOR_SUBMISSION"]
             if not self.cancel_takes:
@@ -428,9 +467,10 @@ class FakeAppStoreConnect:
         data = body["data"]
         assert data["type"] == "reviewSubmissions" and data["id"] == sid, data
         submission = self.submissions[sid]
-        versions = [item["version"] for item in submission["items"] if item["version"]]
+        held = [item for item in submission["items"] if item["state"] != "REMOVED"]
+        versions = [item["version"] for item in held if item["version"]]
         if data["attributes"] == {"submitted": True}:
-            if submission["state"] != "READY_FOR_REVIEW" or not submission["items"]:
+            if submission["state"] != "READY_FOR_REVIEW" or not held:
                 raise Refusal(409, [error(409, "STATE_ERROR", "The review submission holds nothing to submit.")])
             if any(self.versions[vid]["state"] != "READY_FOR_REVIEW" for vid in versions):
                 raise Refusal(409, [error(409, "STATE_ERROR", "An item of the submission is not ready for review yet.")])
@@ -440,11 +480,12 @@ class FakeAppStoreConnect:
         elif data["attributes"] == {"canceled": True}:
             if submission["state"] != "WAITING_FOR_REVIEW":
                 raise Refusal(409, [error(409, "STATE_ERROR.ENTITY_STATE_INVALID", "Resource is not in cancellable state")])
-            submission["state"] = "COMPLETE"
+            submission["state"] = "CANCELING" if versions else "COMPLETE"
             for item in submission["items"]:
                 item["state"] = "REMOVED"
             for vid in versions:
                 self.later[vid] = [self.cancel_takes, "DEVELOPER_REJECTED"]
+                self.finishing[vid] = sid
                 if not self.cancel_takes:
                     self.get_version(vid, {}, None)
         else:

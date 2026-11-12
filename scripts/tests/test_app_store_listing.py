@@ -104,6 +104,7 @@ class ListingCase(unittest.TestCase):
         self.asc = fake.FakeAppStoreConnect()
         self.outputs = []
         self.slept = []
+        listing.PRIVATE.clear()
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         store = pathlib.Path(self.folder.name)
@@ -384,6 +385,54 @@ class UpdateOnceTheVersionIsOnSale(ListingCase):
         self.assertIn("::error::Making version 1.2.42: App Store Connect answered 409 ENTITY_ERROR.RELATIONSHIP.INVALID: "
                       "You cannot create a new version of the App in the current state. [/data/relationships/app]", output)
 
+    def test_a_version_just_made_is_waited_for(self):
+        self.on_sale()
+        self.asc.readable_takes = 2     # 404 twice, then there
+        code, output = self.submit_latest("1.2.42+73")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.slept, [6, 6])
+        self.assertEqual(len(self.asc.writes), 7)
+
+    def test_what_apple_copies_into_a_new_version_is_waited_for(self):
+        self.on_sale()
+        self.asc.copy_takes = 2         # the locales, then the review details, each found at the third read
+        code, output = self.submit_latest("1.2.42+73")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.slept, [6, 6, 6, 6])
+        self.assertEqual(self.asc.writes, [
+            new_version("1.2.42"),
+            attach("v2", "b73"),
+            whats_new("loc2"),
+            notes("detail2", notes_for("1.2.42", "73")),      # Apple's own copy, not a second one made
+            open_submission(),
+            add_to("sub2", "v2"),
+            submit("sub2"),
+        ])
+
+    def test_review_details_apple_copied_while_they_were_being_made_take_the_notes(self):
+        self.on_sale()
+        self.asc.details_take = 11      # nothing for the whole minute they are waited for, then Apple's copy
+        code, output = self.submit_latest("1.2.42+73")
+        self.assertEqual(code, 0, output)
+        self.assertEqual([write[:2] for write in self.asc.writes], [
+            ("POST", "/v1/appStoreVersions"), ("PATCH", "/v1/appStoreVersions/v2/relationships/build"),
+            ("PATCH", "/v1/appStoreVersionLocalizations/loc2"),
+            ("POST", "/v1/appStoreReviewDetails"),              # refused: the version has them by now
+            ("PATCH", "/v1/appStoreReviewDetails/detail2"),
+            ("POST", "/v1/reviewSubmissions"), ("POST", "/v1/reviewSubmissionItems"), ("PATCH", "/v1/reviewSubmissions/sub2")])
+        self.assertEqual(self.asc.details["v2"]["attributes"]["notes"], notes_for("1.2.42", "73"))
+        self.assertNotIn("::error::", output)
+
+    def test_a_refusal_of_the_notes_shows_nothing_apple_repeats_of_the_contact(self):
+        self.on_sale()
+        self.asc.refuse_once.append(("PATCH", "/v1/appStoreReviewDetails/detail2", fake.Refusal(409, [fake.error(
+            409, "ENTITY_ERROR.ATTRIBUTE.INVALID", f"The contact {fake.SECRETS['contactEmail'].upper()} ({fake.SECRETS['contactPhone']}) "
+            f"could not be reached; account {fake.SECRETS['demoAccountName']}.", "/data/attributes/notes")])))
+        code, output = self.submit_latest("1.2.42+73")
+        self.assertEqual(code, 1, output)
+        self.assertIn("::error::Writing the review notes: App Store Connect answered 409 ENTITY_ERROR.ATTRIBUTE.INVALID: "
+                      "The contact <private> (<private>) could not be reached; account <private>. [/data/attributes/notes]", output)
+
     def test_it_waits_for_the_version_to_show_in_the_submission_before_submitting(self):
         self.on_sale()
         self.asc.ready_takes = 3
@@ -489,6 +538,26 @@ class TheUpdateBeingPrepared(ListingCase):
         self.assertIn(f"Review submission {draft} was made and holds nothing: it is taken up", output)
         self.assertEqual((self.asc.versions[v2]["state"], self.asc.submissions[draft]["state"]), ("WAITING_FOR_REVIEW", "WAITING_FOR_REVIEW"))
 
+    def test_an_item_taken_out_that_stays_listed_as_removed_holds_nothing(self):
+        v1, v2 = self.prepared(state="READY_FOR_REVIEW", build="b72")
+        draft = self.asc.add_submission("READY_FOR_REVIEW", version=v2, submitted=None)
+        self.asc.removed_items_stay = True
+        code, output = self.submit_latest("1.2.42+73")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.asc.writes[0], take_out("item1"))
+        self.assertEqual(self.asc.writes[-2:], [add_to(draft, "v2"), submit(draft)])
+        self.assertEqual([item["state"] for item in self.asc.submissions[draft]["items"]], ["REMOVED", "READY_FOR_REVIEW"])
+
+        # And met again later, a submission whose only rows are removed ones is an empty one.
+        self.asc.submissions[draft].update(state="READY_FOR_REVIEW", submittedDate=None)
+        self.asc.submissions[draft]["items"] = [{"id": "item9", "state": "REMOVED", "version": v2}, {"id": "item8", "state": "REMOVED", "version": None}]
+        self.asc.versions[v2].update(state="PREPARE_FOR_SUBMISSION")
+        del self.asc.writes[:]
+        code, output = self.submit_latest("1.2.42+73")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.asc.writes[-2:], [add_to(draft, "v2"), submit(draft)])
+        self.assertNotIn(("DELETE", "/v1/reviewSubmissionItems/item9", None), self.asc.writes)
+
     def test_a_submission_not_submitted_that_holds_something_else_is_left_to_its_owner(self):
         for version, others, said in ((None, 1, "holds 1 thing other than version 1.2.42"),
                                       (True, 2, "holds 2 things other than version 1.2.42")):
@@ -581,6 +650,38 @@ class TheVersionWaitingForReview(ListingCase):
         self.assertIn(f"Cancelled review submission {sub} (WAITING_FOR_REVIEW)", output)
         self.assertIn("Version is now DEVELOPER_REJECTED", output)
 
+    def test_app_review_taking_it_up_at_the_last_moment_stops_the_cancel(self):
+        vid, sub = self.waiting()
+
+        def taken_up():
+            self.asc.submissions[sub]["state"] = "IN_REVIEW"
+            self.asc.versions[vid]["state"] = "IN_REVIEW"
+
+        self.asc.before.append(("GET", f"/v1/reviewSubmissions/{sub}", taken_up))
+        code, output = self.submit_latest("1.2.42+73", replace_waiting=True)
+        self.assertEqual((code, self.asc.writes), (1, []), output)
+        self.assertIn(f"::error::Review submission {sub} is no longer waiting for review but IN_REVIEW: it is left alone.", output)
+        self.assertEqual(self.asc.submissions[sub]["state"], "IN_REVIEW")
+
+    def test_the_cancelled_submission_is_let_go_of_before_the_new_one_is_made(self):
+        vid, sub = self.waiting()
+        self.asc.cancel_takes = 3
+        seen = []
+        self.asc.before.append(("POST", "/v1/reviewSubmissions", lambda: seen.append(self.asc.submissions[sub]["state"])))
+        code, output = self.submit_latest("1.2.42+73", replace_waiting=True)
+        self.assertEqual((code, seen), (0, ["COMPLETE"]), output)
+        self.assertEqual(self.slept, [6, 6, 6])
+
+    def test_a_read_that_fails_after_the_submission_went_through_is_not_a_failure(self):
+        vid, sub = self.waiting()
+        self.asc.before.append(("PATCH", "/v1/reviewSubmissions/sub3", lambda: self.asc.refuse_once.append(
+            ("GET", f"/v1/appStoreVersions/{vid}", fake.Refusal(500, [fake.error(500, "UNEXPECTED_ERROR", "Try again later.")])))))
+        code, output = self.submit_latest("1.2.42+73", replace_waiting=True)
+        self.assertEqual(code, 0, output)
+        self.assertIn("Submitted 1.2.42 (73) for review: submission sub3 is WAITING_FOR_REVIEW", output)
+        self.assertIn("The version's state could not be read after that (500); state shows it.", output)
+        self.assertNotIn("::error::", output)
+
     def test_a_first_version_needs_no_whats_new_file(self):
         vid, sub = self.waiting()
         (self.store / "whats-new" / "en-US.txt").unlink()
@@ -640,6 +741,18 @@ class VersionsLeftAlone(ListingCase):
         self.assertEqual(self.slept, [])
         self.assertEqual(self.asc.versions[vid]["state"], "IN_REVIEW")
 
+    def test_a_submission_in_review_is_never_touched_whatever_the_version_says(self):
+        # The version's own state can lag behind its submission's, and a submission can hold
+        # something other than the version.
+        for version_state in ("WAITING_FOR_REVIEW", "PREPARE_FOR_SUBMISSION", "READY_FOR_SALE"):
+            with self.subTest(version_state=version_state):
+                self.asc = fake.FakeAppStoreConnect()
+                vid = self.first_version(version_state)
+                sub = self.asc.add_submission("IN_REVIEW", version=vid)
+                code, output = self.submit_latest("1.2.42+73", replace_waiting=True)
+                self.assertEqual((code, self.asc.writes), (1, []), output)
+                self.assertIn(f"::error::Review submission {sub} is in review, and what is in review is never touched. Nothing was changed.", output)
+
     def test_an_approved_version_not_yet_on_sale_is_waited_for(self):
         for state, reason in (("PENDING_DEVELOPER_RELEASE", "waits to be released by hand"),
                               ("PENDING_APPLE_RELEASE", "waits for Apple to release it"),
@@ -665,11 +778,36 @@ class VersionsLeftAlone(ListingCase):
 
 
 class AVersionSentBack(ListingCase):
-    def test_a_first_version_sent_back_goes_up_again_without_whats_new(self):
+    def test_one_app_review_sent_back_is_left_to_the_owner(self):
+        # As on 2 Nov 2026: the version rejected, its submission open until it is answered.
+        for state in ("REJECTED", "METADATA_REJECTED"):
+            for word in (False, True):
+                with self.subTest(state=state, word=word):
+                    self.asc = fake.FakeAppStoreConnect()
+                    vid = self.first_version(state)
+                    sub = self.asc.add_submission("UNRESOLVED_ISSUES", version=vid, item_state="REJECTED")
+                    code, output = self.submit_latest("1.2.42+73", replace_waiting=word)
+                    self.assertEqual((code, self.asc.writes), (1, []), output)
+                    self.assertIn(f"::error::App Review sent review submission {sub} back and it is not answered yet (UNRESOLVED_ISSUES).", output)
+                    self.assertIn("Nothing was changed.", output)
+                    self.assertEqual((self.asc.versions[vid]["versionString"], self.asc.versions[vid]["build"]), ("1.2.39", "b70"))
+
+    def test_an_update_app_review_sent_back_is_left_to_the_owner_too(self):
+        self.builds()
+        self.asc.add_version("1.2.39", "READY_FOR_SALE", build="b70")
+        v2 = self.asc.add_version("1.2.41", "REJECTED", build="b72", created="2026-11-20T09:00:00-08:00")
+        self.asc.add_submission("UNRESOLVED_ISSUES", version=v2, item_state="REJECTED")
+        code, output = self.submit_latest("1.2.42+73")
+        self.assertEqual((code, self.asc.writes), (1, []), output)
+
+    def test_one_taken_back_or_never_submitted_goes_up_again_without_whats_new(self):
+        # Cancelled by the developer, an invalid binary, or a rejection whose submission was since
+        # withdrawn in App Store Connect: nothing is open, and a first version takes no What's New.
         for state in sorted(fake.EDITABLE):
             with self.subTest(state=state):
                 self.asc = fake.FakeAppStoreConnect()
                 vid = self.first_version(state)
+                self.asc.add_submission("COMPLETE", version=vid, item_state="REMOVED")
                 code, output = self.submit_latest("1.2.42+73")
                 self.assertEqual(code, 0, output)
                 self.assertEqual(self.asc.writes, [
@@ -677,8 +815,8 @@ class AVersionSentBack(ListingCase):
                     attach("v1", "b73"),
                     notes("detail1", notes_for("1.2.42", "73")),
                     open_submission(),
-                    add_to("sub1", "v1"),
-                    submit("sub1"),
+                    add_to("sub2", "v1"),
+                    submit("sub2"),
                 ])
                 self.assertEqual(self.asc.versions[vid]["state"], "WAITING_FOR_REVIEW")
 
@@ -698,7 +836,7 @@ class WhatTheOtherActionsRead(ListingCase):
         self.assertIn("  no version is on sale yet: a first version has no What's New, and these wait for the update", output)
         self.assertIn(f"  {sub}: WAITING_FOR_REVIEW submitted 2026-11-06T15:50:54.515Z, platform IOS", output)
         self.assertIn(f"    item item1: READY_FOR_REVIEW (appStoreVersion {vid})", output)
-        self.assertIn("  waiting for review or not yet submitted: 1 (WAITING_FOR_REVIEW)", output)
+        self.assertIn("  still open (not submitted, waiting, in review, or sent back): 1 (WAITING_FOR_REVIEW)", output)
 
     def test_state_says_when_the_notes_are_not_the_repository_s(self):
         self.waiting()
@@ -713,7 +851,23 @@ class WhatTheOtherActionsRead(ListingCase):
         self.assertEqual((code, self.asc.writes), (0, []), output)
         self.assertIn("  store/app-store/whats-new/en-US.txt is the text the version on sale went out with", output)
         self.assertIn("  store/app-store/whats-new/fr-FR.txt is missing or empty", output)
-        self.assertIn("  waiting for review or not yet submitted: 0", output)
+        self.assertIn("  still open (not submitted, waiting, in review, or sent back): 0", output)
+
+    def test_state_shows_the_latest_submissions_of_a_long_history(self):
+        vid = self.first_version("READY_FOR_REVIEW")
+        for day in (3, 9, 1, 7, 5, 10, 2, 8, 4, 6):         # in no order, as the API may list them
+            self.asc.add_submission("COMPLETE", item_state="REMOVED", submitted=f"2026-10-{day:02d}T10:00:00.000Z")
+        draft = self.asc.add_submission("READY_FOR_REVIEW", version=vid, submitted=None)
+        self.asc.submissions = dict(sorted(self.asc.submissions.items(), key=lambda pair: pair[0]))
+        self.asc.page_size = 4
+        code, output = self.run_script(listing.state)
+        self.assertEqual((code, self.asc.writes), (0, []), output)
+        shown = [line.split(":")[0].strip() for line in output.splitlines() if " submitted " in line and line.startswith("  sub")]
+        dates = [line.split(" submitted ")[1].split(",")[0] for line in output.splitlines() if " submitted " in line and line.startswith("  sub")]
+        self.assertEqual(shown[0], draft)
+        self.assertEqual(dates, ["None"] + [f"2026-10-{day:02d}T10:00:00.000Z" for day in (10, 9, 8, 7, 6, 5, 4)])
+        self.assertIn("  and 3 older", output)
+        self.assertIn("  still open (not submitted, waiting, in review, or sent back): 1 (READY_FOR_REVIEW)", output)
 
     def test_state_shows_the_newest_version_first(self):
         self.builds()
@@ -728,7 +882,9 @@ class WhatTheOtherActionsRead(ListingCase):
     def test_review_check_reads_the_newest_version_and_masks_the_account(self):
         vid, sub = self.waiting()
         self.asc.details[vid]["attributes"]["notes"] = (
-            f"Sign in as {fake.SECRETS['demoAccountName']} with {fake.SECRETS['demoAccountPassword']}.\n\nThen open Home.")
+            f"Sign in as {fake.SECRETS['demoAccountName']} with {fake.SECRETS['demoAccountPassword']}.\n\nThen open Home.\n\n"
+            f"Questions: {fake.SECRETS['contactFirstName'].upper()} {fake.SECRETS['contactLastName']}, "
+            f"{fake.SECRETS['contactPhone']}, {fake.SECRETS['contactEmail'].title()}.")
         asked = []
 
         def portal(method, path, body=None, bearer=None):
@@ -744,6 +900,7 @@ class WhatTheOtherActionsRead(ListingCase):
                                                                   "password": fake.SECRETS["demoAccountPassword"]}, None))
         self.assertIn("Version 1.2.39 (WAITING_FOR_REVIEW)", output)
         self.assertIn("  | Sign in as <demo name> with <demo password>.", output)
+        self.assertIn("  | Questions: <contact first name> <contact last name>, <contact phone>, <contact email>.", output)
         self.assertIn("Portal sign-in with the demo account: HTTP 200", output)
 
     def test_review_check_fails_when_the_demo_account_no_longer_signs_in(self):

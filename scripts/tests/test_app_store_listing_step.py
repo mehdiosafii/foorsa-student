@@ -124,10 +124,16 @@ class TheStep(unittest.TestCase):
     def test_state_is_printed_after_a_submission_that_stopped_and_the_step_still_fails(self):
         self.assertEqual(self.run_step("submit-latest 1.2.42+73\n", fails="submit-latest")[:2],
                          (["review-check", "submit-latest 1.2.42+73", "state"], 1))
-        self.assertEqual(self.run_step("submit-latest 1.2.42+73\n", fails="state")[:2],
-                         (["review-check", "submit-latest 1.2.42+73", "state"], 1))
         self.assertEqual(self.run_step("submit-latest 1.2.42+73\n", fails="submit-latest,state")[:2],
                          (["review-check", "submit-latest 1.2.42+73", "state"], 1))
+
+    def test_the_step_ends_as_the_submission_did_when_state_cannot_be_read_after_it(self):
+        calls, code, output = self.run_step("submit-latest 1.2.42+73\n", fails="state")
+        self.assertEqual((calls, code), (["review-check", "submit-latest 1.2.42+73", "state"], 0))
+        self.assertIn("::warning::state could not be read after the submission", output)
+        calls, code, output = self.run_step(None, event="workflow_dispatch", action="submit-latest", fails="state")
+        self.assertEqual((calls, code), (["submit-latest", "state"], 0))
+        self.assertNotIn("::warning::", self.run_step("submit-latest 1.2.42+73\n")[2])
 
     def test_a_failing_read_fails_the_step(self):
         self.assertEqual(self.run_step("state\n", fails="state")[:2], (["state"], 1))
