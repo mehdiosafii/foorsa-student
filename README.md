@@ -34,16 +34,17 @@ https://student.foorsa.ma/android: Google Play's own APK of the version in
 production, sent there by `google-play.yml`'s `direct-download` job. See
 [push](docs/student-push.md) and [web view recovery](docs/web-view-recovery.md).
 
-## What the shell costs a phone (after 1.2.40)
+## What the shell costs a phone (1.2.41)
 
 The owner, 11 Nov 2026: "some animations and usage feel sluggish in the app,
-android and ios". The Android web view is no longer given an offscreen layer
-of its own, which drew every frame of the portal twice and held about 10 MB;
-the web view is made as soon as the loader's first frame is drawn, not 300 ms
-later, and the loader rests on its first picture until it exists; and on
-Android the loader's glass is drawn from pictures, as the onboarding's is.
-Not yet tried on a phone. See
-[what the shell costs](docs/shell-frame-cost.md).
+android and ios". From 1.2.41 (72) the Android web view is no longer given an
+offscreen layer of its own, which drew every frame of the portal twice and
+held about 10 MB; the web view is made as soon as the loader's first frame is
+drawn, not 300 ms later, and the loader rests on its first picture until it
+exists; and on Android the loader's glass is drawn from pictures, as the
+onboarding's is. It went out without a check on a phone (the owner, 12 Nov
+2026: "push live", straight to the stores), so what a phone still has to
+confirm is listed in [what the shell costs](docs/shell-frame-cost.md).
 
 ## The adhan
 

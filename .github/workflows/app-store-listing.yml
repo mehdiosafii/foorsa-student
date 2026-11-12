@@ -3,12 +3,20 @@ name: App Store listing
 # Reads and keeps the App Store listing of Foorsa Student through the App Store Connect API, with
 # the team key the TestFlight workflow uses (scripts/app_store_listing.py). It prints states, counts
 # and whether a field is filled, never the key, a contact's details or a demo password.
-# Started by hand only (Actions › App Store listing › Run workflow):
+# Started by hand (Actions › App Store listing › Run workflow):
 #   state          what App Store Connect holds, and the review submission's state
 #   review-check   whether App Review's demo account still signs in to the app as it is today
 #   submit-latest  the newest valid build up for review in place of the one waiting, with
 #                  store/app-store/review-notes.txt as its notes
+# Or by a push to main that changes .github/app-store-request.txt, for whoever cannot start a
+# workflow by hand (as .github/google-play-promote.txt does for Google Play). The file is one
+# line: "state", "review-check", or "submit-latest 1.2.41+72". A submission asked for this way
+# has to name its version, is refused unless the newest valid build is exactly that one, and
+# runs review-check first, stopping there if the demo account no longer signs in.
 on:
+  push:
+    branches: [main]
+    paths: [.github/app-store-request.txt]
   workflow_dispatch:
     inputs:
       action:
@@ -39,6 +47,28 @@ jobs:
           ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
           ACTION: ${{ inputs.action }}
+          EVENT: ${{ github.event_name }}
         run: |
-          python3 scripts/app_store_listing.py "$ACTION"
+          version=''
+          if [ "$EVENT" = push ]; then
+            file=.github/app-store-request.txt
+            if [ ! -f "$file" ]; then
+              echo "::notice::$file is gone; nothing was asked."
+              exit 0
+            fi
+            read -r ACTION version extra < "$file" || true
+            case "$ACTION" in
+              state|review-check)
+                if [ -n "$version" ]; then echo "::error::$file: $ACTION takes nothing after it"; exit 1; fi ;;
+              submit-latest)
+                if [ -n "$extra" ] || ! printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+)*\+[0-9]+$'; then
+                  echo "::error::$file: a submission names its version, as in: submit-latest 1.2.41+72"; exit 1
+                fi ;;
+              *) echo "::error::$file must be state, review-check or submit-latest <version>"; exit 1 ;;
+            esac
+            # Nobody ran review-check by hand before this submission, so it runs here, and a demo
+            # account that no longer signs in stops the step before anything is submitted.
+            if [ "$ACTION" = submit-latest ]; then python3 scripts/app_store_listing.py review-check; fi
+          fi
+          python3 scripts/app_store_listing.py "$ACTION" $version
           if [ "$ACTION" = submit-latest ]; then python3 scripts/app_store_listing.py state; fi

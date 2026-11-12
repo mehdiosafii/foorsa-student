@@ -1,6 +1,8 @@
 # What the shell costs a phone, on every start and in use
 
-Status: implementation branch; physical-device validation pending.
+Status: released as 1.2.41 (72) on 12 Nov 2026 at the owner's word ("push live",
+straight to the stores), before any check on a phone. The device verification
+below is still owed.
 
 The owner, 11 Nov 2026: "some animations and usage feel sluggish in the app,
 android and ios (not a big deal) investigate and fix it for the cleanest ux".
@@ -188,7 +190,8 @@ at 2.625; their numbers in `first-launch-onboarding.md` are for that.
   the copy and paste bar; a place's video playing; the admission letter; the
   introduction video's studio; a paper picked and uploaded; leaving the app
   and coming back. Should the web view draw wrongly anywhere,
-  `webViewOffscreenLayer` true puts the layer back.
+  `webViewOffscreenLayer` true puts the layer back. That takes a new version:
+  the setting is built into the app, and nothing outside it can switch it.
 - Both, a start: the launch image, the arrow standing, then its loop from the
   beginning with nothing jumping, and the first screen fading in; in light
   and in dark; with Reduce Motion; on a slow connection (the loop keeps

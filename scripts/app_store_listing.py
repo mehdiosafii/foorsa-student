@@ -21,6 +21,8 @@ never the key, a token, a contact's details or a demo account's password.
       (CFBundleShortVersionString), attaches the build, writes store/app-store/review-notes.txt
       into the review details (the demo account is kept as it is), and submits. Text,
       screenshots, age rating, categories and the manual release stay as they are.
+      Given a version after it (submit-latest 1.2.41+72), it changes nothing unless the
+      newest valid build is that one: .github/app-store-request.txt always names one.
 """
 import json
 import os
@@ -277,7 +279,7 @@ def version_state(version_id: str) -> str:
 EDITABLE = {"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY"}
 
 
-def submit_latest() -> int:
+def submit_latest(expected: str = "") -> int:
     import time
     app_id, version = app_and_version()
     vid = version["id"]
@@ -292,6 +294,9 @@ def submit_latest() -> int:
     marketing = get(f"/v1/builds/{build['id']}/preReleaseVersion")["data"]["attributes"]["version"]
     number = build["attributes"]["version"]
     print(f"Newest valid build: {marketing} ({number})")
+    if expected and expected != f"{marketing}+{number}":
+        print(f"::error::The newest valid build is {marketing}+{number}, not {expected}: nothing was changed.")
+        return 1
 
     # 1. The submission waiting goes back to the developer, so the version can change.
     subs = get("/v1/reviewSubmissions", {"filter[app]": app_id, "filter[platform]": "IOS", "limit": 10})
@@ -345,4 +350,6 @@ if __name__ == "__main__":
     commands = {"state": state, "review-check": review_check, "submit-latest": submit_latest}
     if command not in commands:
         sys.exit(f"Unknown command {command!r}: {', '.join(commands)}")
+    if command == "submit-latest" and len(sys.argv) > 2:
+        sys.exit(submit_latest(sys.argv[2]))
     sys.exit(commands[command]())
