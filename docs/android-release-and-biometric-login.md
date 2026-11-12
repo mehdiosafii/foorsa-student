@@ -99,7 +99,10 @@ number must be higher than all previously uploaded Play bundles, as well as
 the last iOS build; check Play Console before bumping the shared version.
 The release replaces whatever the track holds, a draft left in Play Console
 included, and carries the notes in `android/play-release-notes/<language>.txt`
-(one file per listing language, at most 500 characters). While Play Console
+(one file per listing language, at most 500 characters). The App Store's
+"What's New" is kept apart, in `store/app-store/whats-new/`
+(docs/app-store-review.md): a version that changes what an iPhone student
+gets adds to it. While Play Console
 holds other changes waiting to be sent (a declaration, the reviewer sign-in
 details), Play will not send an edit for review by itself: the script then
 commits it with `changesNotSentForReview`, and the run's summary says to press
