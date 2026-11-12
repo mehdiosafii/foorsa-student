@@ -1,7 +1,7 @@
 # Patched plugins
 
-Two Android plugins are built from copies kept here, each with a small Foorsa
-patch, through `dependency_overrides` in `pubspec.yaml`. Everything else in them
+Two Android plugins are built from copies kept here, each with small Foorsa
+patches, through `dependency_overrides` in `pubspec.yaml`. Everything else in them
 is the published version, byte for byte (tests and examples left out). iOS uses
 neither copy.
 
@@ -30,6 +30,22 @@ and skipping it otherwise. `InAppWebView.prepare()`, `setSettings()` and
 `InAppWebViewSettings.getRealSettings()` go through it. The portal sets none of
 these settings to anything but its default, so nothing it relies on is lost on
 such a phone.
+
+## flutter_inappwebview_android 1.1.3: always in the window
+
+**What broke.** With `useHybridComposition: false` the plugin's Dart side shows the web view in a
+texture (`initSurfaceAndroidView`), which keeps it in the activity's window. Its Java side takes the
+same `false` for a virtual display, the mode it was first written for, and there it swaps Android's
+own selection menu (Paste) for a floating one of its own, tells the web view its window lost focus
+each time that menu starts, and points the keyboard at a proxy on the Flutter view. The app makes
+its web view that way on a first launch, under the onboarding, and the student then signs in in it
+(the owner, 12 Nov 2026: "when pasting the otp ... no paste button is there it freezes, also many
+times the scrolling and keyboard are stuck"). Upstream ships the same code.
+
+**The patch.** One line in `webview/in_app_webview/FlutterWebView.java`, after the settings the Dart
+side sent are read: `customSettings.useHybridComposition = true;`. The Java side then always takes
+its in-window paths (Android's own menu, Android's own keyboard); how the view is drawn stays the
+Dart side's choice. See `docs/web-view-touch.md`.
 
 ## camera_android_camerax 0.6.30: the still in quality mode
 
