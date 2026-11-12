@@ -263,12 +263,19 @@ abstract final class GlassBake {
 
   /// How many device pixels a point of [canvas] covers: the transform in
   /// its picture, times the screen's.
+  ///
+  /// The screen's density is read from the binding's dispatcher: on a phone,
+  /// `ui.PlatformDispatcher.instance` itself; in a test, the one whose view
+  /// the test sets (`tester.view.devicePixelRatio`), so a test that names a
+  /// phone bakes at the density it draws at. The engine's own view stays at
+  /// 3 there, whatever the test sets.
   static double deviceScale(Canvas canvas) {
     final m = canvas.getTransform();
     final local = math.max(math.sqrt(m[0] * m[0] + m[1] * m[1]),
         math.sqrt(m[4] * m[4] + m[5] * m[5]));
-    final screen =
-        ui.PlatformDispatcher.instance.implicitView?.devicePixelRatio ?? 1;
+    final screen = WidgetsBinding
+            .instance.platformDispatcher.implicitView?.devicePixelRatio ??
+        1;
     return local * screen;
   }
 
