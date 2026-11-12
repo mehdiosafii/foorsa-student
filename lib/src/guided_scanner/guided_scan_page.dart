@@ -753,6 +753,10 @@ class _GuidedScanPageState extends State<GuidedScanPage>
   }
 
   // What the scanner says, in the student's language.
+  /// The screen's height, in points of ordinary text, under which the
+  /// footnote gives way (a phone on its side or a small one, at the largest
+  /// text).
+  static const _crampedHeight = 330.0;
   static const _close =
       Words('Close scanner', 'Fermer le scanner', 'إغلاق الماسح الضوئي');
   static const _scanTitle = Words(
@@ -828,14 +832,26 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                 child: Icon(Icons.document_scanner_outlined,
                     size: 80, color: Colors.white30),
               ),
-            Align(
-              alignment: Alignment.topCenter,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
+            // One column from the top of the screen to its foot, so what the
+            // top says can never lie over the guidance: it has the room the
+            // title and the controls leave, and no more. They were two
+            // separate layers; with the phone on its side and its text set
+            // large, or with a long instruction from the portal, the
+            // instruction ran 45 to 85 points into the guidance panel (the
+            // owner's stress test, 12 Nov 2026).
+            Positioned.fill(
+              child: LayoutBuilder(builder: (context, box) {
+              // With the phone's text at its largest, a small phone (or one
+              // on its side) has no room left for the footnote under the
+              // shutter: it goes, and the shutter stays on the screen.
+              final cramped = box.maxHeight /
+                      (MediaQuery.textScalerOf(context).scale(100) / 100) <
+                  _crampedHeight;
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                    child: Row(
                       children: [
                         IconButton(
                           tooltip: _close.of(language),
@@ -849,6 +865,8 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                                 .of(language)
                                 .replaceFirst('{title}', widget.profile.title),
                             textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: Colors.white, fontSize: 17,
                               fontWeight: FontWeight.w600,
@@ -865,117 +883,183 @@ class _GuidedScanPageState extends State<GuidedScanPage>
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      widget.profile.instruction,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white70, fontSize: 12, height: 1.4,
+                  ),
+                  Expanded(
+                    // Words only: a touch here is the camera's, as it was.
+                    child: IgnorePointer(
+                      child: _FadedAtFoot(
+                        key: const ValueKey('scan-instruction'),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                widget.profile.instruction,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white70, fontSize: 12, height: 1.4,
+                                ),
+                              ),
+                              if (widget.profile.pagesHintIn(language).isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  widget.profile.pagesHintIn(language),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Color(0xFFB8DDFF),
+                                    fontSize: 11, height: 1.4,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                    if (widget.profile.pagesHintIn(language).isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        widget.profile.pagesHintIn(language),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFFB8DDFF),
-                          fontSize: 11, height: 1.4,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            Positioned(
-              left: 18,
-              right: 18,
-              bottom: 14,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ScanGuidancePanel(
-                    copy: scanCopyIn(shown.copy, language),
-                    state: shown.state,
-                    progress: _autoEnabled && _streamSupported ? _loop.progress : null,
-                    busy: _busy && !_preparing,
                   ),
-                  const SizedBox(height: 18),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      TextButton.icon(
-                        onPressed: cameraWorking && _streamSupported && !_busy
-                            ? _toggleAuto : null,
-                        icon: Icon(
-                          _autoEnabled ? Icons.auto_awesome : Icons.touch_app,
-                          size: 18,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ScanGuidancePanel(
+                          copy: scanCopyIn(shown.copy, language),
+                          state: shown.state,
+                          progress: _autoEnabled && _streamSupported ? _loop.progress : null,
+                          busy: _busy && !_preparing,
                         ),
-                        label: Text(
-                            (_autoEnabled ? _autoOn : _autoOff).of(language)),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: cameraWorking && !_busy ? _takePhoto : null,
-                        child: Semantics(
-                          button: true,
-                          label: _takePhotoLabel.of(language),
-                          child: Container(
-                            width: 72,
-                            height: 72,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Colors.white, width: 4,
-                              ),
-                              color: Colors.white24,
-                            ),
-                            child: Center(
-                              child: Container(
-                                width: 56, height: 56,
-                                decoration: const BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
+                        SizedBox(height: cramped ? 10 : 18),
+                        // The two sides give way before the row runs off the
+                        // screen: in French, or with larger text, « Auto
+                        // désactivé » and « Appli Appareil photo » were wider
+                        // than a 360-point phone beside the shutter, and the
+                        // last of them, the only way on when the camera will
+                        // not open, was cut off. They wrap onto two lines.
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Flexible(
+                              child: TextButton.icon(
+                                onPressed: cameraWorking && _streamSupported && !_busy
+                                    ? _toggleAuto : null,
+                                icon: Icon(
+                                  _autoEnabled ? Icons.auto_awesome : Icons.touch_app,
+                                  size: 18,
+                                ),
+                                label: Text(
+                                    (_autoEnabled ? _autoOn : _autoOff).of(language),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.white,
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                      ),
-                      // The phone's own camera app sounds its shutter and is
-                      // not this scanner, so it is never opened by itself and
-                      // never offered while this camera works: only when this
-                      // camera cannot open, under a name that says what it is.
-                      if (_cameraFailed)
-                        Semantics(
-                          hint: _cameraAppHint.of(language),
-                          child: TextButton(
-                            onPressed: _busy ? null : _useOtherCamera,
-                            style: TextButton.styleFrom(
-                              foregroundColor: Colors.white,
+                            GestureDetector(
+                              onTap: cameraWorking && !_busy ? _takePhoto : null,
+                              child: Semantics(
+                                button: true,
+                                label: _takePhotoLabel.of(language),
+                                child: Container(
+                                  width: 72,
+                                  height: 72,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white, width: 4,
+                                    ),
+                                    color: Colors.white24,
+                                  ),
+                                  child: Center(
+                                    child: Container(
+                                      width: 56, height: 56,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
-                            child: Text(_cameraApp.of(language)),
+                            // The phone's own camera app sounds its shutter and is
+                            // not this scanner, so it is never opened by itself and
+                            // never offered while this camera works: only when this
+                            // camera cannot open, under a name that says what it is.
+                            if (_cameraFailed)
+                              Flexible(
+                                child: Semantics(
+                                  hint: _cameraAppHint.of(language),
+                                  child: TextButton(
+                                    onPressed: _busy ? null : _useOtherCamera,
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Colors.white,
+                                    ),
+                                    child: DefaultTextStyle.merge(
+                                      textAlign: TextAlign.center,
+                                      // « Appli / Appareil / photo » beside
+                                      // the shutter on a 360-point phone.
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                      child: Text(_cameraApp.of(language)),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              const SizedBox(width: 96),
+                          ],
+                        ),
+                        if (!cramped) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            _footnote.of(language),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white60, fontSize: 11, height: 1.3,
+                            ),
                           ),
-                        )
-                      else
-                        const SizedBox(width: 96),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _footnote.of(language),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white60, fontSize: 11, height: 1.3,
+                        ],
+                      ],
                     ),
                   ),
                 ],
-              ),
+              );
+              }),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Its child from the top, as much of it as there is room for, fading out
+/// over its last lines when there is not enough: never laid over what is
+/// under it, and never cut through the middle of a line.
+class _FadedAtFoot extends StatelessWidget {
+  const _FadedAtFoot({super.key, required this.child});
+  final Widget child;
+
+  static const _fade = 22.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShaderMask(
+      blendMode: BlendMode.dstIn,
+      shaderCallback: (rect) => LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: const [Colors.white, Colors.white, Colors.transparent],
+        stops: [0, rect.height <= _fade ? 0 : 1 - _fade / rect.height, 1],
+      ).createShader(rect),
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.topCenter,
+          minHeight: 0,
+          maxHeight: double.infinity,
+          child: child,
         ),
       ),
     );
