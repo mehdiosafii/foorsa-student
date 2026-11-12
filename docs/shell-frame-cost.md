@@ -137,7 +137,7 @@ a 720p phone that is the light along the arrow's and the plane's bevel, one
 blur a frame. The pictures, on the dark ground and on the light one: 7 and
 1.1 MB, 6 and 1.6 MB at 720 x 1600; 9 and 2.1 MB, 7 and 2.5 MB at
 1080 x 2400; 11 and 4.8 MB, 9 and 5.8 MB at 1440 x 3200. (As many in 1.2.41
-itself, in up to 0.4 MB less: since then the picture of a light reaches
+itself, in up to 0.4 MB less: from 1.2.42 (73) the picture of a light reaches
 beyond its glass, `first-launch-onboarding.md`.) The loader was
 drawn with and without them at four moments of its loop, on both grounds, at
 720 x 1600 and at 1080 x 2400, with Skia and with Impeller: 5 levels of 255

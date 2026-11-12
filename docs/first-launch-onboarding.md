@@ -547,8 +547,9 @@ Impeller; 0.02 on average.
 tests drew at 2.625 pixels per point and baked for a screen at 3: `GlassBake`
 read the engine's own view, whose density a test cannot set. They bake at the
 density they draw at now, and two things showed that the numbers for a screen
-at 3 had hidden. Both are changed, on Android only, after 1.2.41 (72), which
-went out that day without them:
+at 3 had hidden. Both are changed, on Android only, from 1.2.42 (73), which
+went out that day at the owner's word ("release now as 1.2.42"), before any
+check on a phone; 1.2.41 (72) had gone out that morning without them:
 
 - The location kept four blurs a frame, not the two this table said. A shadow
   was held to the pixel and a half of a light, and the locate arrow's are
