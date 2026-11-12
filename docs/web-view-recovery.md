@@ -122,3 +122,47 @@ each pinned by a test that fails on the code as it was:
 What only a phone can confirm: that a real slow phone's first web view now
 finishes, and the loader and the reminder under the phone's own back button
 and prompts.
+
+### The same day, every control tapped
+
+A second pass tapped every control of the portal's screens (40 screens, 535
+taps, the sheets and unfolded sections included) and found two faults that are
+the app's own, not the page's:
+
+- **Android's back button left the screen instead of closing the sheet.**
+  Back was always the web view's history (`_handleBack`). With a sheet open
+  (the upload chooser, a paper's help, "Share with parents", a city list, the
+  privacy notice) it took the student off the screen under the sheet, sheet
+  and all; on a screen with nothing behind it the sheet stayed while the app
+  said "Press back again to exit". All 33 sheets tried behaved so. The
+  portal's layers already close on Escape, the topmost first, so the press is
+  now offered to the page as that key before the history is touched
+  (`web_back.dart`): `webLayerAsk` finds the topmost layer on screen and
+  presses Escape in it, `webLayerAnswered` says whether it went. A native
+  `<dialog>` (the calendar's event, a recipe's video, the journey's player,
+  the admission letter) is deaf to a scripted key and is told by a `cancel`
+  event, as the browser tells it; one that takes the `cancel` has taken the
+  press, even when it closes over a second or two. A layer that does not
+  answer (the contract to sign is locked on purpose) leaves back as it was.
+  A second press while the first is being answered is the same press.
+  Run against the live portal: twelve kinds of sheet and two native dialogs
+  close and stay on their screen; the locked contract falls through.
+- **"Tap the sample to view it full size" replaced the whole app with a
+  picture.** Every paper's help shows Foorsa's sample as a link that opens in
+  a new window. `onCreateWindow` loaded any address of the portal's own into
+  the web view itself, so the app became a bare image with nothing to close
+  it, and an iPhone has no back button (only the edge swipe, if the student
+  knows it). A picture or a PDF of the portal's own now opens in the app's
+  viewer (`previewableFile`, `embedded_navigation.dart`, then `_previewFile`);
+  a page of the portal still loads in the web view, and another site's
+  address still leaves the app.
+
+`test/web_back_test.dart`, `test/web_back_test.cjs` (the two scripts against a
+page with layers, run by the Android workflow beside the biometric script's
+test) and `test/embedded_navigation_test.dart` pin them. Not done, and why: on
+an iPhone the edge swipe is the web view's own back gesture
+(`allowsBackForwardNavigationGestures`) and never reaches `_handleBack`, so a
+swipe with a sheet open still leaves the screen. Closing the sheet there needs
+the page to tell the app that a layer is open, which is a change in both
+repositories. What only a phone can confirm: the back button itself over each
+kind of sheet, and the viewer opening a sample.
