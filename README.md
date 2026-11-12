@@ -60,6 +60,23 @@ check on a phone (the owner, 12 Nov 2026: "release now as 1.2.42", then, of
 Android, that it be live to users), so what a phone still has to confirm is
 listed in [the first-launch onboarding](docs/first-launch-onboarding.md).
 
+## Touch, Paste and the keyboard (1.2.43)
+
+The owner, 12 Nov 2026: "when pasting the otp ... no paste button is there it
+freezes, also many times the scrolling and keyboard are stuck". From 1.2.43 (74)
+on Android, the web view made on a first launch keeps Android's own Paste menu
+and keyboard (the plugin ran it through paths written for a virtual display);
+and on an iPhone the web view takes its touches straight from iOS, with no
+recognizer of Flutter's to wait for. The same version carries the stress test's
+fixes: no blank app after a permission, a download or back in the scanner; back
+that closes the open sheet; downloads that give up; a scanner that survives a
+call; push that does not wait on Google; and the app's own screens fitted to
+small phones, phones on their side and large text. It went to TestFlight and to
+Google Play, production included, without a check on a phone (the owner, the
+same day: "when you finish push all live"), so what a phone still has to
+confirm is listed in [touch, Paste and the keyboard](docs/web-view-touch.md)
+and in [web view recovery](docs/web-view-recovery.md).
+
 ## The adhan
 
 From 1.2.39 (70) the app sounds a recorded adhan at the prayer times the
