@@ -1,1 +1,1 @@
-Une application plus fluide : les écrans défilent et s’animent plus légèrement, et l’application s’ouvre un peu plus vite. Une connexion lente n’affiche plus « Pas de connexion ». Corrections.
+Une application plus fluide : les écrans défilent et s’animent plus légèrement, et l’application s’ouvre un peu plus vite. Sur Android, la présentation du premier lancement s’anime plus légèrement elle aussi. Une connexion lente n’affiche plus « Pas de connexion ». Corrections.

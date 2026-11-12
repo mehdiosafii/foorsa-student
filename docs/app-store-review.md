@@ -15,7 +15,8 @@ had stopped signing in too. The waiting submission was cancelled, and 1.2.38 (69
 review in its place with the notes in `store/app-store/review-notes.txt`.
 
 On 12 Nov 2026, 1.2.39 (70) had been waiting for review since 6 Nov (submitted at 15:50 UTC),
-and no version had been approved yet; 1.2.40 (71) and 1.2.41 (72) went to TestFlight only.
+and no version had been approved yet; 1.2.40 (71), 1.2.41 (72) and 1.2.42 (73) went to
+TestFlight only.
 **submit-latest** cancels the submission waiting, and the wait starts again with the new one: say
 so, and ask, before putting a newer build in a waiting one's place.
 
