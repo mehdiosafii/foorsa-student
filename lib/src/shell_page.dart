@@ -1587,7 +1587,13 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
                 onCreateWindow: (controller, action) async {
                   final uri = action.request.url;
                   if (uri != null) {
-                    if (_isInternal(uri)) {
+                    final file = _isInternal(uri) ? previewableFile(uri) : null;
+                    if (file != null) {
+                      // A picture or a PDF of the portal's own (a paper's
+                      // sample) opens in the app's viewer, never in place of
+                      // the app (embedded_navigation.dart).
+                      unawaited(_previewFile(uri.toString(), file.name, file.mime));
+                    } else if (_isInternal(uri)) {
                       controller.loadUrl(urlRequest: URLRequest(url: uri));
                     } else {
                       _openExternally(uri);
