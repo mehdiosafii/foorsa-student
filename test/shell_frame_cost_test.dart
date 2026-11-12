@@ -44,16 +44,12 @@ class _Phone {
   static const quadHd = _Phone('1440 x 3200 at 3.5', Size(1440, 3200), 3.5);
 
   /// Draws the test at this phone's density, and bakes at it: GlassBake
-  /// reads the engine's own view, which the test's view does not change.
+  /// reads the density of the view this sets.
   void use(WidgetTester tester) {
     tester.view.devicePixelRatio = density;
     tester.view.physicalSize = screen;
     tester.view.padding = const FakeViewPadding(top: 63);
-    GlassBake.debugScreenDensity = density;
-    addTearDown(() {
-      tester.view.reset();
-      GlassBake.debugScreenDensity = null;
-    });
+    addTearDown(tester.view.reset);
   }
 }
 
@@ -333,9 +329,9 @@ void main() {
           expect(GlassBake.made, made);
           expect(GlassBake.count, made,
               reason: 'none was let go and made again');
-          // Measured, dark and light: 6 pictures and 0.9 MB, 5 and 1.5 MB
-          // at 720 x 1600; 9 and 1.9 MB, 7 and 2.5 MB at 1080 x 2400; 11
-          // and 4.4 MB, 9 and 5.7 MB at 1440 x 3200.
+          // Measured, dark and light: 7 pictures and 1.1 MB, 6 and 1.6 MB
+          // at 720 x 1600; 9 and 2.1 MB, 7 and 2.5 MB at 1080 x 2400; 11
+          // and 4.8 MB, 9 and 5.8 MB at 1440 x 3200.
           expect(GlassBake.pixels * 4, lessThan(8e6));
           await tester.pumpWidget(const SizedBox());
           expect(GlassBake.count, 0, reason: 'they go with the loader');

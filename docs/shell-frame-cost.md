@@ -131,12 +131,14 @@ pictures made once (`GlassBake`, `onboarding/glass.dart`;
 
 What changes shape or fades from one frame to the next (the arrow becoming
 the plane, the next arrow coming up) is drawn as before: a picture of it
-would be made again on every frame. And a blur under a pixel and a half wide
+would be made again on every frame. And a light under a pixel and a half wide
 on the screen stays a blur, as in the onboarding, so that it stays sharp: on
 a 720p phone that is the light along the arrow's and the plane's bevel, one
-blur a frame. The pictures, on the dark ground and on the light one: 6 and
-0.9 MB, 5 and 1.5 MB at 720 x 1600; 9 and 1.9 MB, 7 and 2.5 MB at
-1080 x 2400; 11 and 4.4 MB, 9 and 5.7 MB at 1440 x 3200. The loader was
+blur a frame. The pictures, on the dark ground and on the light one: 7 and
+1.1 MB, 6 and 1.6 MB at 720 x 1600; 9 and 2.1 MB, 7 and 2.5 MB at
+1080 x 2400; 11 and 4.8 MB, 9 and 5.8 MB at 1440 x 3200. (As many in 1.2.41
+itself, in up to 0.4 MB less: since then the picture of a light reaches
+beyond its glass, `first-launch-onboarding.md`.) The loader was
 drawn with and without them at four moments of its loop, on both grounds, at
 720 x 1600 and at 1080 x 2400, with Skia and with Impeller: 5 levels of 255
 apart at most, 0.007 on average. iOS draws as before.
@@ -148,11 +150,10 @@ The pictures are kept together. When the onboarding ends its pictures go,
 and a loader still up makes its own few again; when nobody bakes any more,
 all go.
 
-A test that draws for a given phone says its density to `GlassBake`
-(`debugScreenDensity`): `GlassBake` reads the engine's own view, whose
-density a test's view does not change (it stays 3). The onboarding's own
-cost tests were written before this was known, and bake at 3 while they draw
-at 2.625; their numbers in `first-launch-onboarding.md` are for that.
+A test that draws for a given phone bakes for it: `GlassBake` reads the
+screen's density from the binding's view, the one a test sets with
+`tester.view` (on a phone, the engine's own). The onboarding's cost tests
+bake at the density they draw at too (`first-launch-onboarding.md`).
 
 ## Looked at, and left as it is
 

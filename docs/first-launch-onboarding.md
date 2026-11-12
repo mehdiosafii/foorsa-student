@@ -392,7 +392,9 @@ from the engine and documentation of the Flutter this app builds with (3.47.5:
 `engine/src/flutter` and `docs/platforms/android` in the SDK), and every change
 is measured by tests that count what each frame asks the GPU for
 (`test/onboarding_android_cost_test.dart`, with `test/frame_cost.dart`), on a
-1080 x 2400 phone.
+1080 x 2400 phone at 2.625 pixels per point. The tests draw at that density
+and bake the glass's pictures at the same; where a count depends on the
+density, a 720 x 1600 phone at 2 is measured too.
 
 **The web view was composited under the whole onboarding.** The portal's web
 view is made 3.6 s in, so the sign-in loads under the onboarding for the
@@ -490,27 +492,84 @@ piece of glass (a frame with a hole in it) are such shapes. On Android, while
 the onboarding runs, `GlassBake` (`glass.dart`) draws each of those blurred
 fields once at the size it is shown and then as a picture, under the same
 vector clips, between the same face, wall and rim. Only glass whose shape and
-light stay the same is baked, never a blur narrower than 1.5 px on the screen
-(a small arrow's bevel, which resampling would soften), and nothing that
-changes as it moves (the touch showing what to do, the change between
-objects). Each picture is made once and drawn again from then on, keyed by its
-shape, its glass and its size on the screen in quarter octaves (so an arrow
-that grows as it flies is made a handful of times, never every frame): the
-takeoff and the six scenes make 25 together, about 12 MB of textures on a
-1080 x 2400 phone, and they go when the onboarding ends. iOS draws as before.
+light stay the same is baked, never a light narrower than 1.5 px on the screen
+(a small arrow's bevel, which resampling would soften) or a shadow narrower
+than 1 px, and nothing that changes as it moves (the touch showing what to
+do, the change between objects). The picture of a light inside the glass
+reaches two of its blur's widths beyond the glass, so that it holds all the
+blur reads. Each picture is made once and drawn again from then on, keyed by
+its shape, its glass and its size on the screen in quarter octaves (so an
+arrow that grows as it flies is made a handful of times, never every frame).
+A first launch gone through to the pass, its arrows flying, makes 47
+pictures, 16.1 MB of textures, on a 1080 x 2400 phone at 2.625 pixels per
+point, and 45 and 10.4 MB on a 720 x 1600 one at 2. The cache keeps 48, then
+lets the oldest go, which are the takeoff's and are not drawn again: a
+1440 x 3200 phone at 3.5 makes 51 and holds 23.2 MB. They all go when the
+onboarding ends. iOS draws as before.
 (The app's loader is drawn the same way on every Android start, and keeps
 the baking on for itself: `shell-frame-cost.md`.)
 
-| blurs through offscreen passes, per frame | takeoff arrow | plane | welcome | notifications | mic | location | pass |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| before | 4 | 2 | 7 | 2 | 2 | 8 | 1 |
-| Android now | 0 | 0 | 3 | 0 | 0 | 2 | 0 |
+What is baked depends on how many pixels a point covers, so each count is for
+the phone it names, drawn and baked at that phone's density. At rest, the
+touch away:
 
-(The welcome's three are its arrow's bevel and the touch; the location's, the
-locate arrow's two narrow lights. The change between objects keeps its four
-for its second.) Every scene was drawn with and without, at 2, 2.625 and 3.5
-pixels per point, with Skia and with Impeller: 5 levels of 255 apart at most,
-0.01 on average.
+| blurs through offscreen passes, per frame | takeoff arrow | plane | language | welcome | notifications | mic | location | pass |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| before | 4 | 2 | 1 | 5 | 1 a card | 2 | 8 | 1 |
+| Android now, 1080 x 2400 at 2.625 | 0 | 0 | 0 | 1 | 0 | 0 | 2 | 0 |
+| Android now, 720 x 1600 at 2 | 0 | 0, 1 as it leaves | 0 | 1 | 0 | 0 | 2 | 0 |
+
+- The welcome's one is the light along its arrow's bevel: the arrow is 40 pt
+  tall there, and that light 1.05 px wide at 2.625 (0.8 at 2).
+- The location's two are the lights in the locate arrow's bevel: the arrow is
+  19 pt tall, and they are 0.5 and 1.1 px wide at 2.625. Its two shadows are
+  baked, together, by the narrower one: 1.496 px wide at 2.625 and 1.14 at 2.
+- The scanner has no glass that bakes.
+- On the 720p phone every scene is the same. What its fewer pixels change is
+  in motion: the plane's bevel is a blur again for the last 0.14 s of its
+  climb, once the plane is under two thirds of its size (on the 1080p phone
+  under 0.51 of it: its last frame at most), and a flying arrow's for a few
+  frames longer (until the arrow is 75 pt tall, not 57).
+- The touch showing what to do changes every frame and is never baked: two
+  more while it is on the screen, four while it moves with its trail (the
+  swipe, the drag, the pull), about four frames in ten until the student
+  acts. So the most a frame asks for now is five on the welcome and four on
+  the location (nine and ten before).
+- The change between objects is not baked either: four to six a frame for
+  about two thirds of a second.
+
+Every scene is drawn with and without on three screens, the pictures made at
+each screen's own density (720 x 1600 at 2, 1080 x 2400 at 2.625, 1440 x 3200
+at 3.5): 4 levels of 255 apart at most on each with Skia; 4, 5 and 4 with
+Impeller; 0.02 on average.
+
+**Measured again for the phones it names (12 Nov 2026).** Until then these
+tests drew at 2.625 pixels per point and baked for a screen at 3: `GlassBake`
+read the engine's own view, whose density a test cannot set. They bake at the
+density they draw at now, and two things showed that the numbers for a screen
+at 3 had hidden. Both are changed, on Android only, after 1.2.41 (72), which
+went out that day without them:
+
+- The location kept four blurs a frame, not the two this table said. A shadow
+  was held to the pixel and a half of a light, and the locate arrow's are
+  1.496 px wide at 2.625. A shadow has no edge of its own to keep sharp (where
+  it meets the glass it is cut in vector, every frame), so it is baked down
+  to one pixel: two again, on both phones. On the map's button the picture is
+  within 4 levels of 255 of the shadows drawn.
+- With Impeller the light in the lower bevel of the smoked panes (the board's
+  case, the languages' pane, the cards) came out dimmer from its picture than
+  drawn: 8 levels of 255 along the pane's lower edge on the 720p screen, over
+  the 6 the pixel test allows, and 6 at 2.625. Skia drew the two alike, and
+  Skia is what the tests run with. That light's source lies outside the pane
+  and the picture ended at the pane; Impeller reads a blur's source no
+  further than the square root of 3 of its widths
+  (`impeller/geometry/sigma.h`), so the picture now reaches two beyond the
+  glass. With the shadows' picture that is 1.4 MB more on the 1080 x 2400
+  phone, where a first launch held 14.8.
+
+(The table's earlier seven and three for the welcome counted the touch in.
+The 25 pictures in about 12 MB it gave were counted by going from scene to
+scene with no arrow flying, and before the languages' pane was added.)
 
 **Impeller stays.** Impeller compiles every shader when the app is built; the
 onboarding is the first thing a new install draws, and Skia would compile its
@@ -565,6 +624,9 @@ first time Chromium loads, can still hold the welcome for a moment there.
 - Android, on a mid-range phone (and a 90 or 120 Hz one): the takeoff and every
   scene and change keep pace, with Profile GPU rendering or a systrace if in
   doubt; nothing flashes as the welcome appears.
+- Android, on a 720p and on a 1080p phone, beside an iPhone: the locate
+  arrow's shadow on the map's button, and the light along the lower edge of
+  the smoked panes (the board's case, the languages' pane, the cards).
 - Android, the first session after install, whose web view is a texture: the
   hand-off lands and fades onto a drawn sign-in; typing in it, a password
   pasted and one filled by a password manager; a long press in a field (the
@@ -622,12 +684,17 @@ first time Chromium loads, can still hold the welcome for a moment there.
   view's composition (a texture only while the onboarding covers it, and left
   out of the frames until it fades), the covering signal from the first frame
   to the fade, the loader neither drawn nor ticking under it and still let go
-  of, no offscreen layer at rest or as an object changes, the blurs Android
-  draws from pictures and the frames' pixels the same with and without, each
-  picture made once (a scene's demonstration played again makes none) and
-  what they hold together, the render objects repainted per frame in every
-  scene, a 120 Hz flight the same as a 60 Hz one, the icon's decode size, and
-  no Impeller opt-out.
+  of, no offscreen layer at rest or as an object changes, the glass baked at
+  the density of the screen a test draws on, the blurs Android draws from
+  pictures on a 1080 x 2400 phone at 2.625 and a 720 x 1600 one at 2 (the
+  takeoff, every scene at rest and with the touch, the change between
+  objects) and the frames' pixels the same with and without on those and a
+  1440 x 3200 one at 3.5, how far the picture of a light reaches beyond its
+  glass, each picture made once (a scene's demonstration played again makes
+  none), how many a first launch gone through with its arrows flying makes
+  and holds on each of the three, the render objects repainted
+  per frame in every scene, a 120 Hz flight the same as a 60 Hz one, the
+  icon's decode size, and no Impeller opt-out.
 
 These do not replace a run on real phones: the prompts, the haptics, the
 audio session and the WebView loading underneath are native.
