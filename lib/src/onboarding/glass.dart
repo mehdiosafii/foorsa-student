@@ -231,7 +231,9 @@ abstract final class GlassBake {
       LinkedHashMap<Object, ui.Image>();
 
   /// Enough for every baked piece of glass of the onboarding at a few sizes
-  /// (the arrow grows as it flies); the oldest go first.
+  /// (the arrow grows as it flies) on a 1080p phone, where a first launch
+  /// makes 47. A denser screen makes a few more, and the oldest go first:
+  /// the takeoff's, which are not drawn again.
   static const _limit = 48;
 
   /// Lets every picture go.
