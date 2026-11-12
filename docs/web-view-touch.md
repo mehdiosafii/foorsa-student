@@ -32,7 +32,7 @@ window at all, and did three things that only make sense there:
   whenever the web view's focus is cleared (`clearFocus`).
 
 Flutter never puts this view in a virtual display, in either mode the app asks for. So from
-1.2.43 (74) the patched copy of the plugin (`third_party/README.md`) tells its Java side the view is
+1.2.43 (build 75 on Google Play) the patched copy of the plugin (`third_party/README.md`) tells its Java side the view is
 in the window, always: `FlutterWebView` sets `customSettings.useHybridComposition = true` after
 reading what the Dart side sent. How the view is drawn is still the Dart side's choice, and is
 unchanged: a texture under the onboarding, the window on every later launch. Every launch after the

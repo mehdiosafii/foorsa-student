@@ -63,7 +63,7 @@ listed in [the first-launch onboarding](docs/first-launch-onboarding.md).
 ## Touch, Paste and the keyboard (1.2.43)
 
 The owner, 12 Nov 2026: "when pasting the otp ... no paste button is there it
-freezes, also many times the scrolling and keyboard are stuck". From 1.2.43 (74)
+freezes, also many times the scrolling and keyboard are stuck". From 1.2.43
 on Android, the web view made on a first launch keeps Android's own Paste menu
 and keyboard (the plugin ran it through paths written for a virtual display);
 and on an iPhone the web view takes its touches straight from iOS, with no
@@ -75,7 +75,9 @@ small phones, phones on their side and large text. It went to TestFlight and to
 Google Play, production included, without a check on a phone (the owner, the
 same day: "when you finish push all live"), so what a phone still has to
 confirm is listed in [touch, Paste and the keyboard](docs/web-view-touch.md)
-and in [web view recovery](docs/web-view-recovery.md).
+and in [web view recovery](docs/web-view-recovery.md). On Google Play it is
+build 75: the upload of build 74 stopped while it waited for Google's answer,
+and 75 is the same app sent again, to both stores.
 
 ## The adhan
 
