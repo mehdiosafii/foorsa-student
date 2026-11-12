@@ -482,56 +482,122 @@ class StudentCallOverlay extends StatelessWidget {
           if (invite != null && calls.status != 'Incoming call')
             Positioned.fill(
                 child: Directionality(
-                  textDirection: language.direction,
-                  child: Material(
-                    color: const Color(0xff102b42),
-                    child: SafeArea(
-                        child: Column(children: [
-                      const SizedBox(height: 60),
-                      Text(_voiceCall.of(language),
-                          style: scriptStyle(
-                              const TextStyle(
-                                  color: Colors.white70, letterSpacing: 2),
-                              language)),
-                      const Spacer(),
-                      CircleAvatar(
-                          radius: 55,
-                          backgroundColor: Colors.white12,
-                          child: Text(
-                              callerInitial(callerNameOf(invite)),
-                              style: const TextStyle(
-                                  fontSize: 42, color: Colors.white))),
-                      const SizedBox(height: 28),
-                      Text(callerNameOf(invite) ?? _adviser.of(language),
-                          style: const TextStyle(
-                              fontSize: 28, color: Colors.white)),
-                      const SizedBox(height: 14),
-                      Text(callStatusText(calls.status, language),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white70)),
-                      const Spacer(),
-                      Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            _control(
-                                calls.muted ? Icons.mic_off : Icons.mic,
-                                (calls.muted ? _unmute : _mute).of(language),
-                                () => calls.mute(!calls.muted)),
-                            _control(
-                                calls.speaker ? Icons.volume_up : Icons.hearing,
-                                _speaker.of(language),
-                                () => calls.toggleSpeaker()),
-                            _control(Icons.call_end, _end.of(language),
-                                () => calls.end(),
-                                danger: true)
-                          ]),
-                      const SizedBox(height: 60)
-                    ])))))
+                    textDirection: language.direction,
+                    child: Material(
+                        color: const Color(0xff102b42),
+                        child: SafeArea(
+                            child: _CallScreen(
+                                calls: calls,
+                                invite: invite,
+                                language: language)))))
         ]);
       });
+}
+
+/// The call, as tall as the phone allows.
+///
+/// It was one column of fixed heights: on a phone on its side it ran 85 to
+/// 134 points past the bottom, taking Mute, Speaker and End with it, and a
+/// long name or the phone's largest text did the same on a small phone (the
+/// owner's stress test, 12 Nov 2026). The three controls now keep their
+/// place at the foot whatever the room; what is above them gives up its gaps
+/// and the size of its circle first, and scrolls if that is not enough. On a
+/// phone held upright with room for it, nothing has moved.
+class _CallScreen extends StatelessWidget {
+  const _CallScreen(
+      {required this.calls, required this.invite, required this.language});
+
+  final StudentCalls calls;
+  final Map<String, dynamic> invite;
+  final AppLanguage language;
+
+  /// Under this height (a phone on its side) the gaps and the circle shrink.
+  static const _short = 520.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, box) {
+      final short = box.maxHeight < _short;
+      final gap = short ? 16.0 : 60.0;
+      final name = callerNameOf(invite);
+      return Column(children: [
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, room) => SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                    minWidth: room.maxWidth, minHeight: room.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(children: [
+                    SizedBox(height: gap),
+                    Text(_voiceCall.of(language),
+                        textAlign: TextAlign.center,
+                        style: scriptStyle(
+                            const TextStyle(
+                                color: Colors.white70, letterSpacing: 2),
+                            language)),
+                    const Spacer(),
+                    CircleAvatar(
+                        radius: short ? 34 : 55,
+                        backgroundColor: Colors.white12,
+                        child: Text(callerInitial(name),
+                            style: TextStyle(
+                                fontSize: short ? 26 : 42,
+                                color: Colors.white))),
+                    SizedBox(height: short ? 12 : 28),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(name ?? _adviser.of(language),
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 28, color: Colors.white)),
+                    ),
+                    const SizedBox(height: 14),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(callStatusText(calls.status, language),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white70)),
+                    ),
+                    const Spacer(),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Each takes its own width while the three fit, as they always
+        // stood; past that they share the row, and a long word (the French
+        // « Haut-parleur » in large text) wraps under its button.
+        Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Flexible(
+                  child: _control(
+                      calls.muted ? Icons.mic_off : Icons.mic,
+                      (calls.muted ? _unmute : _mute).of(language),
+                      () => calls.mute(!calls.muted))),
+              Flexible(
+                  child: _control(
+                      calls.speaker ? Icons.volume_up : Icons.hearing,
+                      _speaker.of(language),
+                      () => calls.toggleSpeaker())),
+              Flexible(
+                  child: _control(
+                      Icons.call_end, _end.of(language), () => calls.end(),
+                      danger: true)),
+            ]),
+        SizedBox(height: gap),
+      ]);
+    });
+  }
+
   Widget _control(IconData icon, String label, VoidCallback action,
           {bool danger = false}) =>
-      Column(children: [
+      Column(mainAxisSize: MainAxisSize.min, children: [
         IconButton.filled(
             onPressed: action,
             style: IconButton.styleFrom(
@@ -540,6 +606,10 @@ class StudentCallOverlay extends StatelessWidget {
                 padding: const EdgeInsets.all(22)),
             icon: Icon(icon, color: Colors.white, size: 28)),
         const SizedBox(height: 10),
-        Text(label, style: const TextStyle(color: Colors.white))
+        Text(label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white))
       ]);
 }

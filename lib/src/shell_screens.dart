@@ -3,6 +3,8 @@
 /// Both follow the theme the student chose (shell_appearance.dart).
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -118,13 +120,22 @@ class ShellOfflineScreen extends StatelessWidget {
     final language = this.language ?? AppLanguageScope.of(context);
     return Directionality(
       textDirection: language.direction,
-      child: _screen(language),
+      child: _screen(context, language),
     );
   }
 
-  Widget _screen(AppLanguage language) {
+  Widget _screen(BuildContext context, AppLanguage language) {
     final ink = dark ? Colors.white : const Color(0xFF14273B);
     final muted = dark ? const Color(0xFFB6C2D6) : const Color(0xFF526474);
+    // The screen is as tall as what it says: on a phone on its side, or with
+    // the phone's text set large, that is more than the phone has, and it
+    // was cut off at both ends, Try again included (the owner's stress test,
+    // 12 Nov 2026). It scrolls then. The room it leaves for the notch and the
+    // home bar is the same on both sides, so a screen that fits stays
+    // centred exactly where it always was.
+    final insets = MediaQuery.viewPaddingOf(context);
+    final across = math.max(28.0, math.max(insets.left, insets.right));
+    final down = math.max(28.0, math.max(insets.top, insets.bottom));
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: Container(
@@ -137,91 +148,119 @@ class ShellOfflineScreen extends StatelessWidget {
                 : const [Color(0xFFF6F8FB), Color(0xFFEDF1F6), Color(0xFFE3EAF2)],
           ),
         ),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset(
-              dark
-                  ? 'assets/images/intro_dark.png'
-                  : 'assets/images/intro_light.png',
-              width: 84,
-            ),
-            const SizedBox(height: 28),
-            Container(
-              padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-              decoration: BoxDecoration(
-                color: dark
-                    ? Colors.white.withValues(alpha: 0.07)
-                    : Colors.white.withValues(alpha: 0.82),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(
-                    color: dark
-                        ? Colors.white.withValues(alpha: 0.14)
-                        : const Color(0xFFD7DFE8)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(
-                      color: dark
-                          ? Colors.white.withValues(alpha: 0.10)
-                          : const Color(0xFF224F78).withValues(alpha: 0.085),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(Icons.wifi_off_rounded,
-                        color: dark ? Colors.white : const Color(0xFF224F78),
-                        size: 30),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(offlineTitle.of(language),
-                      textAlign: TextAlign.center,
-                      style: scriptStyle(
-                          TextStyle(
-                              color: ink,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700),
-                          language)),
-                  if (language == AppLanguage.en) ...[
-                    const SizedBox(height: 6),
-                    Text(offlineTitle.ar,
-                        textDirection: TextDirection.rtl,
-                        style: TextStyle(color: muted, fontSize: 14)),
-                  ],
-                  const SizedBox(height: 14),
-                  Text(
-                    offlineDetail.of(language),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: muted, fontSize: 13, height: 1.5),
-                  ),
-                  const SizedBox(height: 22),
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor:
-                          dark ? Colors.white : const Color(0xFF224F78),
-                      foregroundColor:
-                          dark ? const Color(0xFF16223D) : Colors.white,
-                      minimumSize: const Size(0, 48),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 26, vertical: 13),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                    onPressed: onRetry,
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: Text(offlineRetry.of(language),
-                        style: const TextStyle(fontWeight: FontWeight.w700)),
-                  ),
-                ],
+        child: LayoutBuilder(builder: (context, box) {
+          // A phone on its side has no room for the mark above the card:
+          // the card alone, drawn closer, keeps Try again on the screen.
+          final low = box.maxHeight < _lowScreen;
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                  minWidth: box.maxWidth, minHeight: box.maxHeight),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                    horizontal: across,
+                    vertical: low
+                        ? math.max(12.0, math.max(insets.top, insets.bottom))
+                        : down),
+                child: Center(child: _card(language, ink, muted, low: low)),
               ),
             ),
-          ],
-        ),
+          );
+        }),
       ),
+    );
+  }
+
+  /// Under this height the screen is a phone on its side.
+  static const _lowScreen = 480.0;
+
+  Widget _card(AppLanguage language, Color ink, Color muted,
+      {required bool low}) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (!low) ...[
+          Image.asset(
+            dark
+                ? 'assets/images/intro_dark.png'
+                : 'assets/images/intro_light.png',
+            width: 84,
+          ),
+          const SizedBox(height: 28),
+        ],
+        Container(
+          padding: low
+              ? const EdgeInsets.fromLTRB(24, 16, 24, 16)
+              : const EdgeInsets.fromLTRB(24, 28, 24, 24),
+          decoration: BoxDecoration(
+            color: dark
+                ? Colors.white.withValues(alpha: 0.07)
+                : Colors.white.withValues(alpha: 0.82),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(
+                color: dark
+                    ? Colors.white.withValues(alpha: 0.14)
+                    : const Color(0xFFD7DFE8)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: low ? 44 : 64,
+                height: low ? 44 : 64,
+                decoration: BoxDecoration(
+                  color: dark
+                      ? Colors.white.withValues(alpha: 0.10)
+                      : const Color(0xFF224F78).withValues(alpha: 0.085),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.wifi_off_rounded,
+                    color: dark ? Colors.white : const Color(0xFF224F78),
+                    size: low ? 22 : 30),
+              ),
+              SizedBox(height: low ? 10 : 18),
+              Text(offlineTitle.of(language),
+                  textAlign: TextAlign.center,
+                  style: scriptStyle(
+                      TextStyle(
+                          color: ink,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700),
+                      language)),
+              if (language == AppLanguage.en) ...[
+                const SizedBox(height: 6),
+                Text(offlineTitle.ar,
+                    textDirection: TextDirection.rtl,
+                    style: TextStyle(color: muted, fontSize: 14)),
+              ],
+              SizedBox(height: low ? 8 : 14),
+              Text(
+                offlineDetail.of(language),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: muted, fontSize: 13, height: 1.5),
+              ),
+              SizedBox(height: low ? 12 : 22),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor:
+                      dark ? Colors.white : const Color(0xFF224F78),
+                  foregroundColor:
+                      dark ? const Color(0xFF16223D) : Colors.white,
+                  minimumSize: const Size(0, 48),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 26, vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                ),
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: Text(offlineRetry.of(language),
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
