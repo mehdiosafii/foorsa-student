@@ -51,6 +51,7 @@ import 'student_calls.dart';
 import 'student_biometrics.dart';
 import 'chat_viewport.dart';
 import 'crash_reports.dart';
+import 'web_back.dart';
 import 'web_view_composition.dart';
 import 'web_view_recovery.dart';
 
@@ -1212,8 +1213,29 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
         origin: origin, allow: allow, retain: allow);
   }
 
+  /// A back press is being answered: a second one in that moment is the same
+  /// press, not another step back.
+  bool _backBusy = false;
+
   Future<void> _handleBack() async {
+    if (_backBusy) return;
+    _backBusy = true;
+    try {
+      await _answerBack();
+    } finally {
+      _backBusy = false;
+    }
+  }
+
+  Future<void> _answerBack() async {
     final c = _controller;
+    // What is open over the screen (a sheet, a viewer) takes the press first
+    // (web_back.dart); only with nothing open is back a step in the history.
+    if (c != null &&
+        await closeTopWebLayer(
+            (source) => c.evaluateJavascript(source: source))) {
+      return;
+    }
     if (c != null && await c.canGoBack()) {
       await c.goBack();
       return;
