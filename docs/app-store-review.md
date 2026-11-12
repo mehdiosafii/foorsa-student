@@ -23,7 +23,8 @@ instructions for Guideline 3.2". Its submissions show the one of 2 Nov submitted
 
 On 12 Nov 2026 (12:42 UTC), 1.2.39 (70) had been waiting for review since 6 Nov (submitted at
 15:50 UTC), and no version had been approved yet; 1.2.40 (71), 1.2.41 (72) and 1.2.42 (73) went
-to TestFlight only, and 1.2.42 (73) was the newest valid build.
+to TestFlight only, and 1.2.42 (73) was the newest valid build. 1.2.43 (74) was merged that day
+at 13:36 UTC and takes its place once TestFlight holds it.
 
 Asked that day whether a newer build should take its place, the owner kept it: "keep same for
 apple review when accepted we will push an update". So the newest build goes up as an update
@@ -86,8 +87,12 @@ Apple refuses an update without "What's New" in every locale of the listing, and
 text on an app's first version, which is why none was written before. It is kept in
 `store/app-store/whats-new/<locale>.txt`, one file per App Store locale, as
 `android/play-release-notes/` holds Google Play's notes: `en-US.txt` today. It says what a
-student gets on iPhone since the version on sale, so it is written again for each update, and it
-names no other platform (App Review refuses App Store text that does). **submit-latest** stops
+student gets on iPhone since the version on sale there, which is not what Play's note says:
+Play goes from one release to the next, and the App Store from the version on sale to the
+newest build, several releases later. So a version that changes what an iPhone student gets
+adds to it (on 12 Nov 2026 it covered 1.2.40 to 1.2.43), it is written afresh once an update
+is on sale, and before a submission it is read against the build being sent. It names no other
+platform (App Review refuses App Store text that does). **submit-latest** stops
 before writing anything when a locale of the listing has no file or an empty one, when a file is
 over 4000 characters or still the text the version on sale went out with, or when a file is for a
 locale the listing does not have (a language is added in App Store Connect, with its description
