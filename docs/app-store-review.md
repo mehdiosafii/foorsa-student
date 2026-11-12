@@ -30,6 +30,15 @@ runs `scripts/app_store_listing.py` with the team key the TestFlight workflow us
   are filled in) and submits. The listing text, screenshots, age rating, demo account and manual
   release stay as they are.
 
+**Without the button.** A session that cannot start a workflow by hand asks through
+`.github/app-store-request.txt`, as `.github/google-play-promote.txt` does for Google Play: a
+push to `main` that changes the file runs what its one line names, `state`, `review-check` or
+`submit-latest 1.2.41+72` (12 Nov 2026, for 1.2.41 (72), when GitHub refused such a session the
+button). A submission asked for this way names its version and changes nothing unless the newest
+valid build is exactly that one, so a line left in the file can never send up a later build; and
+it runs **review-check** first and stops there if the demo account no longer signs in. Wait for
+the TestFlight run of that version to be green before asking: only then is the build valid.
+
 App Privacy is not in Apple's API. A person signed in to App Store Connect with an Apple ID
 fills it in (App Store Connect › the app › App Privacy), and it has to say what the app collects
 today, including what it has started collecting since 20 Oct: voice notes and the introduction
