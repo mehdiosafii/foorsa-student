@@ -6,13 +6,23 @@ name: App Store listing
 # Started by hand (Actions › App Store listing › Run workflow):
 #   state          what App Store Connect holds, and the review submission's state
 #   review-check   whether App Review's demo account still signs in to the app as it is today
-#   submit-latest  the newest valid build up for review in place of the one waiting, with
-#                  store/app-store/review-notes.txt as its notes
+#   submit-latest  the newest valid build up for review, with store/app-store/review-notes.txt
+#                  as its notes. When the newest App Store version is on sale it goes up as an
+#                  update: a new version, with "What's New" from store/app-store/whats-new/. A
+#                  version in review is never touched, and one waiting for review is replaced
+#                  only with the box "replace_waiting" ticked: its wait starts again, which is
+#                  the owner's decision each time. Then state is printed, whether the
+#                  submission went through or stopped part-way.
 # Or by a push to main that changes .github/app-store-request.txt, for whoever cannot start a
-# workflow by hand (as .github/google-play-promote.txt does for Google Play). The file is one
-# line: "state", "review-check", or "submit-latest 1.2.41+72". A submission asked for this way
-# has to name its version, is refused unless the newest valid build is exactly that one, and
-# runs review-check first, stopping there if the demo account no longer signs in.
+# workflow by hand (as .github/google-play-promote.txt does for Google Play). Its first line is
+# the request: "state", "review-check", "submit-latest 1.2.42+73", or
+# "submit-latest 1.2.42+73 replace-waiting". A submission asked for this way has to name its
+# version, is refused unless the newest valid build is exactly that one, and runs review-check
+# first, stopping there if the demo account no longer signs in. Nothing under the first line is
+# read: since the workflow only runs when the file changes, a note there (who asks, and when)
+# is how the same thing is asked again.
+# The request file is read by the shell step below, and scripts/tests holds what it and the
+# script do, run on pull requests by app-store-listing-checks.yml.
 on:
   push:
     branches: [main]
@@ -25,6 +35,10 @@ on:
         default: state
         type: choice
         options: [state, review-check, submit-latest]
+      replace_waiting:
+        description: With submit-latest, cancel the submission waiting for review and put the newest build in its place (the wait starts again)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,28 +61,39 @@ jobs:
           ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
           ACTION: ${{ inputs.action }}
+          REPLACE_WAITING: ${{ inputs.replace_waiting }}
           EVENT: ${{ github.event_name }}
         run: |
           version=''
+          word=''
           if [ "$EVENT" = push ]; then
             file=.github/app-store-request.txt
             if [ ! -f "$file" ]; then
               echo "::notice::$file is gone; nothing was asked."
               exit 0
             fi
-            read -r ACTION version extra < "$file" || true
+            read -r ACTION version word extra < "$file" || true
             case "$ACTION" in
               state|review-check)
                 if [ -n "$version" ]; then echo "::error::$file: $ACTION takes nothing after it"; exit 1; fi ;;
               submit-latest)
                 if [ -n "$extra" ] || ! printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+)*\+[0-9]+$'; then
                   echo "::error::$file: a submission names its version, as in: submit-latest 1.2.41+72"; exit 1
+                fi
+                if [ -n "$word" ] && [ "$word" != replace-waiting ]; then
+                  echo "::error::$file: after the version comes replace-waiting or nothing"; exit 1
                 fi ;;
               *) echo "::error::$file must be state, review-check or submit-latest <version>"; exit 1 ;;
             esac
             # Nobody ran review-check by hand before this submission, so it runs here, and a demo
             # account that no longer signs in stops the step before anything is submitted.
             if [ "$ACTION" = submit-latest ]; then python3 scripts/app_store_listing.py review-check; fi
+          elif [ "$ACTION" = submit-latest ] && [ "$REPLACE_WAITING" = true ]; then
+            word=replace-waiting
           fi
-          python3 scripts/app_store_listing.py "$ACTION" $version
-          if [ "$ACTION" = submit-latest ]; then python3 scripts/app_store_listing.py state; fi
+          status=0
+          python3 scripts/app_store_listing.py "$ACTION" $version $word || status=$?
+          # What App Store Connect holds after a submission, whether it went through or stopped
+          # part-way: the step still ends as the submission did.
+          if [ "$ACTION" = submit-latest ]; then python3 scripts/app_store_listing.py state || status=$?; fi
+          exit "$status"

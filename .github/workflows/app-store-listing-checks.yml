@@ -1,0 +1,33 @@
+name: App Store listing checks
+
+# What scripts/app_store_listing.py and the shell step of app-store-listing.yml do, held by
+# scripts/tests against a stand-in for App Store Connect: no key, and nothing sent to Apple.
+# It runs on GitHub's own runner, so the step is run by the bash and the Python that run it
+# for real.
+on:
+  pull_request:
+    paths:
+      - 'scripts/app_store_listing.py'
+      - 'scripts/app_store_connect.py'
+      - 'scripts/tests/**'
+      - 'store/app-store/**'
+      - '.github/workflows/app-store-listing.yml'
+      - '.github/workflows/app-store-listing-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: The script against a stand-in, and the workflow's step with a stub
+        run: |
+          bash --version | head -1
+          python3 --version
+          python3 -m unittest discover -s scripts/tests -v

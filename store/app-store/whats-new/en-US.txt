@@ -1,0 +1,1 @@
+In mainland China, notifications now arrive. The app opens a little faster. A slow connection no longer shows “No internet connection”. Fixes.
