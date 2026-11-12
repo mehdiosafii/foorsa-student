@@ -194,7 +194,9 @@ void main() {
               tester.view.physicalSize = size;
               tester.view.padding = padding;
               tester.platformDispatcher.textScaleFactorTestValue = scale;
-              final profile = GuidedDocumentProfile.fromPortal(request);
+              // In the student's language, as the shell asks for it.
+              final profile =
+                  GuidedDocumentProfile.fromPortal(request, language);
               final where = '$phone (${size.width.toInt()}x'
                   '${size.height.toInt()}), text x$scale, '
                   '${request['documentKey']}';
