@@ -3,15 +3,28 @@
 Foorsa Student is app 6816127081 in App Store Connect (bundle `ma.foorsa.foorsaStudent`,
 iPhone only). Its listing (name, subtitle, description, keywords, screenshots, age rating,
 category, price and availability) and its App Privacy answers were filled in on 20 Oct 2026,
-when 1.2.18 (45) was submitted. Unlisted App Distribution has been requested, and the version
-is released by hand (`releaseType: MANUAL`): an approved version reaches nobody until someone
-presses Release in App Store Connect.
+when 1.2.18 (45) was submitted. Unlisted App Distribution has been requested. The version was
+set to be released by hand then (`releaseType: MANUAL`); on 12 Nov 2026 `state` read
+`AFTER_APPROVAL`, so an approved version now goes out by itself. Read `state` before saying
+which it is.
 
 On 2 Nov 2026, 1.2.18 (45) had been waiting for review since 20 Oct. It predates the iPhone
 microphone permission (build 46), so on today's portal a reviewer opening the live chat's voice
 note or the video studio would have crashed the app or been refused. The demo account it named
 had stopped signing in too. The waiting submission was cancelled, and 1.2.38 (69) went up for
 review in its place with the notes in `store/app-store/review-notes.txt`.
+
+On 12 Nov 2026, 1.2.39 (70) had been waiting for review since 6 Nov (submitted at 15:50 UTC),
+and no version had been approved yet; 1.2.40 (71) and 1.2.41 (72) went to TestFlight only.
+**submit-latest** cancels the submission waiting, and the wait starts again with the new one: say
+so, and ask, before putting a newer build in a waiting one's place.
+
+Asked that day, the owner kept it: "keep same for apple review when accepted we will push an
+update". So the newest build then goes up as an update once 1.2.39 is approved. **submit-latest**
+cannot do that yet: it renames the one version being prepared, and an approved version can no
+longer be edited, so an update needs a new App Store version made first, and its "What's New"
+text, which a first version does not have. Until that is written, a run against an approved
+version waits four minutes and changes nothing.
 
 ## The workflow
 
