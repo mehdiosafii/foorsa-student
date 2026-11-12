@@ -125,17 +125,20 @@ Future<void> _goTo(WidgetTester tester,
   expect(key.currentState!.armed, isTrue, reason: step.name);
 }
 
+/// An object by its name for a screen reader, whose tap does what the
+/// object's own gesture does.
+Finder _object(String name) => find
+    .byWidgetPredicate((w) =>
+        w is Semantics &&
+        (w.properties.label ?? w.properties.attributedLabel?.string) == name &&
+        w.properties.button == true)
+    .last;
+
 /// The first step is the languages' pane: English, the default, is tapped.
 Future<void> _pastLanguage(
     WidgetTester tester, GlobalKey<FirstLaunchOnboardingState> key) async {
   if (key.currentState!.currentStep != BoardingStep.language) return;
-  await tester.tap(find
-      .byWidgetPredicate((w) =>
-          w is Semantics &&
-          (w.properties.label ?? w.properties.attributedLabel?.string) ==
-              'English' &&
-          w.properties.button == true)
-      .last);
+  await tester.tap(_object('English'));
   await _frames(tester, const Duration(milliseconds: 1600));
 }
 
@@ -546,10 +549,18 @@ void main() {
       });
     }
 
-    // What the takeoff and the scenes picture together, measured.
-    for (final (screen, pictures, megabytes) in [
-      (_fullHd, 28, 11.8),
-      (_hd, 29, 8.0),
+    // A whole first launch, gone through as a student does, acting on each
+    // object: so the arrows really fly (up from the welcome into the board,
+    // in from the map's button), and are pictured at each size they pass.
+    // What a phone holds by the time the pass is on the screen, measured:
+    // the pictures made, those held, and their megabytes. The cache keeps
+    // 48, then lets the oldest go. A denser screen bakes more of the narrow
+    // lights and reaches that: the oldest are the takeoff's, which are not
+    // drawn again.
+    for (final (screen, made, held, megabytes) in [
+      (_fullHd, 47, 47, 16.14),
+      (_hd, 45, 45, 10.41),
+      (_quadHd, 51, 48, 23.20),
     ]) {
       testWidgets('makes each picture once, and holds little: ${screen.name}',
           (tester) async {
@@ -559,22 +570,43 @@ void main() {
         GlassBake.enabled = true;
         GlassBake.made = 0;
         await tester.pumpWidget(_onboarding(key, screen: screen));
-        for (final step in _scenes) {
-          await _goTo(tester, key, step);
+        await _frames(tester, const Duration(milliseconds: 4200));
+        final state = key.currentState!;
+        // The objects by their names for a screen reader, whose tap does
+        // what the gesture does; the pass is left on the screen.
+        for (final object in const [
+          'English',
+          'Get started',
+          'Continue',
+          'Continue',
+          'Continue',
+          'Continue',
+          null,
+        ]) {
+          final step = state.currentStep;
           // Its objects all in, and a whole demonstration: what comes on the
           // screen is pictured as it comes.
           await _frames(tester, const Duration(milliseconds: 1000 + 220 * 16));
           // The demonstration again pictures nothing: every frame draws what
           // was made (a piece of glass whose key changed every frame would
           // be made again every frame, and cost more than it saves).
-          final made = GlassBake.made;
+          final madeSoFar = GlassBake.made;
           await _frames(tester, const Duration(milliseconds: 220 * 16));
-          expect(GlassBake.made, made, reason: step.name);
+          expect(GlassBake.made, madeSoFar, reason: step.name);
+          if (object == null) break;
+          await tester.tap(_object(object));
+          // The arrow flies, or the object folds into it, and the next
+          // object is there.
+          for (var frame = 0;
+              frame < 600 && (state.currentStep == step || !state.armed);
+              frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          expect(state.currentStep, isNot(step), reason: step.name);
         }
-        // Nothing was let go and made again, and the whole onboarding holds
-        // a few textures.
-        expect(GlassBake.made, GlassBake.count);
-        expect(GlassBake.count, pictures);
+        expect(state.currentStep, BoardingStep.boarding);
+        expect(GlassBake.made, made);
+        expect(GlassBake.count, held);
         expect(GlassBake.pixels * 4 / 1e6, closeTo(megabytes, 0.05));
       });
     }

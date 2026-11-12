@@ -499,10 +499,13 @@ do, the change between objects). The picture of a light inside the glass
 reaches two of its blur's widths beyond the glass, so that it holds all the
 blur reads. Each picture is made once and drawn again from then on, keyed by
 its shape, its glass and its size on the screen in quarter octaves (so an
-arrow that grows as it flies is made a handful of times, never every frame):
-the takeoff and the seven scenes make 28 together, 11.8 MB of textures, on a
-1080 x 2400 phone at 2.625 pixels per point (29 and 8.0 MB on a 720 x 1600
-one at 2), and they go when the onboarding ends. iOS draws as before.
+arrow that grows as it flies is made a handful of times, never every frame).
+A first launch gone through to the pass, its arrows flying, makes 47
+pictures, 16.1 MB of textures, on a 1080 x 2400 phone at 2.625 pixels per
+point, and 45 and 10.4 MB on a 720 x 1600 one at 2. The cache keeps 48, then
+lets the oldest go, which are the takeoff's and are not drawn again: a
+1440 x 3200 phone at 3.5 makes 51 and holds 23.2 MB. They all go when the
+onboarding ends. iOS draws as before.
 
 What is baked depends on how many pixels a point covers, so each count is for
 the phone it names, drawn and baked at that phone's density. At rest, the
@@ -558,11 +561,12 @@ at 3 had hidden. Both are changed, on Android only:
   and the picture ended at the pane; Impeller reads a blur's source no
   further than the square root of 3 of its widths
   (`impeller/geometry/sigma.h`), so the picture now reaches two beyond the
-  glass. That is the 1.1 MB more than the 10.7 the pictures took.
+  glass. With the shadows' picture that is 1.4 MB more on the 1080 x 2400
+  phone, where a first launch held 14.8.
 
-(The table's earlier seven and three for the welcome counted the touch in,
-and its 25 pictures in about 12 MB were counted before the languages' pane
-was added.)
+(The table's earlier seven and three for the welcome counted the touch in.
+The 25 pictures in about 12 MB it gave were counted by going from scene to
+scene with no arrow flying, and before the languages' pane was added.)
 
 **Impeller stays.** Impeller compiles every shader when the app is built; the
 onboarding is the first thing a new install draws, and Skia would compile its
@@ -684,8 +688,8 @@ first time Chromium loads, can still hold the welcome for a moment there.
   objects) and the frames' pixels the same with and without on those and a
   1440 x 3200 one at 3.5, how far the picture of a light reaches beyond its
   glass, each picture made once (a scene's demonstration played again makes
-  none), how many they are and what they hold together on each phone, the
-  render objects repainted
+  none), how many a first launch gone through with its arrows flying makes
+  and holds on each of the three, the render objects repainted
   per frame in every scene, a 120 Hz flight the same as a 60 Hz one, the
   icon's decode size, and no Impeller opt-out.
 
