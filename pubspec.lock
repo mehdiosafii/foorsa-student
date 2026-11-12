@@ -389,7 +389,7 @@ packages:
     source: hosted
     version: "1.2.0"
   flutter_inappwebview_ios:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: flutter_inappwebview_ios
       sha256: "5818cf9b26cf0cbb0f62ff50772217d41ea8d3d9cc00279c45f8aabaa1b4025d"
@@ -405,7 +405,7 @@ packages:
     source: hosted
     version: "1.1.2"
   flutter_inappwebview_platform_interface:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: flutter_inappwebview_platform_interface
       sha256: cf5323e194096b6ede7a1ca808c3e0a078e4b33cc3f6338977d75b4024ba2500

@@ -15,6 +15,7 @@ import 'src/portal_handover.dart';
 import 'src/student_calls.dart';
 import 'src/shell_appearance.dart';
 import 'src/shell_page.dart';
+import 'src/web_view_touch.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +23,9 @@ Future<void> main() async {
   // the Android release and WebView version once the phone has said them.
   reportUncaughtErrors();
   unawaited(CrashReports.instance.describeAndroid());
+  // On an iPhone the web view takes its touches straight from iOS, with no
+  // recognizer of Flutter's to wait for (web_view_touch.dart).
+  useUnblockedWebViewTouches();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
