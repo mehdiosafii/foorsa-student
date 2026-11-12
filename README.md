@@ -55,10 +55,10 @@ changed, on Android only: a shadow is drawn from a picture down to one pixel
 wide, so the location scene asks for two blurs a frame, not four; and the
 picture of a light inside the glass reaches beyond the glass, so the light
 along the smoked panes' lower edge is no dimmer from its picture than drawn.
-It went to TestFlight and to Google Play's internal track without a check on
-a phone (the owner, 12 Nov 2026: "release now as 1.2.42"), so what a phone
-still has to confirm is listed in
-[the first-launch onboarding](docs/first-launch-onboarding.md).
+It went to TestFlight and to Google Play, production included, without a
+check on a phone (the owner, 12 Nov 2026: "release now as 1.2.42", then, of
+Android, that it be live to users), so what a phone still has to confirm is
+listed in [the first-launch onboarding](docs/first-launch-onboarding.md).
 
 ## The adhan
 
