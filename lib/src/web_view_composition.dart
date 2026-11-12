@@ -10,13 +10,11 @@
 /// Hybrid Composition (TLHC) also puts the view in the window, so touches,
 /// the keyboard, text selection and accessibility reach it there, but
 /// redirects its drawing into a texture Flutter draws like any other
-/// picture, on its own raster thread. (Through 1.2.42 flutter_inappwebview
-/// took this mode for Flutter's older virtual displays: it passed the
-/// keyboard through a bridge kept from them, InputAwareWebView, and drew its
-/// own copy and paste bar in place of Android's. From 1.2.43 the patched
-/// plugin runs the view as what it is, a view in the window,
-/// docs/web-view-touch.md. Typing and pasting in the first session are still
-/// what a phone must confirm, docs/first-launch-onboarding.md.)
+/// picture, on its own raster thread. (In this mode flutter_inappwebview
+/// passes the keyboard through a bridge kept from Flutter's older virtual
+/// displays, InputAwareWebView, and draws its own copy and paste bar in place
+/// of Android's: typing and pasting in the first session are what a phone
+/// must confirm, docs/first-launch-onboarding.md.)
 ///
 /// The portal has always used HC, and keeps it: its pages are the app, and
 /// the shell draws little over them. The first-launch onboarding is the
@@ -38,13 +36,11 @@ import 'package:flutter/widgets.dart';
 /// Whether the Android web view is given an offscreen layer of its own: the
 /// plugin's `hardwareAcceleration` setting. Never.
 ///
-/// The setting's name says more than it does. It only chooses the view's
-/// layer type (`InAppWebView.prepare` in
+/// The setting's name says more than it does. Under Hybrid Composition it
+/// only chooses the view's layer type (`InAppWebView.prepare` in
 /// third_party/flutter_inappwebview_android): true is
-/// `View.LAYER_TYPE_HARDWARE`, false `View.LAYER_TYPE_NONE`. (Through 1.2.42
-/// the plugin chose it under Hybrid Composition alone and left a view in a
-/// texture, TLHC, without one either way; from 1.2.43 its Java side takes
-/// the same paths for both, third_party/README.md.) What makes
+/// `View.LAYER_TYPE_HARDWARE`, false `View.LAYER_TYPE_NONE`; in a texture
+/// (TLHC) the plugin leaves the view without one either way. What makes
 /// Android draw with the GPU is the window (`android:hardwareAccelerated` on
 /// the activity, on by default since API 14): a view with no layer in such a
 /// window is drawn by the GPU straight into it, which is how every app that
