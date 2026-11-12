@@ -429,13 +429,18 @@ welcome's first moment). Now (`lib/src/web_view_composition.dart`):
   texture. TLHC is what Flutter's own web view plugin uses unless told
   otherwise ("for most use cases, this flag should be set to false",
   webview_flutter_android), but this app has always shipped HC, and
-  flutter_inappwebview (1.1.3) behaves differently without it: it routes the
-  keyboard through a bridge kept from Flutter's older virtual-display mode
-  (`InputAwareWebView`; read from its code, it hands the keyboard Chromium's
-  own input connection before Android 10 and stands aside from 10 on), and it
-  replaces Android's copy and paste bar with one of its own drawn in the page
-  (`InAppWebView.rebuildActionMode`: the same actions, cut, copy, paste,
-  select all, in a plainer bar). As a texture the web view also costs one more
+  flutter_inappwebview (1.1.3) behaved differently without it through 1.2.42:
+  its Java side took the texture for Flutter's older virtual-display mode,
+  routed the keyboard through a bridge kept from it (`InputAwareWebView`),
+  told the web view its window had lost focus each time a selection menu
+  started, and replaced Android's copy and paste bar with one of its own
+  (`InAppWebView.rebuildActionMode`). That is the session the owner met on
+  12 Nov 2026 ("when pasting the otp ... no paste button is there it freezes,
+  also many times the scrolling and keyboard are stuck"). From 1.2.43 (74) the
+  patched plugin's Java side always takes its in-window paths
+  (`third_party/README.md`, [touch, Paste and the keyboard](web-view-touch.md)):
+  Android's own bar and Android's own keyboard, in the texture as in the
+  window. As a texture the web view also costs one more
   copy per frame, and its texture is remade as the keyboard resizes the page.
   So HC is kept for every other launch, and what only a phone can show is that
   first session: typing in the sign-in, a password pasted or filled by a
@@ -630,12 +635,12 @@ first time Chromium loads, can still hold the welcome for a moment there.
   the smoked panes (the board's case, the languages' pane, the cards).
 - Android, the first session after install, whose web view is a texture: the
   hand-off lands and fades onto a drawn sign-in; typing in it, a password
-  pasted and one filled by a password manager; a long press in a field (the
-  plugin's own copy and paste bar, under the finger, each action working);
-  selecting and copying text; the keyboard in the chat; scrolling; a file
-  picked; TalkBack on the sign-in; leaving the app and coming back (the page
-  still drawn). Then close the app and reopen it: the same, as before, in the
-  window, with Android's own bar.
+  pasted and one filled by a password manager; a long press in a field
+  (Android's own copy and paste bar from 1.2.43, under the finger, each action
+  working; the plugin's own through 1.2.42); selecting and copying text; the
+  keyboard in the chat; scrolling; a file picked; TalkBack on the sign-in;
+  leaving the app and coming back (the page still drawn). Then close the app
+  and reopen it: the same, as before, in the window.
 - Android 7 to 9: the welcome as the web view is made (3.6 s in).
 
 ## Validation performed locally

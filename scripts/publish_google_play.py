@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 
 import google.auth
@@ -12,6 +13,15 @@ from googleapiclient.http import MediaFileUpload
 # Release notes, one file per Play listing language (fr-FR.txt, ar.txt, ...).
 # Play caps a language's notes at 500 characters.
 RELEASE_NOTES = Path('android/play-release-notes')
+
+# How long Google Play is given to answer one request. It answers a bundle
+# upload only once it has read the bundle through, and the client gives up
+# after 60 s without a byte unless a socket default says otherwise
+# (googleapiclient.http.build_http). That was never far off: 1.2.42's whole
+# publish step took 59 s. 1.2.43's upload was not answered in the minute and
+# the release stopped with "The read operation timed out" (12 Nov 2026), the
+# bundle sent and the edit thrown away.
+PLAY_ANSWER_SECONDS = 600
 
 
 def git(*args):
@@ -85,6 +95,8 @@ def main():
         name, number = match.groups()
         notes_commit = last_commit_of_version(name, number)
     notes = release_notes(notes_commit)
+    # Before the client is built: it takes its wait from the socket default.
+    socket.setdefaulttimeout(PLAY_ANSWER_SECONDS)
     # Short-lived credentials from google-github-actions/auth (Workload Identity
     # Federation impersonating the Play publisher service account). No key file.
     credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/androidpublisher'])
