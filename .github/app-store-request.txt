@@ -1,2 +1,2 @@
 sync-review-demo
-Asked 26 Nov 2026 by the owner ("You get all and do all"): App Review's demo account, Sam Demo, was deleted with the test accounts on 24 Nov; Foorsa makes him again from App Store Connect's sign-in.
+Asked again 26 Nov 2026 (the first run met a 500 from Foorsa, fixed in foorsa-reward #1871): App Review's demo account, Sam Demo, made again from App Store Connect's sign-in.
