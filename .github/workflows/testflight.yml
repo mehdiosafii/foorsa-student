@@ -127,7 +127,10 @@ jobs:
   ios:
     needs: [version, checks]
     if: needs.version.outputs.build == 'true'
-    runs-on: macos-26
+    # Xcode 27.1 or later (the iOS 27.1 SDK), for iPhone Duo (README.md, "iPhone Duo"): an app built
+    # with an earlier SDK opens as a phone-sized window in the middle of the Duo's inner screen and
+    # beside the camera on the outer one. GitHub's Xcode 27 image; macos-26 carries Xcode 26.
+    runs-on: xcode-27
     # The build takes about 25 minutes; waiting for Apple's processing can add 40.
     timeout-minutes: 90
     env:
@@ -185,7 +188,7 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: '^27.1'
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:

@@ -17,7 +17,8 @@ permissions:
 
 jobs:
   swift:
-    runs-on: macos-26
+    # The SDK the app ships with (testflight.yml): Xcode 27.1 or later, for iPhone Duo.
+    runs-on: xcode-27
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -26,7 +27,7 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: '^27.1'
 
       - name: Capture logic (no camera)
         run: |
