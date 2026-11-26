@@ -1,0 +1,291 @@
+# Builds the Foorsa CRM app (crm/) for iPhone and iPad and uploads it to
+# TestFlight, where the Foorsa team installs it (crm/README.md). Apple-silicon
+# Macs install the same build from TestFlight for Mac.
+#
+# - A push to main that changes the `version:` line of crm/pubspec.yaml builds
+#   that version and uploads it.
+# - A pull request that touches crm/ or this file builds and signs it without
+#   uploading, so a release is known to build before it is merged.
+# - Run workflow (Actions tab) builds and uploads the version in crm/pubspec.yaml:
+#   the first upload, once the App Store Connect app record exists.
+# - Until that record exists, an upload run builds and signs, then stops with a
+#   warning instead of failing.
+#
+# Signing: Apple signs the build in the cloud with the team's App Store Connect
+# key (an Admin key), as the student app's TestFlight workflow does; no
+# certificate leaves anybody's Mac. The bundle id ma.foorsa.crm is registered
+# by the run itself (scripts/app_store_connect.py ensure-bundle-id), but the
+# App Store Connect app record is made once on the website: Apple's API cannot.
+name: Foorsa CRM TestFlight
+
+on:
+  push:
+    branches: [main]
+    paths: [crm/pubspec.yaml]
+  pull_request:
+    paths: ['crm/**', .github/workflows/crm-testflight.yml, scripts/app_store_connect.py, scripts/sign_archive_entitlements.sh]
+  workflow_dispatch:
+
+concurrency:
+  group: crm-testflight-${{ github.ref }}
+  queue: max
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.47.5
+  BUNDLE_ID: ma.foorsa.crm
+  APP_NAME: Foorsa CRM
+  TEAM_ID: G865J7CMBG
+  TESTER_GROUP: Foorsa team
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      name: ${{ steps.read.outputs.name }}
+      number: ${{ steps.read.outputs.number }}
+      build: ${{ steps.read.outputs.build }}
+      upload: ${{ steps.read.outputs.upload }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: read
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          version_of() {
+            grep -E '^version:' | head -n1 \
+              | sed -E 's/^version:[[:space:]]*//; s/[[:space:]]+#.*$//; s/[[:space:]]+$//' | tr -d "\"'"
+          }
+          version=$(version_of < crm/pubspec.yaml)
+          name=${version%%+*}
+          number=${version#*+}
+          if ! [[ "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$number" =~ ^[0-9]+$ && "$version" == *+* ]]; then
+            echo "::error file=crm/pubspec.yaml::version must look like 1.0.0+1, found '$version'"
+            exit 1
+          fi
+          build=true
+          upload=false
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            upload=true
+          elif [[ "$EVENT" == push ]]; then
+            upload=true
+            if [[ -n "$BEFORE" && "$BEFORE" != 0000000000000000000000000000000000000000 ]] \
+              && git fetch --quiet --depth=1 origin "$BEFORE"; then
+              previous=$(git show "$BEFORE:crm/pubspec.yaml" 2>/dev/null | version_of || true)
+              if [[ "$previous" == "$version" ]]; then
+                build=false
+                echo "crm/pubspec.yaml changed but its version is still $version: nothing to release."
+              fi
+            fi
+          fi
+          {
+            echo "name=$name"
+            echo "number=$number"
+            echo "build=$build"
+            echo "upload=$upload"
+          } >> "$GITHUB_OUTPUT"
+          echo "### Foorsa CRM $name ($number): build=$build, upload=$upload" >> "$GITHUB_STEP_SUMMARY"
+
+  checks:
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: crm
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+
+  ios:
+    needs: [version, checks]
+    if: needs.version.outputs.build == 'true'
+    # Xcode 27.1 (the iOS 27.1 SDK), as the student app: iPhone Duo's screens.
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      BUILD_NAME: ${{ needs.version.outputs.name }}
+      BUILD_NUMBER: ${{ needs.version.outputs.number }}
+      UPLOAD: ${{ needs.version.outputs.upload }}
+      HAS_ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY != '' && vars.APPSTORE_API_KEY_ID != '' && vars.APPSTORE_ISSUER_ID != '' }}
+      ASC_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+      ASC_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+      ASC_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
+    steps:
+      - name: Choose how to sign
+        run: |
+          if [[ "$HAS_ASC_KEY" == true ]]; then signing=cloud; else signing=none; fi
+          if [[ "$UPLOAD" == true && "$signing" == none ]]; then
+            echo "::error::Uploading needs APPSTORE_API_PRIVATE_KEY, APPSTORE_API_KEY_ID and APPSTORE_ISSUER_ID (README.md, iOS release build)."
+            exit 1
+          fi
+          echo "SIGNING=$signing" >> "$GITHUB_ENV"
+          echo "Signing: $signing" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # The bundle id and its capabilities must exist before Apple can sign
+      # the build; the run registers them itself.
+      - name: Register the bundle id and its capabilities
+        if: env.SIGNING == 'cloud'
+        run: python3 scripts/app_store_connect.py ensure-bundle-id "$BUNDLE_ID" "$APP_NAME" PUSH_NOTIFICATIONS ASSOCIATED_DOMAINS
+
+      # Apple's API cannot make the app record: until someone makes it on the
+      # website, the run builds and signs and then stops with a warning.
+      - name: Check App Store Connect has the app and this build number is free
+        id: asc
+        if: env.UPLOAD == 'true'
+        run: |
+          status=0
+          python3 scripts/app_store_connect.py app-exists "$BUNDLE_ID" || status=$?
+          if [[ $status == 3 ]]; then
+            echo "::warning::App Store Connect has no app for $BUNDLE_ID yet. Create \"$APP_NAME\" there (crm/README.md), then run this workflow again from the Actions tab."
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ $status == 0 ]] || exit "$status"
+          python3 scripts/app_store_connect.py check-build-number "$BUNDLE_ID" "$BUILD_NUMBER"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '^27.1'
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+        working-directory: crm
+
+      - name: Build the IPA and sign it in the cloud
+        if: env.SIGNING == 'cloud'
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          (umask 077; printf '%s\n' "$ASC_KEY" > "$key")
+          auth=(-allowProvisioningUpdates -authenticationKeyPath "$key"
+                -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          python3 scripts/app_store_connect.py certificates DEVELOPMENT IOS_DEVELOPMENT > "$RUNNER_TEMP/dev-certs-before.txt"
+          python3 scripts/app_store_connect.py certificates DISTRIBUTION IOS_DISTRIBUTION > "$RUNNER_TEMP/dist-certs-before.txt"
+
+          cat > "$RUNNER_TEMP/ExportOptions-cloud.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+
+          (cd crm && flutter build ipa --release --no-codesign \
+            --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER")
+          unsigned=crm/build/ios/archive/Runner.xcarchive
+
+          # Apple's export signs with the entitlements the archived binary
+          # carries; an archive that was never signed carries none, and without
+          # aps-environment APNs refuses the app (the student app's lesson,
+          # docs/student-push.md). So it is first signed ad hoc with the CRM
+          # app's entitlements, then, if Apple's profile refuses one, with the
+          # push entitlement alone.
+          entitled="$RUNNER_TEMP/Runner-entitled.xcarchive"
+          exported=""
+          for set in all push-only; do
+            rm -rf "$entitled" crm/build/ios/ipa
+            ditto "$unsigned" "$entitled"
+            bash scripts/sign_archive_entitlements.sh "$entitled" "$set" crm/ios/Runner/Runner.entitlements || continue
+            if xcodebuild -exportArchive -archivePath "$entitled" -exportPath crm/build/ios/ipa \
+                -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-cloud.plist" "${auth[@]}"; then
+              shopt -s nullglob
+              found=(crm/build/ios/ipa/*.ipa)
+              if [[ ${#found[@]} -gt 0 && "$(bash scripts/push_entitlement.sh "${found[0]}")" == production ]]; then
+                exported="${found[0]}"
+                echo "Exported with the '$set' entitlements." >> "$GITHUB_STEP_SUMMARY"
+                break
+              fi
+              echo "::warning::The '$set' export has no production push entitlement."
+            fi
+          done
+          if [[ -z "$exported" ]]; then
+            echo "::warning::No export carried the push entitlement; exporting the unsigned archive as it is (notifications will not work on this build)."
+            rm -rf crm/build/ios/ipa
+            xcodebuild -exportArchive -archivePath "$unsigned" -exportPath crm/build/ios/ipa \
+              -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-cloud.plist" "${auth[@]}"
+            shopt -s nullglob
+            found=(crm/build/ios/ipa/*.ipa)
+            exported="${found[0]:-}"
+          fi
+          if [[ -z "$exported" ]]; then
+            echo "::error::No IPA was exported; see the errors above."
+            exit 1
+          fi
+          echo "IPA=$exported" >> "$GITHUB_ENV"
+          echo "Built $exported ($(du -h "$exported" | cut -f1)); entitlements: $(bash scripts/push_entitlement.sh --keys "$exported")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build without signing (no App Store Connect key)
+        if: env.SIGNING == 'none'
+        working-directory: crm
+        run: |
+          flutter build ios --release --no-codesign --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+          echo "Unsigned build of $BUILD_NAME ($BUILD_NUMBER) succeeded." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to TestFlight
+        if: env.UPLOAD == 'true' && steps.asc.outputs.ready == 'true'
+        uses: apple-actions/upload-testflight-build@155ea93be9ee6d5186c71f660a612f5eddb14510 # v5.6.0
+        with:
+          app-path: ${{ env.IPA }}
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+      # Every build reaches the team's internal TestFlight group by itself.
+      - name: Make sure the team's TestFlight group gets every build
+        if: env.UPLOAD == 'true' && steps.asc.outputs.ready == 'true'
+        continue-on-error: true
+        run: python3 scripts/app_store_connect.py ensure-internal-group "$BUNDLE_ID" "$TESTER_GROUP"
+
+      - name: Uploaded
+        if: env.UPLOAD == 'true' && steps.asc.outputs.ready == 'true'
+        run: echo "Foorsa CRM $BUILD_NAME ($BUILD_NUMBER) is in TestFlight, for the '$TESTER_GROUP' group." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Waiting for the App Store Connect app record
+        if: env.UPLOAD == 'true' && steps.asc.outputs.ready == 'false'
+        run: |
+          echo "Built and signed $BUILD_NAME ($BUILD_NUMBER), not uploaded. Create the app \"$APP_NAME\" for $BUNDLE_ID in App Store Connect, then run this workflow from the Actions tab." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Revoke the development certificate Xcode made for this run
+        if: always() && env.SIGNING == 'cloud'
+        run: |
+          [[ -f "$RUNNER_TEMP/dev-certs-before.txt" ]] || exit 0
+          python3 scripts/app_store_connect.py revoke-new "$RUNNER_TEMP/dev-certs-before.txt" DEVELOPMENT IOS_DEVELOPMENT
+          python3 scripts/app_store_connect.py report-new "$RUNNER_TEMP/dist-certs-before.txt" DISTRIBUTION IOS_DISTRIBUTION
+
+      - name: Remove the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8

@@ -13,6 +13,8 @@ analyzer:
     - android/**
     - ios/**
     - third_party/**
+    # The Foorsa CRM app is its own package, analysed in its own folder (crm/).
+    - crm/**
 include: package:flutter_lints/flutter.yaml
 
 linter:

@@ -6,6 +6,8 @@
 #                                       entitlements, aps-environment production
 #   scripts/sign_archive_entitlements.sh <Runner.xcarchive> push-only  aps-environment
 #                                       production and nothing else
+#   scripts/sign_archive_entitlements.sh <Runner.xcarchive> all <file>  another app's
+#                                       entitlements (the Foorsa CRM app's, crm/ios)
 #
 # Apple's export signs an app with the entitlements its archived binary
 # carries, kept to what the provisioning profile allows. `flutter build ipa
@@ -19,6 +21,7 @@ set -euo pipefail
 archive="${1:?usage: sign_archive_entitlements.sh <Runner.xcarchive> all|push-only}"
 set_name="${2:-all}"
 root=$(cd "$(dirname "$0")/.." && pwd)
+entitlements="${3:-$root/ios/Runner/Runner.entitlements}"
 app=$(find "$archive/Products/Applications" -maxdepth 1 -name '*.app' -print -quit)
 if [[ -z "$app" ]]; then
   echo "No app in $archive" >&2
@@ -30,7 +33,7 @@ trap 'rm -rf "$work"' EXIT
 ent="$work/Runner.entitlements"
 case "$set_name" in
   all)
-    cp "$root/ios/Runner/Runner.entitlements" "$ent"
+    cp "$entitlements" "$ent"
     plutil -replace aps-environment -string production "$ent"
     ;;
   push-only)
