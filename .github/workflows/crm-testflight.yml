@@ -6,6 +6,10 @@
 #   that version and uploads it.
 # - A pull request that touches crm/ or this file builds and signs it without
 #   uploading, so a release is known to build before it is merged.
+# - Run workflow (Actions tab) builds and uploads the version in crm/pubspec.yaml:
+#   the first upload, once the App Store Connect app record exists.
+# - Until that record exists, an upload run builds and signs, then stops with a
+#   warning instead of failing.
 #
 # Signing: Apple signs the build in the cloud with the team's App Store Connect
 # key (an Admin key), as the student app's TestFlight workflow does; no
@@ -20,6 +24,7 @@ on:
     paths: [crm/pubspec.yaml]
   pull_request:
     paths: ['crm/**', .github/workflows/crm-testflight.yml, scripts/app_store_connect.py, scripts/sign_archive_entitlements.sh]
+  workflow_dispatch:
 
 concurrency:
   group: crm-testflight-${{ github.ref }}
@@ -67,7 +72,9 @@ jobs:
           fi
           build=true
           upload=false
-          if [[ "$EVENT" == push ]]; then
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            upload=true
+          elif [[ "$EVENT" == push ]]; then
             upload=true
             if [[ -n "$BEFORE" && "$BEFORE" != 0000000000000000000000000000000000000000 ]] \
               && git fetch --quiet --depth=1 origin "$BEFORE"; then
@@ -142,11 +149,22 @@ jobs:
         if: env.SIGNING == 'cloud'
         run: python3 scripts/app_store_connect.py ensure-bundle-id "$BUNDLE_ID" "$APP_NAME" PUSH_NOTIFICATIONS ASSOCIATED_DOMAINS
 
+      # Apple's API cannot make the app record: until someone makes it on the
+      # website, the run builds and signs and then stops with a warning.
       - name: Check App Store Connect has the app and this build number is free
+        id: asc
         if: env.UPLOAD == 'true'
         run: |
-          python3 scripts/app_store_connect.py app-exists "$BUNDLE_ID"
+          status=0
+          python3 scripts/app_store_connect.py app-exists "$BUNDLE_ID" || status=$?
+          if [[ $status == 3 ]]; then
+            echo "::warning::App Store Connect has no app for $BUNDLE_ID yet. Create \"$APP_NAME\" there (crm/README.md), then run this workflow again from the Actions tab."
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ $status == 0 ]] || exit "$status"
           python3 scripts/app_store_connect.py check-build-number "$BUNDLE_ID" "$BUILD_NUMBER"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
@@ -238,7 +256,7 @@ jobs:
           echo "Unsigned build of $BUILD_NAME ($BUILD_NUMBER) succeeded." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload to TestFlight
-        if: env.UPLOAD == 'true'
+        if: env.UPLOAD == 'true' && steps.asc.outputs.ready == 'true'
         uses: apple-actions/upload-testflight-build@155ea93be9ee6d5186c71f660a612f5eddb14510 # v5.6.0
         with:
           app-path: ${{ env.IPA }}
@@ -248,13 +266,18 @@ jobs:
 
       # Every build reaches the team's internal TestFlight group by itself.
       - name: Make sure the team's TestFlight group gets every build
-        if: env.UPLOAD == 'true'
+        if: env.UPLOAD == 'true' && steps.asc.outputs.ready == 'true'
         continue-on-error: true
         run: python3 scripts/app_store_connect.py ensure-internal-group "$BUNDLE_ID" "$TESTER_GROUP"
 
       - name: Uploaded
-        if: env.UPLOAD == 'true'
+        if: env.UPLOAD == 'true' && steps.asc.outputs.ready == 'true'
         run: echo "Foorsa CRM $BUILD_NAME ($BUILD_NUMBER) is in TestFlight, for the '$TESTER_GROUP' group." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Waiting for the App Store Connect app record
+        if: env.UPLOAD == 'true' && steps.asc.outputs.ready == 'false'
+        run: |
+          echo "Built and signed $BUILD_NAME ($BUILD_NUMBER), not uploaded. Create the app \"$APP_NAME\" for $BUNDLE_ID in App Store Connect, then run this workflow from the Actions tab." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Revoke the development certificate Xcode made for this run
         if: always() && env.SIGNING == 'cloud'

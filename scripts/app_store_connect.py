@@ -24,8 +24,9 @@ key or a token.
       turn on the capabilities named (PUSH_NOTIFICATIONS, ASSOCIATED_DOMAINS).
       The Foorsa CRM app's release does this before Apple signs its build.
   app-exists BUNDLE_ID
-      Exit 1, with what to do, when App Store Connect has no app record for
-      the bundle id: Apple lets only its website create one.
+      Exit 3, with what to do, when App Store Connect has no app record for
+      the bundle id: Apple lets only its website create one. (Any other
+      failure, such as a refused key, exits 1.)
   ensure-internal-group BUNDLE_ID GROUP_NAME
       Make an internal TestFlight group that gets every build, if the app has
       none by that name.
@@ -210,10 +211,10 @@ def main(argv):
     if command == "app-exists":
         (identifier,) = args
         if app_for(identifier) is None:
-            print(f"::error::App Store Connect has no app for {identifier}. Create it once on "
+            print(f"App Store Connect has no app for {identifier}. Create it once on "
                   "appstoreconnect.apple.com (Apps, +, New App, bundle id " + identifier + "); "
                   "Apple's API cannot. Then run the release again.")
-            return 1
+            return 3
         print(f"App Store Connect has an app for {identifier}.")
         return 0
     if command == "ensure-internal-group":

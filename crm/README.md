@@ -38,9 +38,12 @@ Bump `version:` in `crm/pubspec.yaml` on `main`:
 
 - `crm-testflight.yml` builds the iPhone and iPad app on the `xcode-27` runner, signs it in the cloud
   with the App Store Connect API key, uploads it to TestFlight and gives the "Foorsa team" internal
-  group access. Pull requests build and sign without uploading.
+  group access. Pull requests build and sign without uploading. Until the App Store Connect app
+  record exists, an upload run stops after signing with a warning; once it exists, start the first
+  upload with Run workflow in the Actions tab.
 - `google-play.yml` (`crm-version`, `crm-publish`) builds the Android bundle with the release keystore
   and sends it to the internal testing track. Google's Workload Identity trusts only that workflow.
+  Until the Play Console app exists, the run saves the bundle and ends with a warning.
 
 TestFlight builds expire after 90 days: bump the version at least every two months.
 

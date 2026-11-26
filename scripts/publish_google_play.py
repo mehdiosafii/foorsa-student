@@ -109,7 +109,17 @@ def main():
     # Federation impersonating the Play publisher service account). No key file.
     credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/androidpublisher'])
     edits = build('androidpublisher', 'v3', credentials=credentials, cache_discovery=False).edits()
-    edit = edits.insert(packageName=package, body={}).execute()['id']
+    try:
+        edit = edits.insert(packageName=package, body={}).execute()['id']
+    except HttpError as error:
+        # A new app (the Foorsa CRM's first release): Play takes an app's very
+        # first bundle only from Play Console, and the job saved it as an
+        # artifact before this step. Later versions publish by themselves.
+        if PACKAGE != 'ma.foorsa' and error.resp.status == 404:
+            print(f'::warning::Google Play has no app for {package} yet. Create it in Play Console and '
+                  'upload the bundle this run saved (its artifact) by hand; later versions publish by themselves.')
+            return
+        raise
     committed = False
     waiting_for_send = False
     try:
