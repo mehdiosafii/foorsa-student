@@ -25,6 +25,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      # The Android build's Java, as android.yml and google-play.yml pin it: the runner's own
+      # default moved to a Java whose class files (major version 69) this Gradle cannot read,
+      # and the debug APK failed to build (26 Nov 2026).
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.5'
