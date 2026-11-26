@@ -42,6 +42,22 @@ void main() {
     expect(odd.containsKey('appBuild'), isFalse);
   });
 
+  test('an iPhone says where its copy came from; Android says nothing', () {
+    expect(shellCapabilities(isIOS: true, distribution: 'testflight')['distribution'], 'testflight');
+    expect(shellCapabilities(isIOS: true, distribution: 'appstore')['distribution'], 'appstore');
+    expect(shellCapabilities(isIOS: true, distribution: 'development')['distribution'], 'development');
+    expect(shellCapabilities(isIOS: true, distribution: 'TestFlight<script>').containsKey('distribution'), isFalse);
+    expect(shellCapabilities(isIOS: true).containsKey('distribution'), isFalse);
+    expect(shellCapabilities(isIOS: false, distribution: 'testflight').containsKey('distribution'), isFalse);
+  });
+
+  test('the iPhone app answers where its copy came from', () {
+    final delegate = File('ios/Runner/AppDelegate.swift').readAsStringSync();
+    expect(delegate, contains('"ma.foorsa.student/app"'));
+    expect(delegate, contains('"sandboxReceipt"'));
+    expect(File('lib/src/app_distribution.dart').readAsStringSync(), contains("MethodChannel('ma.foorsa.student/app')"));
+  });
+
   test('the iPhone app may film: its microphone permission is declared', () {
     // Without it iOS closes the app as soon as the picker records a video.
     final plist = File('ios/Runner/Info.plist').readAsStringSync();

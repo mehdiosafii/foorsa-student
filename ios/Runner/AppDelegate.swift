@@ -57,6 +57,16 @@ import flutter_callkit_incoming
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "FoorsaDocumentScanner") {
       DocumentScanner.register(with: registrar)
     }
+    // Where this copy came from (app_distribution.dart): the portal tries what
+    // is still being tested on TestFlight first.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "FoorsaStudentApp") {
+      let channel = FlutterMethodChannel(name: "ma.foorsa.student/app", binaryMessenger: registrar.messenger())
+      channel.setMethodCallHandler { call, result in
+        if call.method == "distribution" {
+          result(AppDelegate.distribution())
+        } else { result(FlutterMethodNotImplemented) }
+      }
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "FoorsaStudentPush") {
       let channel = FlutterMethodChannel(name: "ma.foorsa.student/push", binaryMessenger: registrar.messenger())
       pushChannel = channel
@@ -71,6 +81,18 @@ import flutter_callkit_incoming
         } else { result(FlutterMethodNotImplemented) }
       }
     }
+  }
+
+  /// A TestFlight install carries a sandbox receipt and an App Store install
+  /// its own receipt (App Review's copy is TestFlight's kind). A debug build
+  /// run from Xcode is "development"; any other build reads as the App
+  /// Store's, so nothing still being tried reaches it.
+  static func distribution() -> String {
+    #if DEBUG
+    return "development"
+    #else
+    return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt" ? "testflight" : "appstore"
+    #endif
   }
 
   override func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Foundation.Data) {

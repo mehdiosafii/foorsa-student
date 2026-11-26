@@ -79,6 +79,40 @@ and in [web view recovery](docs/web-view-recovery.md). On Google Play it is
 build 75: the upload of build 74 stopped while it waited for Google's answer,
 and 75 is the same app sent again, to both stores.
 
+## iPhone Duo (1.2.44)
+
+The owner, 26 Nov 2026: "Foorsa reward and Foorsa app let's make them adapt to the iPhone Duo",
+then "we should just make the app bigger, but make good use of the extra space". Up to 1.2.43 the
+app was built with Xcode 26.6 (the iOS 26 SDK), and an app built with an SDK before iOS 27 opens on
+iPhone Duo as a phone-sized window in the middle of the inner screen, and beside the camera on the
+outer one. From 1.2.44 (76) the iOS build uses Xcode 27.1 or later (`testflight.yml`, GitHub's
+`xcode-27` image), so the app fills both screens and resizes as the Duo opens and closes. Nothing
+else in the shell changed, because it already fits:
+
+- The web view sits in a `SafeArea` with its sides on, so it stays clear of the 84 pt strip down
+  the Duo's right edge where its status bar and camera live (closed: a 382 x 678 web view upright;
+  open: 669 x 951 upright, 867 x 669 held like a book). The shell fills the strip with the page's
+  own top colour (`_applyChromeColor`), as Safari does, and the status bar's icons follow it.
+- Opening and closing the Duo resizes the app; it does not restart it, so the student stays where
+  they were. The scene lifecycle the iOS 27 SDK requires was already in place
+  (`FlutterSceneDelegate`), and iOS 15 is still Xcode 27's lowest deployment target.
+- The native scanner lays itself out from its safe area and its own width and height
+  (`FoorsaScannerViewController`), so it fits both screens as it fits a phone on its side.
+
+What uses the extra room is the portal (foorsa-reward, CLAUDE.md, "iPhone Duo: the same app,
+bigger"): a wider column on the open screen, Home in two columns when the Duo is held like a book,
+and the page moving into its new place as the Duo opens. The owner sent 1.2.44 to every student and
+the portal's part to TestFlight only ("push the update to foorsa app for all, keep android as it
+is, and for foorsa reward let's put in test flight"), so the build says where its copy came from:
+`FoorsaShellCapabilities` answers `distribution` (`testflight`, `appstore`, or `development` from
+Xcode; `app_distribution.dart`, `AppDelegate.distribution()`: a TestFlight install, App Review's
+included, carries a sandbox receipt). The portal turns its iPhone Duo layout on for `testflight`
+only; the App Store copy of the same build fills the Duo's screens with the layout every student
+has, and Android says nothing. It went to TestFlight without a check on a Duo. On a phone, check:
+the app fills both screens and keeps its place when the Duo opens and closes; the scanner's preview is upright on the inner screen
+(it turns its camera by the window's orientation, which the Duo's inner screen reports its own way);
+and adviser calls, push and the adhan work as on 1.2.43.
+
 ## The adhan
 
 From 1.2.39 (70) the app sounds a recorded adhan at the prayer times the
@@ -88,9 +122,9 @@ portal schedules through `FoorsaBridge`. See [the adhan](docs/adhan.md).
 ## iOS release build
 
 Validated locally with Flutter 3.47.5 and Xcode 27.0. The GitHub build uses
-Flutter 3.47.5 and the newest stable Xcode on the `macos-26` runner (Xcode 26.6
-in the September 2026 image), which meets Apple's Xcode 26 / iOS 26 SDK minimum
-for uploads. iOS deployment target is 15.0. The project keeps CocoaPods
+Flutter 3.47.5 and the newest Xcode 27.1 or later on GitHub's `xcode-27` image
+(from 1.2.44; before it, Xcode 26.6 on `macos-26`): the iOS 27.1 SDK is what
+lets the app fill iPhone Duo's screens (above, "iPhone Duo"). iOS deployment target is 15.0. The project keeps CocoaPods
 integration because the current splash plugin cannot resolve its Swift Package
 Manager headers. Release device signing uses team G865J7CMBG and the
 `Foorsa Student App Store` distribution profile.
