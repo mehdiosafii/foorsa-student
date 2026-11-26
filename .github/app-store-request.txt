@@ -1,2 +1,2 @@
-sync-review-demo
-Asked again 26 Nov 2026 (the first run met a 500 from Foorsa, fixed in foorsa-reward #1871): App Review's demo account, Sam Demo, made again from App Store Connect's sign-in.
+submit-latest 1.2.44+76
+Asked 26 Nov 2026 by the owner ("push the update to foorsa app for all", then "You get all and do all"): 1.2.44 (76), built with Xcode 27 so the app fills both iPhone Duo screens. App Review's demo account is back (applicant 5603).
