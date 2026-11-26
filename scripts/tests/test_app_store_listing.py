@@ -910,6 +910,42 @@ class WhatTheOtherActionsRead(ListingCase):
         self.assertEqual((code, self.asc.writes), (1, []), output)
 
 
+    def test_sync_review_demo_sends_the_account_to_foorsa_and_prints_none_of_it(self):
+        self.waiting()
+        sent = []
+
+        class Answer(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else req
+            if "token.actions" in url:
+                return Answer(json.dumps({"value": "identity-token"}).encode())
+            sent.append((req.get_method(), url, json.loads(req.data.decode()), req.get_header("Authorization")))
+            return Answer(json.dumps({"ok": True, "applicantId": 9000, "created": True, "changed": True}).encode())
+
+        env = {"ACTIONS_ID_TOKEN_REQUEST_URL": "https://token.actions.example/x?y=1", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token"}
+        with mock.patch("urllib.request.urlopen", urlopen), mock.patch.dict(os.environ, env):
+            code, output = self.run_script(listing.sync_review_demo)
+        self.assertEqual((code, self.asc.writes), (0, []), output)
+        self.assertEqual(sent, [("POST", listing.FOORSA + "/api/internal/app-review/demo-account",
+                                 {"name": fake.SECRETS["demoAccountName"], "password": fake.SECRETS["demoAccountPassword"]},
+                                 "Bearer identity-token")])
+        self.assertIn('Foorsa: HTTP 200 {"applicantId": 9000, "created": true, "changed": true}', output)
+
+    def test_sync_review_demo_fails_without_an_identity_token(self):
+        self.waiting()
+        with mock.patch.dict(os.environ, {"ACTIONS_ID_TOKEN_REQUEST_URL": "", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": ""}):
+            with self.assertRaises(SystemExit):
+                self.run_script(listing.sync_review_demo)
+        self.assertEqual(self.asc.writes, [])
+
 class ApplesAnswers(unittest.TestCase):
     def test_an_answer_that_is_not_json_is_shown_short(self):
         self.assertEqual(listing.explain(listing.AscError(502, "<html>Bad gateway</html>")), "502 <html>Bad gateway</html>")

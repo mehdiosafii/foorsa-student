@@ -95,10 +95,18 @@ class TheStep(unittest.TestCase):
                          (["review-check", "submit-latest 1.2.42+73", "state"], 0))
         self.assertEqual(self.run_step("state\nsubmit-latest 1.2.42+73 replace-waiting\n")[:2], (["state"], 0))
 
+    def test_the_demo_account_is_sent_then_checked(self):
+        for request in ("sync-review-demo\n", "sync-review-demo"):
+            self.assertEqual(self.run_step(request)[:2], (["sync-review-demo", "review-check"], 0), repr(request))
+        # A demo account Foorsa did not take is not checked: the step fails as the sending did.
+        self.assertEqual(self.run_step("sync-review-demo\n", fails="sync-review-demo")[:2], (["sync-review-demo"], 1))
+        self.assertEqual(self.run_step("sync-review-demo\n", fails="review-check")[:2], (["sync-review-demo", "review-check"], 1))
+        self.assertEqual(self.run_step(event="workflow_dispatch", action="sync-review-demo")[:2], (["sync-review-demo", "review-check"], 0))
+
     def test_anything_else_in_the_file_runs_nothing(self):
         for request in (
             "", "\n", "\nstate\n", "State\n", "delete\n", "state extra\n", "state 1.2.42+73\n", "review-check now\n",
-            "state\r\n", "submit-latest 1.2.42+73\r\n",
+            "state\r\n", "submit-latest 1.2.42+73\r\n", "sync-review-demo now\n", "sync-review-demo 1.2.42+73\n", "Sync-Review-Demo\n",
             "submit-latest\n", "submit-latest latest\n", "submit-latest 1.2.42\n", "submit-latest +73\n", "submit-latest 1.2.42+\n",
             "submit-latest v1.2.42+73\n", "submit-latest 1.2.42+73a\n", "submit-latest 1..2+73\n", "submit-latest 1.2.42 + 73\n",
             "submit-latest replace-waiting\n", "submit-latest replace-waiting 1.2.42+73\n",
@@ -203,7 +211,9 @@ class TheWorkflow(unittest.TestCase):
         self.assertNotIn("shell", mine)
         self.assertNotIn("defaults", workflow)
         inputs = workflow[True]["workflow_dispatch"]["inputs"]      # YAML reads the key "on" as true
-        self.assertEqual(inputs["action"]["options"], ["state", "review-check", "submit-latest"])
+        self.assertEqual(inputs["action"]["options"], ["state", "review-check", "sync-review-demo", "submit-latest"])
+        # sync-review-demo proves who it is to Foorsa with the run's identity token.
+        self.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write"})
         self.assertEqual((inputs["replace_waiting"]["type"], inputs["replace_waiting"]["default"]), ("boolean", False))
 
 

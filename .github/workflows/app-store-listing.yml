@@ -6,6 +6,8 @@ name: App Store listing
 # Started by hand (Actions › App Store listing › Run workflow):
 #   state          what App Store Connect holds, and the review submission's state
 #   review-check   whether App Review's demo account still signs in to the app as it is today
+#   sync-review-demo  sends that demo account to Foorsa, which makes the demo applicant again (or
+#                  brings its sign-in back to App Store Connect's), then review-check
 #   submit-latest  the newest valid build up for review, with store/app-store/review-notes.txt
 #                  as its notes. When the newest App Store version is on sale it goes up as an
 #                  update: a new version, with "What's New" from store/app-store/whats-new/.
@@ -16,7 +18,7 @@ name: App Store listing
 #                  submission went through or stopped part-way.
 # Or by a push to main that changes .github/app-store-request.txt, for whoever cannot start a
 # workflow by hand (as .github/google-play-promote.txt does for Google Play). Its first line is
-# the request: "state", "review-check", "submit-latest 1.2.42+73", or
+# the request: "state", "review-check", "sync-review-demo", "submit-latest 1.2.42+73", or
 # "submit-latest 1.2.42+73 replace-waiting". A submission asked for this way has to name its
 # version, is refused unless the newest valid build is exactly that one, and runs review-check
 # first, stopping there if the demo account no longer signs in. Nothing under the first line is
@@ -31,11 +33,11 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: state | review-check | submit-latest
+        description: state | review-check | sync-review-demo | submit-latest
         required: true
         default: state
         type: choice
-        options: [state, review-check, submit-latest]
+        options: [state, review-check, sync-review-demo, submit-latest]
       replace_waiting:
         description: With submit-latest, cancel the submission waiting for review and put the newest build in its place (the wait starts again)
         type: boolean
@@ -43,6 +45,8 @@ on:
 
 permissions:
   contents: read
+  # sync-review-demo proves to Foorsa that it is this workflow on main (no stored key).
+  id-token: write
 
 concurrency:
   group: app-store-listing
@@ -75,7 +79,7 @@ jobs:
             fi
             read -r ACTION version word extra < "$file" || true
             case "$ACTION" in
-              state|review-check)
+              state|review-check|sync-review-demo)
                 if [ -n "$version" ]; then echo "::error::$file: $ACTION takes nothing after it"; exit 1; fi ;;
               submit-latest)
                 if [ -n "$extra" ] || ! printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+)*\+[0-9]+$'; then
@@ -84,7 +88,7 @@ jobs:
                 if [ -n "$word" ] && [ "$word" != replace-waiting ]; then
                   echo "::error::$file: after the version comes replace-waiting or nothing"; exit 1
                 fi ;;
-              *) echo "::error::$file must be state, review-check or submit-latest <version>"; exit 1 ;;
+              *) echo "::error::$file must be state, review-check, sync-review-demo or submit-latest <version>"; exit 1 ;;
             esac
             # Nobody ran review-check by hand before this submission, so it runs here, and a demo
             # account that no longer signs in stops the step before anything is submitted.
@@ -98,5 +102,9 @@ jobs:
           # part-way. The step ends as the submission did, whatever becomes of this reading.
           if [ "$ACTION" = submit-latest ]; then
             python3 scripts/app_store_listing.py state || echo "::warning::state could not be read after the submission"
+          fi
+          # Whether the demo account Foorsa was just sent now signs in, as App Review will.
+          if [ "$ACTION" = sync-review-demo ] && [ "$status" = 0 ]; then
+            python3 scripts/app_store_listing.py review-check || status=$?
           fi
           exit "$status"

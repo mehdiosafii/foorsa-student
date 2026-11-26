@@ -15,6 +15,10 @@ never the key, a token, a contact's details or a demo account's password.
       to the portal with the demo account App Store Connect holds and reports only what a
       reviewer would meet (a password to change, the contract to sign, the step of the
       file), and prints the review notes with the account's name and password masked.
+  sync-review-demo
+      Sends that demo account to Foorsa (POST /api/internal/app-review/demo-account, with the
+      run's GitHub Actions identity token), which makes the demo applicant again or brings its
+      sign-in back to App Store Connect's. Only Foorsa's answer about the applicant is printed.
   submit-latest [1.2.42+73] [replace-waiting]
       Puts the newest valid build up for review. What that takes depends on where the newest
       App Store version stands:
@@ -557,6 +561,61 @@ def review_check() -> int:
     return 0
 
 
+FOORSA = os.environ.get("FOORSA_HOST", "https://home.foorsa.ma").rstrip("/")
+REVIEW_DEMO_AUDIENCE = "foorsa-app-review-demo"
+
+
+def github_identity(audience: str) -> str:
+    """This run's GitHub Actions identity token for Foorsa (the job needs id-token: write)."""
+    url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
+    bearer = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+    if not url or not bearer:
+        raise SystemExit("No GitHub identity token: the job needs permissions id-token: write")
+    separator = "&" if "?" in url else "?"
+    req = urllib.request.Request(f"{url}{separator}audience={urllib.parse.quote(audience)}", headers={"Authorization": f"Bearer {bearer}"})
+    with urllib.request.urlopen(req, timeout=30) as res:
+        return json.load(res)["value"]
+
+
+def sync_review_demo() -> int:
+    """Sends the demo account App Store Connect gives App Review to Foorsa, which makes the demo
+    applicant again or brings its sign-in back to it (26 Nov 2026: the applicant had been deleted
+    with the test accounts). The account goes only into this TLS request, authenticated by the
+    run's identity token; nothing of it is printed."""
+    _, versions = app_and_versions()
+    detail = None
+    for version in versions[:2]:
+        candidate = review_detail(version["id"])
+        attributes = (candidate or {}).get("attributes") or {}
+        if (attributes.get("demoAccountName") or "").strip() and attributes.get("demoAccountPassword"):
+            detail = candidate
+            print(f"Demo account read from version {version['attributes'].get('versionString')} ({state_of(version)})")
+            break
+    if not detail:
+        print("App Store Connect holds no demo account to send.")
+        return 1
+    review = detail["attributes"]
+    body = json.dumps({"name": review["demoAccountName"].strip(), "password": review["demoAccountPassword"]}).encode()
+    req = urllib.request.Request(FOORSA + "/api/internal/app-review/demo-account", data=body, method="POST", headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + github_identity(REVIEW_DEMO_AUDIENCE),
+        "User-Agent": "Foorsa App Store listing",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=60) as res:
+            status, answer = res.status, json.loads(res.read().decode() or "{}")
+    except urllib.error.HTTPError as err:
+        status = err.code
+        try:
+            answer = json.loads(err.read().decode(errors="replace") or "{}")
+        except ValueError:
+            answer = {}
+    # Only what Foorsa answers about the applicant, never the account.
+    shown = {key: answer.get(key) for key in ("applicantId", "created", "changed", "error", "field", "code") if key in answer}
+    print(f"Foorsa: HTTP {status} {json.dumps(shown)}")
+    return 0 if status == 200 and answer.get("ok") else 1
+
+
 def patch(path: str, type_: str, id_: str, attributes=None, relationships=None):
     data = {"type": type_, "id": id_}
     if attributes:
@@ -826,6 +885,10 @@ def put_up_for_review(expected: str, replace_waiting: bool) -> int:
 
 if __name__ == "__main__":
     command = sys.argv[1] if len(sys.argv) > 1 else "state"
+    if command == "sync-review-demo":
+        if len(sys.argv) > 2:
+            sys.exit("sync-review-demo takes nothing after it")
+        sys.exit(sync_review_demo())
     commands = {"state": state, "review-check": review_check, "submit-latest": submit_latest}
     if command not in commands:
         sys.exit(f"Unknown command {command!r}: {', '.join(commands)}")
