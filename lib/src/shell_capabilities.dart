@@ -4,7 +4,11 @@ library;
 
 import 'shell_haptics.dart';
 
-Map<String, Object> shellCapabilities({required bool isIOS, String? appVersion, String? appBuild}) => {
+/// Where an iPhone's copy came from (app_distribution.dart): the only words
+/// the portal reads.
+const appDistributions = {'testflight', 'appstore', 'development'};
+
+Map<String, Object> shellCapabilities({required bool isIOS, String? appVersion, String? appBuild, String? distribution}) => {
       // An iframe (a YouTube player) plays in the page instead of leaving
       // the app.
       'embeddedFrames': true,
@@ -51,4 +55,11 @@ Map<String, Object> shellCapabilities({required bool isIOS, String? appVersion, 
       // read it from here, and no build said it until this one).
       if (appVersion != null && RegExp(r'^[0-9A-Za-z.+_-]{1,40}$').hasMatch(appVersion)) 'appVersion': appVersion,
       if (appBuild != null && RegExp(r'^[0-9A-Za-z.+_-]{1,40}$').hasMatch(appBuild)) 'appBuild': appBuild,
+      // An iPhone's TestFlight copy, its App Store copy or one run from Xcode,
+      // from 1.2.44 (76). The portal tries what is still being tested on
+      // TestFlight first (the owner, 26 Nov 2026: the iPhone Duo's bigger
+      // layout and its opening, "for foorsa reward let's put in test
+      // flight"), while the App Store copy of the same build keeps the layout
+      // every student has. Android says nothing.
+      if (isIOS && distribution != null && appDistributions.contains(distribution)) 'distribution': distribution,
     };

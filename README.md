@@ -100,9 +100,16 @@ else in the shell changed, because it already fits:
   (`FoorsaScannerViewController`), so it fits both screens as it fits a phone on its side.
 
 What uses the extra room is the portal (foorsa-reward, CLAUDE.md, "iPhone Duo: the same app,
-bigger"): a wider column on the open screen, Home in two columns when the Duo is held like a book.
-It went to TestFlight without a check on a Duo. On a phone, check: the app fills both screens and
-keeps its place when the Duo opens and closes; the scanner's preview is upright on the inner screen
+bigger"): a wider column on the open screen, Home in two columns when the Duo is held like a book,
+and the page moving into its new place as the Duo opens. The owner sent 1.2.44 to every student and
+the portal's part to TestFlight only ("push the update to foorsa app for all, keep android as it
+is, and for foorsa reward let's put in test flight"), so the build says where its copy came from:
+`FoorsaShellCapabilities` answers `distribution` (`testflight`, `appstore`, or `development` from
+Xcode; `app_distribution.dart`, `AppDelegate.distribution()`: a TestFlight install, App Review's
+included, carries a sandbox receipt). The portal turns its iPhone Duo layout on for `testflight`
+only; the App Store copy of the same build fills the Duo's screens with the layout every student
+has, and Android says nothing. It went to TestFlight without a check on a Duo. On a phone, check:
+the app fills both screens and keeps its place when the Duo opens and closes; the scanner's preview is upright on the inner screen
 (it turns its camera by the window's orientation, which the Duo's inner screen reports its own way);
 and adviser calls, push and the adhan work as on 1.2.43.
 

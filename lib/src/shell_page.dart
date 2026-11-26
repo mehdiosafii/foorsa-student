@@ -27,6 +27,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:url_launcher/url_launcher.dart' as launcher;
 
+import 'app_distribution.dart';
 import 'app_language.dart';
 import 'boot_loader_gate.dart';
 import 'bridge_files.dart';
@@ -1457,7 +1458,8 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
                     handlerName: 'FoorsaShellCapabilities',
                     callback: (args) async {
                       final info = _packageInfo ?? await PackageInfo.fromPlatform().catchError((Object _) => PackageInfo(appName: '', packageName: '', version: '', buildNumber: ''));
-                      return shellCapabilities(isIOS: Platform.isIOS, appVersion: info.version, appBuild: info.buildNumber);
+                      final distribution = await appDistribution();
+                      return shellCapabilities(isIOS: Platform.isIOS, appVersion: info.version, appBuild: info.buildNumber, distribution: distribution);
                     },
                   );
                   // A texture by name (and the grain's level), or a number for
