@@ -126,9 +126,16 @@ must stay the same: on 2 Nov 2026 the account's password no longer matched App S
 and every reviewer would have been turned away at sign-in. It was set back from App Store
 Connect's (only its bcrypt hash crossed over) and the change is audited on the applicant.
 
-Run **review-check** before any submission. If it says the demo account no longer signs in, give
-the account App Store Connect's password again (or change both together), and keep the account
-off the contract popup: today it opens straight on Home.
+Run **review-check** before any submission. If it says the demo account no longer signs in, run
+**sync-review-demo** (the request file's first line `sync-review-demo`): it sends the account App
+Store Connect holds to Foorsa (`POST /api/internal/app-review/demo-account`, authenticated by the
+run's GitHub Actions identity token, so no key is stored), which makes Sam Demo again or brings his
+sign-in back to App Store Connect's, keeping only the password's bcrypt hash; then it runs
+**review-check**. Nothing of the account is printed. Sam Demo is in the Test stage and Non-Foorsa,
+so he counts on no board and for no pay and opens straight on Home, with no contract popup. On
+24 Nov 2026 he was deleted with the test accounts and the 1.2.44 submission stopped at its check;
+this is how he came back. A test-account cleanup should leave him (Foorsa keeps his id in
+`system_settings.app_review_demo`).
 
 The demo signs in with a password, which the portal still offers under the email field ("Sign in
 with a password"); students sign in with a link or a code sent to their card's email.
