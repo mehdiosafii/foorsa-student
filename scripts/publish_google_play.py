@@ -10,9 +10,17 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
+# Which app: the student app by default; the Foorsa CRM app sets both
+# (google-play.yml's crm-publish job): PLAY_PACKAGE=com.foorsa.app and
+# PLAY_PROJECT_DIR=crm, whose pubspec.yaml, bundle and notes are its own.
+PACKAGE = os.environ.get('PLAY_PACKAGE', 'ma.foorsa')
+PROJECT = Path(os.environ.get('PLAY_PROJECT_DIR', '.'))
+PUBSPEC = PROJECT / 'pubspec.yaml'
+BUNDLE = PROJECT / 'build/app/outputs/bundle/release/app-release.aab'
+
 # Release notes, one file per Play listing language (fr-FR.txt, ar.txt, ...).
 # Play caps a language's notes at 500 characters.
-RELEASE_NOTES = Path('android/play-release-notes')
+RELEASE_NOTES = PROJECT / 'android/play-release-notes'
 
 # How long Google Play is given to answer one request. It answers a bundle
 # upload only once it has read the bundle through, and the client gives up
@@ -54,13 +62,13 @@ def last_commit_of_version(name, number):
     replaced its version line. None when the version is still main's.
     """
     line = f'version: {name}+{number}'
-    if re.search(rf'^{re.escape(line)}\s*$', Path('pubspec.yaml').read_text(), re.M):
+    if re.search(rf'^{re.escape(line)}\s*$', PUBSPEC.read_text(), re.M):
         return None
     # Newest first: the first commit that changed how often the line appears
     # is the one that replaced it.
-    changes = git('log', '--format=%H', '-S', line, '--', 'pubspec.yaml').split()
+    changes = git('log', '--format=%H', '-S', line, '--', PUBSPEC.as_posix()).split()
     if not changes:
-        raise SystemExit(f'{name} ({number}) was never the version in pubspec.yaml on this branch.')
+        raise SystemExit(f'{name} ({number}) was never the version in {PUBSPEC.as_posix()} on this branch.')
     return git('rev-parse', f'{changes[0]}^').strip()
 
 
@@ -73,11 +81,11 @@ def needs_manual_review_send(error):
 
 
 def main():
-    package = 'ma.foorsa'
+    package = PACKAGE
     track = os.environ['PLAY_TRACK']
     if track not in ('internal', 'alpha', 'beta', 'production'):
         raise SystemExit('Unsupported Google Play track')
-    version = re.search(r'^version:\s*([\d.]+)\+(\d+)\s*$', Path('pubspec.yaml').read_text(), re.M)
+    version = re.search(r'^version:\s*([\d.]+)\+(\d+)\s*$', PUBSPEC.read_text(), re.M)
     if not version:
         raise SystemExit('pubspec.yaml must contain a version name and numeric build number')
     name, number = version.groups()
@@ -121,7 +129,7 @@ def main():
         else:
             bundle = edits.bundles().upload(
                 packageName=package, editId=edit,
-                media_body=MediaFileUpload('build/app/outputs/bundle/release/app-release.aab',
+                media_body=MediaFileUpload(BUNDLE.as_posix(),
                                           mimetype='application/octet-stream', resumable=True),
             ).execute()
             if str(bundle['versionCode']) != number:

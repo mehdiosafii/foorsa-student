@@ -1,0 +1,73 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+// Release signing from android/key.properties: the same Play upload key as the
+// student app, written by scripts/prepare_android_release.py in CI. Without it
+// a release bundle stays unsigned; never ship a debug-signed release.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace = "ma.foorsa.crm"
+    // Google Play: new apps and updates must target API 36 (Android 16).
+    compileSdk = Math.max(flutter.compileSdkVersion, 36)
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17.toString()
+    }
+
+    defaultConfig {
+        // The Foorsa team app's id: the CRM's Firebase project already knows it
+        // (google-services.json), so its chat and call notifications reach the
+        // app with nothing else to register (crm/README.md).
+        applicationId = "com.foorsa.app"
+        minSdk = Math.max(flutter.minSdkVersion, 24)
+        targetSdk = Math.max(flutter.targetSdkVersion, 36)
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : null
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}
+
+dependencies {
+    // Notifications (CrmMessagingService.kt). Initialised from
+    // google-services.json; without the file there is no token and no push.
+    implementation platform("com.google.firebase:firebase-bom:34.6.0")
+    implementation "com.google.firebase:firebase-messaging"
+    implementation "androidx.core:core-ktx:1.15.0"
+}
+
+if (file("google-services.json").exists()) { apply plugin: "com.google.gms.google-services" }

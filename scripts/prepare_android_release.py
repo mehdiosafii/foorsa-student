@@ -45,7 +45,10 @@ def main():
         'keyAlias': os.environ['ANDROID_KEY_ALIAS'],
         'keyPassword': os.environ['ANDROID_KEY_PASSWORD'],
     }
-    Path('android/key.properties').write_text(''.join(f'{key}={property_value(value)}\n' for key, value in values.items()))
+    # The Foorsa CRM app (crm/) signs with the same upload key; its job sets
+    # ANDROID_PROJECT_DIR=crm.
+    project = Path(os.environ.get('ANDROID_PROJECT_DIR', '.'))
+    (project / 'android' / 'key.properties').write_text(''.join(f'{key}={property_value(value)}\n' for key, value in values.items()))
 
 
 if __name__ == '__main__':

@@ -5,7 +5,7 @@ on:
     branches: [main]
     # .github/google-play-promote.txt names a track to send main's version to,
     # when that version is already in Google Play (no rebuild, no upload).
-    paths: [pubspec.yaml, .github/google-play-promote.txt]
+    paths: [pubspec.yaml, .github/google-play-promote.txt, crm/pubspec.yaml]
   pull_request:
     paths: ['.github/workflows/google-play.yml', 'scripts/prepare_android_release.py', 'scripts/publish_google_play.py', 'scripts/publish_direct_download.py', pubspec.yaml, .github/google-play-promote.txt]
   workflow_dispatch:
@@ -257,3 +257,100 @@ jobs:
         run: python3 -m pip install 'google-api-python-client==2.187.0' 'google-auth==2.43.0'
       - name: Send Play's APK to Foorsa's direct download
         run: python3 scripts/publish_direct_download.py
+
+  # The Foorsa CRM app (crm/), the team's app, to Google Play's internal
+  # testing track (com.foorsa.app). It lives in this workflow for the same
+  # reason as direct-download: Google's Workload Identity trusts only this file.
+  # Raising crm/pubspec.yaml's version on main releases it (crm/README.md).
+  crm-version:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version.outputs.changed }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: version
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          python3 - "$BEFORE" <<'PY'
+          import os, pathlib, subprocess, sys
+          def version(text):
+              return next(line for line in text.splitlines() if line.startswith('version:'))
+          current = version(pathlib.Path('crm/pubspec.yaml').read_text())
+          previous = subprocess.run(['git', 'show', f'{sys.argv[1]}:crm/pubspec.yaml'], capture_output=True, text=True)
+          changed = previous.returncode != 0 or version(previous.stdout) != current
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'changed={str(changed).lower()}\n')
+          PY
+
+  crm-publish:
+    needs: crm-version
+    if: needs.crm-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PLAY_TRACK: internal
+      PLAY_PACKAGE: com.foorsa.app
+      PLAY_PROJECT_DIR: crm
+      ANDROID_PROJECT_DIR: crm
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/1046359922746/locations/global/workloadIdentityPools/github-actions/providers/foorsa-student
+      GOOGLE_PLAY_SERVICE_ACCOUNT: play-publisher@foorsa-play-publishing.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check release credentials
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: python3 scripts/prepare_android_release.py
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: 3.47.5
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: crm
+      - run: flutter test
+        working-directory: crm
+      - run: flutter build appbundle --release
+        working-directory: crm
+      - name: Verify the signed bundle
+        run: |
+          jarsigner -verify crm/build/app/outputs/bundle/release/app-release.aab | tee "$RUNNER_TEMP/bundle-verification.txt"
+          grep -q 'jar verified' "$RUNNER_TEMP/bundle-verification.txt"
+          sha256sum crm/build/app/outputs/bundle/release/app-release.aab
+      # Kept whatever Google Play answers: Play takes an app's very first bundle
+      # only from Play Console (crm/README.md), and this is that bundle.
+      - name: Save the signed bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: foorsa-crm-google-play-${{ github.sha }}
+          path: crm/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
+      - name: Authenticate to Google Play without a key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+      - name: Install Play publisher
+        run: python3 -m pip install 'google-api-python-client==2.187.0' 'google-auth==2.43.0'
+      - name: Publish to Google Play internal testing
+        run: python3 scripts/publish_google_play.py
+      - name: Remove signing credentials
+        if: always()
+        run: rm -f crm/android/key.properties "$RUNNER_TEMP/foorsa-upload.jks"

@@ -1,0 +1,56 @@
+# Checks that the Foorsa CRM app (crm/) builds for Android, and keeps a
+# test APK of each change. Releases to Google Play run in google-play.yml
+# (its crm-publish job), the only workflow Google's Workload Identity trusts.
+name: Foorsa CRM Android
+
+on:
+  pull_request:
+    paths: ['crm/**', 'third_party/flutter_inappwebview_android/**', .github/workflows/crm-android.yml]
+  push:
+    branches: [main]
+    paths: ['crm/**', 'third_party/flutter_inappwebview_android/**', .github/workflows/crm-android.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: crm
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: 3.47.5
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - name: Build the Google Play bundle (unsigned)
+        run: flutter build appbundle --release
+      # Signed with the debug key, so it installs on a test phone; a release
+      # is only ever signed with the Play upload key (google-play.yml).
+      - name: Build a test APK
+        run: flutter build apk --debug --target-platform android-arm64
+      - name: Save the test APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: foorsa-crm-android-${{ github.sha }}
+          path: crm/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
