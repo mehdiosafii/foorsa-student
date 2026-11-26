@@ -1,2 +1,2 @@
-submit-latest 1.2.44+76
-Asked 26 Nov 2026 by the owner ("push the update to foorsa app for all", then "go"): 1.2.44 (76), built with Xcode 27 so the app fills both iPhone Duo screens.
+sync-review-demo
+Asked 26 Nov 2026 by the owner ("You get all and do all"): App Review's demo account, Sam Demo, was deleted with the test accounts on 24 Nov; Foorsa makes him again from App Store Connect's sign-in.
